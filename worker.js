@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.16';
+const APP_VERSION = '1.1.17';
 const VERSION_HISTORY = [
+  { version: '1.1.17', note: 'Added Archive as a selectable cleanup location and preserved correct archive filtering in API processing.' },
   { version: '1.1.16', note: 'Preserved checkbox state after swipe actions and improved deleted-history selection/search behavior (default selected, filtered toggle, date-deleted sort).' },
   { version: '1.1.15', note: 'Added non-destructive large-batch smoke coverage and switched cleanup client reconciliation to explicit processed IDs.' },
   { version: '1.1.14', note: 'Batched delete/archive requests in 20-item chunks so large selections process fully instead of stopping after one batch.' },
@@ -98,7 +99,7 @@ export default {
 
 // Get available locations/feeds from Readwise
 async function handleGetLocations(env, corsHeaders) {
-  const locations = ['new', 'later', 'shortlist', 'feed'];
+  const locations = ['new', 'later', 'shortlist', 'feed', 'archive'];
   return new Response(JSON.stringify({ locations }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -422,7 +423,7 @@ async function getSettings(env) {
 
 function sanitizeSettings(input) {
   const source = input && typeof input === 'object' ? input : {};
-  const defaultLocation = ['new', 'later', 'shortlist', 'feed'].includes(source.defaultLocation)
+  const defaultLocation = ['new', 'later', 'shortlist', 'feed', 'archive'].includes(source.defaultLocation)
     ? source.defaultLocation
     : DEFAULT_SETTINGS.defaultLocation;
   const defaultDays = normalizeInt(source.defaultDays, DEFAULT_SETTINGS.defaultDays, 1, 3650);
@@ -486,6 +487,9 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
       const savedDate = new Date(article.saved_at);
       const beforeOk = toCutoff ? savedDate <= toCutoff : true;
       const fromOk = fromCutoff ? savedDate >= fromCutoff : true;
+      if (location === 'archive') {
+        return beforeOk && fromOk && article.location === 'archive';
+      }
       return beforeOk && fromOk && article.location !== 'archive';
     });
 
@@ -1248,6 +1252,7 @@ const HTML_APP = `<!DOCTYPE html>
             <option value="later">Later</option>
             <option value="shortlist">Shortlist</option>
             <option value="feed">Feed</option>
+            <option value="archive">Archive</option>
           </select>
         </div>
         <div class="form-group">
@@ -1350,6 +1355,7 @@ const HTML_APP = `<!DOCTYPE html>
             <option value="later">Later</option>
             <option value="shortlist">Shortlist</option>
             <option value="feed">Feed</option>
+            <option value="archive">Archive</option>
           </select>
         </div>
         <div class="form-group">

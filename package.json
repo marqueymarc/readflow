@@ -1,6 +1,6 @@
 {
   "name": "readwise-cleanup",
-  "version": "1.1.16",
+  "version": "1.1.17",
   "description": "Bulk delete/archive old Readwise Reader items with restoration support",
   "scripts": {
     "check:ui": "node check-ui-script.mjs",
@@ -12,6 +12,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5.0",
     "@cloudflare/workers-types": "^4.20241022.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "wrangler": "^4.65.0"
   }
 }
