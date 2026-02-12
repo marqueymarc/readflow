@@ -1,7 +1,7 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const DEFAULT_SETTINGS = {
   defaultLocation: 'new',
   defaultDays: 30,
@@ -54,6 +54,9 @@ export default {
       if (url.pathname === '/api/version') {
         return handleGetVersion(corsHeaders);
       }
+      if (url.pathname === '/favicon.ico') {
+        return handleFavicon();
+      }
 
       // Serve PWA
       return new Response(HTML_APP, {
@@ -105,7 +108,6 @@ async function handlePreview(request, env, corsHeaders) {
   const url = new URL(request.url);
   const location = url.searchParams.get('location') || 'new';
   const beforeDate = url.searchParams.get('before');
-  const limit = parseInt(url.searchParams.get('limit') || '50');
 
   if (!beforeDate) {
     return new Response(JSON.stringify({ error: 'Missing before date' }), {
@@ -114,14 +116,15 @@ async function handlePreview(request, env, corsHeaders) {
     });
   }
 
-  const articles = await fetchArticlesOlderThan(env, location, beforeDate);
-  const preview = articles.slice(0, limit).map(a => ({
+  const articles = await fetchArticlesOlderThan(env, location, beforeDate, { withHtmlContent: true });
+  const preview = articles.map(a => ({
     id: a.id,
     title: a.title || 'Untitled',
     author: a.author || 'Unknown',
-    url: a.source_url || a.url,
+    url: deriveOpenUrl(a),
     savedAt: a.saved_at,
-    site: extractDomain(a.source_url || a.url)
+    site: extractDomain(a.source_url || a.url),
+    thumbnail: location === 'feed' ? getArticleThumbnail(a) : null
   }));
 
   return new Response(JSON.stringify({
@@ -136,7 +139,7 @@ async function handlePreview(request, env, corsHeaders) {
 // Perform cleanup (delete or archive)
 async function handleCleanup(request, env, corsHeaders) {
   const body = await request.json();
-  const { location, beforeDate, action } = body;
+  const { location, beforeDate, action, ids } = body;
 
   if (!location || !beforeDate || !action) {
     return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -152,13 +155,24 @@ async function handleCleanup(request, env, corsHeaders) {
     });
   }
 
-  const articles = await fetchArticlesOlderThan(env, location, beforeDate);
+  if (ids !== undefined && (!Array.isArray(ids) || ids.length === 0)) {
+    return new Response(JSON.stringify({ error: 'No item IDs provided' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let articles = await fetchArticlesOlderThan(env, location, beforeDate);
+  if (Array.isArray(ids)) {
+    const idSet = new Set(ids.map((id) => String(id)));
+    articles = articles.filter((article) => idSet.has(String(article.id)));
+  }
 
   if (articles.length === 0) {
     return new Response(JSON.stringify({
       processed: 0,
       action,
-      message: 'No articles to process'
+      message: Array.isArray(ids) ? 'No selected articles to process' : 'No articles to process'
     }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
@@ -177,7 +191,8 @@ async function handleCleanup(request, env, corsHeaders) {
         url: article.source_url || article.url,
         savedAt: article.saved_at,
         deletedAt: timestamp,
-        site: extractDomain(article.source_url || article.url)
+        site: extractDomain(article.source_url || article.url),
+        thumbnail: getArticleThumbnail(article)
       });
     }
 
@@ -320,6 +335,22 @@ function handleGetVersion(corsHeaders) {
   });
 }
 
+function handleFavicon() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"/>
+<path d="M20 40c8-1 14-7 15-15" stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none"/>
+<path d="M31 26h15" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+<circle cx="40" cy="42" r="8" fill="#fff"/>
+<path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>`;
+  return new Response(svg, {
+    headers: {
+      'Content-Type': 'image/svg+xml',
+      'Cache-Control': 'public, max-age=86400',
+    },
+  });
+}
+
 async function getSettings(env) {
   try {
     const stored = await env.KV.get('settings');
@@ -358,16 +389,20 @@ function normalizeInt(value, fallback, min, max) {
 }
 
 // Helper: Fetch articles older than date from specific location
-async function fetchArticlesOlderThan(env, location, beforeDate) {
+async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const allArticles = [];
   let nextCursor = null;
   const cutoffDate = new Date(beforeDate);
+  const withHtmlContent = options.withHtmlContent === true;
 
   do {
     const params = new URLSearchParams({
       location,
       pageCursor: nextCursor || '',
     });
+    if (withHtmlContent) {
+      params.set('withHtmlContent', 'true');
+    }
 
     const response = await fetch(
       `https://readwise.io/api/v3/list/?${params}`,
@@ -470,6 +505,101 @@ function extractDomain(url) {
   }
 }
 
+function getArticleThumbnail(article) {
+  return article.image_url
+    || article.image
+    || article.thumbnail
+    || article.thumbnail_url
+    || article.preview_image_url
+    || article.top_image_url
+    || article.article_image_url
+    || article.source_image_url
+    || article.lead_image_url
+    || article.cover_image_url
+    || article.header_image
+    || article.hero_image
+    || article.imageUrl
+    || extractImageFromHtml(article.html_content)
+    || null;
+}
+
+function deriveOpenUrl(article) {
+  const sourceUrl = normalizeHttpUrl(article.source_url);
+  const readwiseUrl = normalizeHttpUrl(article.url);
+  const htmlUrl = extractFirstHttpUrlFromHtml(article.html_content);
+
+  if (sourceUrl && !looksLikeEmailAddress(sourceUrl)) {
+    return sourceUrl;
+  }
+  if (htmlUrl && !isReadwiseDomain(htmlUrl)) {
+    return htmlUrl;
+  }
+  if (readwiseUrl) {
+    return readwiseUrl;
+  }
+  return sourceUrl || htmlUrl || readwiseUrl || '';
+}
+
+function normalizeHttpUrl(value) {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function isReadwiseDomain(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host.includes('readwise.io') || host.includes('read.readwise.io');
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeEmailAddress(value) {
+  return typeof value === 'string' && /^[^/\s@]+@[^/\s@]+\.[^/\s@]+$/.test(value);
+}
+
+function extractImageFromHtml(html) {
+  if (!html || typeof html !== 'string') return null;
+  const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+    || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+  if (ogMatch && ogMatch[1]) {
+    const normalized = normalizeHttpUrl(ogMatch[1]);
+    if (normalized) return normalized;
+  }
+  const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (imgMatch && imgMatch[1]) {
+    const normalized = normalizeHttpUrl(imgMatch[1]);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function extractFirstHttpUrlFromHtml(html) {
+  if (!html || typeof html !== 'string') return null;
+  const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
+    || html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i);
+  if (canonicalMatch && canonicalMatch[1]) {
+    const canonical = normalizeHttpUrl(canonicalMatch[1]);
+    if (canonical) return canonical;
+  }
+
+  const hrefMatches = html.match(/href=["']([^"']+)["']/ig) || [];
+  for (const raw of hrefMatches) {
+    const extracted = raw.replace(/^href=["']|["']$/g, '');
+    const normalized = normalizeHttpUrl(extracted);
+    if (!normalized) continue;
+    if (isReadwiseDomain(normalized)) continue;
+    return normalized;
+  }
+  return null;
+}
+
 const HTML_APP = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -478,6 +608,7 @@ const HTML_APP = `<!DOCTYPE html>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#4f46e5">
   <title>Readwise Cleanup</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -623,12 +754,53 @@ const HTML_APP = `<!DOCTYPE html>
       cursor: pointer;
     }
     .article-info { flex: 1; min-width: 0; }
+    .preview-thumb {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      flex: 0 0 56px;
+    }
+    .preview-thumb-fallback {
+      width: 56px;
+      height: 56px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 56px;
+    }
     .article-title {
       font-weight: 500;
       margin-bottom: 0.2rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .article-link {
+      color: inherit;
+      text-decoration: none;
+      display: block;
+      min-width: 0;
+    }
+    .article-link:hover {
+      text-decoration: underline;
+    }
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .webpage-icon {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      flex: 0 0 auto;
     }
     .article-meta { font-size: 0.8rem; color: var(--text-muted); }
     .article-site {
@@ -747,6 +919,35 @@ const HTML_APP = `<!DOCTYPE html>
       gap: 0.75rem;
       margin-bottom: 0.75rem;
     }
+    .preview-top-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .preview-actions {
+      display: inline-flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .pagination-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .preview-bottom-controls {
+      display: flex;
+      justify-content: center;
+      margin-top: 0.75rem;
+    }
+    .page-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      min-width: 70px;
+      text-align: center;
+    }
     .about-list { margin-left: 1rem; color: var(--text-muted); }
     .about-list li { margin-bottom: 0.35rem; }
     .version-badge {
@@ -829,10 +1030,21 @@ const HTML_APP = `<!DOCTYPE html>
             <div class="stat-label">Location</div>
           </div>
         </div>
+        <div class="preview-top-controls" id="preview-top-controls" style="display:none">
+          <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All</label>
+          <div class="preview-actions">
+            <button class="btn btn-outline" id="open-selected-btn" disabled>Open Selected</button>
+            <button class="btn btn-danger" id="delete-btn" disabled>Delete Selected</button>
+            <button class="btn btn-primary" id="archive-btn" disabled>Archive Selected</button>
+          </div>
+        </div>
         <div id="preview-list"></div>
-        <div class="btn-group" style="margin-top: 1rem">
-          <button class="btn btn-danger" id="delete-btn" disabled>Delete All</button>
-          <button class="btn btn-primary" id="archive-btn" disabled>Archive All</button>
+        <div class="preview-bottom-controls" id="preview-bottom-controls" style="display:none">
+          <div class="pagination-controls">
+            <button class="btn btn-outline" id="preview-prev-btn" disabled>Prev</button>
+            <span class="page-label" id="preview-page-label">Page 1 / 1</span>
+            <button class="btn btn-outline" id="preview-next-btn" disabled>Next</button>
+          </div>
         </div>
         <div class="progress" id="progress" style="display:none">
           <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
@@ -914,6 +1126,9 @@ const HTML_APP = `<!DOCTYPE html>
     var APP_VERSION = '${APP_VERSION}';
     var currentCount = 0;
     var previewData = [];
+    var selectedPreviewIds = new Set();
+    var previewPage = 1;
+    var previewPageSize = 10;
     var deletedItems = [];
     var selectedItems = new Set();
     var lastQuery = null;
@@ -927,12 +1142,19 @@ const HTML_APP = `<!DOCTYPE html>
     var locationSelect = document.getElementById('location');
     var beforeDateInput = document.getElementById('before-date');
     var previewBtn = document.getElementById('preview-btn');
+    var openSelectedBtn = document.getElementById('open-selected-btn');
     var deleteBtn = document.getElementById('delete-btn');
     var archiveBtn = document.getElementById('archive-btn');
     var resultsCard = document.getElementById('results-card');
     var itemCountEl = document.getElementById('item-count');
     var locationDisplay = document.getElementById('location-display');
     var previewList = document.getElementById('preview-list');
+    var previewTopControls = document.getElementById('preview-top-controls');
+    var previewBottomControls = document.getElementById('preview-bottom-controls');
+    var selectAllPreview = document.getElementById('select-all-preview');
+    var previewPrevBtn = document.getElementById('preview-prev-btn');
+    var previewNextBtn = document.getElementById('preview-next-btn');
+    var previewPageLabel = document.getElementById('preview-page-label');
     var deletedList = document.getElementById('deleted-list');
     var restoreBtn = document.getElementById('restore-btn');
     var removeSelectedBtn = document.getElementById('remove-selected-btn');
@@ -956,6 +1178,7 @@ const HTML_APP = `<!DOCTYPE html>
     function applySettingsToUI() {
       locationSelect.value = settings.defaultLocation;
       setDateFromDays(settings.defaultDays);
+      previewPageSize = settings.previewLimit;
       settingsDefaultLocation.value = settings.defaultLocation;
       settingsDefaultDays.value = settings.defaultDays;
       settingsPreviewLimit.value = settings.previewLimit;
@@ -999,6 +1222,7 @@ const HTML_APP = `<!DOCTYPE html>
 
       var queryKey = buildQueryKey();
       if (lastQuery === queryKey && previewData.length > 0) {
+        syncPreviewSelectionUI();
         renderPreview();
         showToast('Using cached preview', 'success');
         return;
@@ -1008,20 +1232,23 @@ const HTML_APP = `<!DOCTYPE html>
       previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
 
       try {
-        var res = await fetch('/api/preview?location=' + locationSelect.value + '&before=' + before + '&limit=' + settings.previewLimit);
+        var res = await fetch('/api/preview?location=' + locationSelect.value + '&before=' + before);
         var data = await res.json();
         if (data.error) throw new Error(data.error);
 
         currentCount = data.total || 0;
         previewData = data.preview || [];
+        selectedPreviewIds = new Set(previewData.map(function(item) { return String(item.id); }));
+        previewPage = 1;
         lastQuery = queryKey;
+        syncPreviewSelectionUI();
         renderPreview();
 
         itemCountEl.textContent = currentCount;
         locationDisplay.textContent = locationSelect.value;
         resultsCard.style.display = 'block';
-        deleteBtn.disabled = currentCount === 0;
-        archiveBtn.disabled = currentCount === 0;
+        previewTopControls.style.display = previewData.length > 0 ? 'flex' : 'none';
+        previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
         showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
       } catch (err) {
         showToast(err.message, 'error');
@@ -1034,13 +1261,31 @@ const HTML_APP = `<!DOCTYPE html>
     function renderPreview() {
       if (previewData.length === 0) {
         previewList.innerHTML = '<div class="empty">No items to preview</div>';
+        previewTopControls.style.display = 'none';
+        previewBottomControls.style.display = 'none';
+        syncPreviewSelectionUI();
         return;
       }
 
+      var totalPages = Math.max(1, Math.ceil(previewData.length / previewPageSize));
+      if (previewPage > totalPages) previewPage = totalPages;
+      var start = (previewPage - 1) * previewPageSize;
+      var end = start + previewPageSize;
+      var pageItems = previewData.slice(start, end);
+
       var html = '<div class="article-list">';
-      previewData.forEach(function(article) {
-        html += '<div class="article-item"><div class="article-info">';
-        html += '<div class="article-title">' + escapeHtml(article.title) + '</div>';
+      pageItems.forEach(function(article) {
+        var articleId = String(article.id);
+        var checked = selectedPreviewIds.has(articleId) ? ' checked' : '';
+        html += '<div class="article-item">';
+        html += '<input type="checkbox" data-article-id="' + escapeHtml(articleId) + '" onchange="togglePreviewItem(this)"' + checked + '>';
+        if (article.thumbnail) {
+          html += '<img class="preview-thumb" src="' + escapeHtml(article.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+        } else {
+          html += '<span class="preview-thumb-fallback">No image</span>';
+        }
+        html += '<div class="article-info">';
+        html += '<div class="title-row"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener noreferrer"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
@@ -1054,14 +1299,88 @@ const HTML_APP = `<!DOCTYPE html>
       }
 
       previewList.innerHTML = html;
+      previewPageLabel.textContent = 'Page ' + previewPage + ' / ' + totalPages;
+      previewPrevBtn.disabled = previewPage <= 1;
+      previewNextBtn.disabled = previewPage >= totalPages;
+      previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
+      syncPreviewSelectionUI();
     }
 
     deleteBtn.addEventListener('click', function() { performCleanup('delete'); });
     archiveBtn.addEventListener('click', function() { performCleanup('archive'); });
 
+    function syncPreviewSelectionUI() {
+      if (previewData.length === 0) {
+        selectAllPreview.checked = false;
+        selectAllPreview.indeterminate = false;
+        openSelectedBtn.disabled = true;
+        deleteBtn.disabled = true;
+        archiveBtn.disabled = true;
+        openSelectedBtn.textContent = 'Open Selected';
+        deleteBtn.textContent = 'Delete Selected';
+        archiveBtn.textContent = 'Archive Selected';
+        return;
+      }
+      var selectedCount = selectedPreviewIds.size;
+      selectAllPreview.checked = selectedCount === previewData.length;
+      selectAllPreview.indeterminate = selectedCount > 0 && selectedCount < previewData.length;
+      openSelectedBtn.disabled = selectedCount === 0;
+      deleteBtn.disabled = selectedCount === 0;
+      archiveBtn.disabled = selectedCount === 0;
+      openSelectedBtn.textContent = selectedCount > 0 ? 'Open Selected (' + selectedCount + ')' : 'Open Selected';
+      deleteBtn.textContent = selectedCount > 0 ? 'Delete Selected (' + selectedCount + ')' : 'Delete Selected';
+      archiveBtn.textContent = selectedCount > 0 ? 'Archive Selected (' + selectedCount + ')' : 'Archive Selected';
+    }
+
+    function togglePreviewItem(checkbox) {
+      var articleId = checkbox.dataset.articleId;
+      if (checkbox.checked) selectedPreviewIds.add(articleId);
+      else selectedPreviewIds.delete(articleId);
+      syncPreviewSelectionUI();
+    }
+    window.togglePreviewItem = togglePreviewItem;
+
+    selectAllPreview.addEventListener('change', function() {
+      selectedPreviewIds.clear();
+      if (selectAllPreview.checked) {
+        previewData.forEach(function(item) { selectedPreviewIds.add(String(item.id)); });
+      }
+      renderPreview();
+    });
+
+    previewPrevBtn.addEventListener('click', function() {
+      if (previewPage > 1) {
+        previewPage--;
+        renderPreview();
+      }
+    });
+
+    previewNextBtn.addEventListener('click', function() {
+      var totalPages = Math.max(1, Math.ceil(previewData.length / previewPageSize));
+      if (previewPage < totalPages) {
+        previewPage++;
+        renderPreview();
+      }
+    });
+
+    openSelectedBtn.addEventListener('click', function() {
+      if (selectedPreviewIds.size === 0) return;
+      var selected = previewData.filter(function(item) { return selectedPreviewIds.has(String(item.id)); });
+      selected.forEach(function(item) {
+        if (item.url) {
+          window.open(item.url, '_blank', 'noopener,noreferrer');
+        }
+      });
+    });
+
     async function performCleanup(action) {
+      var selectedCount = selectedPreviewIds.size;
+      if (selectedCount === 0) {
+        showToast('Select at least one item first', 'warning');
+        return;
+      }
       if (settings.confirmActions) {
-        var confirmed = window.confirm('Confirm ' + action + ' for ' + currentCount + ' items?');
+        var confirmed = window.confirm('Confirm ' + action + ' for ' + selectedCount + ' selected items?');
         if (!confirmed) return;
       }
 
@@ -1077,7 +1396,12 @@ const HTML_APP = `<!DOCTYPE html>
         var res = await fetch('/api/cleanup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ location: locationSelect.value, beforeDate: beforeDateInput.value, action: action })
+          body: JSON.stringify({
+            location: locationSelect.value,
+            beforeDate: beforeDateInput.value,
+            action: action,
+            ids: Array.from(selectedPreviewIds)
+          })
         });
         var data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -1088,9 +1412,13 @@ const HTML_APP = `<!DOCTYPE html>
         setTimeout(function() {
           currentCount = 0;
           previewData = [];
+          selectedPreviewIds.clear();
           lastQuery = null;
+          previewPage = 1;
           itemCountEl.textContent = '0';
           previewList.innerHTML = '';
+          previewTopControls.style.display = 'none';
+          previewBottomControls.style.display = 'none';
           resultsCard.style.display = 'none';
           document.getElementById('progress').style.display = 'none';
           document.getElementById('progress-bar').style.width = '0%';
@@ -1182,10 +1510,16 @@ const HTML_APP = `<!DOCTYPE html>
         html += '<input type="checkbox" data-url="' + escapeHtml(item.url) + '" onchange="toggleRestoreItem(this)"';
         if (selectedItems.has(item.url)) html += ' checked';
         html += '>';
+        if (item.thumbnail) {
+          html += '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+        } else {
+          html += '<span class="preview-thumb-fallback">No image</span>';
+        }
         html += '<div class="article-info">';
         html += '<div class="article-title">' + escapeHtml(item.title) + '</div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site) + '</span>';
         if (item.author) html += ' by ' + escapeHtml(item.author);
+        if (item.savedAt) html += ' · Saved ' + formatDate(item.savedAt);
         html += ' · Deleted ' + formatDate(item.deletedAt) + '</div></div></div>';
       });
       html += '</div>';

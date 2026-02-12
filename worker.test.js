@@ -116,6 +116,23 @@ describe('API Endpoints', () => {
       expect(data.error).toBe('Action must be delete or archive');
     });
 
+    it('returns 400 with empty ids array', async () => {
+      const res = await SELF.fetch('https://example.com/api/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'new',
+          beforeDate: '2024-01-01',
+          action: 'archive',
+          ids: [],
+        }),
+      });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe('No item IDs provided');
+    });
+
     // Skip tests that require network access to Readwise
     it.skip('accepts delete action (requires network)', async () => {
       const res = await SELF.fetch('https://example.com/api/cleanup', {
@@ -285,7 +302,18 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('1.1.0');
+      expect(data.version).toBe('1.1.1');
+    });
+  });
+
+  describe('GET /favicon.ico', () => {
+    it('returns a graphical favicon response', async () => {
+      const res = await SELF.fetch('https://example.com/favicon.ico');
+      const body = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('image/svg+xml');
+      expect(body).toContain('<svg');
     });
   });
 });
@@ -339,8 +367,22 @@ describe('PWA Serving', () => {
     const html = await res.text();
 
     expect(html).toContain('Preview Items');
-    expect(html).toContain('Delete All');
-    expect(html).toContain('Archive All');
+    expect(html).toContain('Delete Selected');
+    expect(html).toContain('Archive Selected');
+  });
+
+  it('includes preview selection and pagination controls', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+
+    expect(html).toContain('select-all-preview');
+    expect(html).toContain('preview-prev-btn');
+    expect(html).toContain('preview-next-btn');
+    expect(html).toContain('preview-page-label');
+    expect(html).toContain('webpage-icon');
+    expect(html).toContain('preview-thumb');
+    expect(html).toContain('open-selected-btn');
+    expect(html).toContain('article-link');
   });
 
   it('includes deleted-history selection controls', async () => {
@@ -362,7 +404,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v1.1.0');
+    expect(html).toContain('v1.1.1');
   });
 });
 
