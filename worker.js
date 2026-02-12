@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.15';
+const APP_VERSION = '1.1.16';
 const VERSION_HISTORY = [
+  { version: '1.1.16', note: 'Preserved checkbox state after swipe actions and improved deleted-history selection/search behavior (default selected, filtered toggle, date-deleted sort).' },
   { version: '1.1.15', note: 'Added non-destructive large-batch smoke coverage and switched cleanup client reconciliation to explicit processed IDs.' },
   { version: '1.1.14', note: 'Batched delete/archive requests in 20-item chunks so large selections process fully instead of stopping after one batch.' },
   { version: '1.1.13', note: 'Cleanup now processes exactly selected IDs and retries transient Readwise failures to avoid partial large-batch deletes.' },
@@ -1782,9 +1783,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     function runSwipeAction(articleId, action) {
       var id = String(articleId);
-      selectedPreviewIds = new Set([id]);
-      syncPreviewSelectionUI();
-      performCleanup(action, true);
+      performCleanup(action, true, [id]);
     }
 
     function handlePreviewPointerDown(evt, element) {
@@ -1877,12 +1876,14 @@ const HTML_APP = `<!DOCTYPE html>
       });
     });
 
-    async function performCleanup(action, skipConfirm) {
+    async function performCleanup(action, skipConfirm, forcedIds) {
       if (cleanupInFlight) {
         showToast('Please wait for the current action to finish', 'warning');
         return;
       }
-      var activeSelectedIds = getActiveSelectedIds();
+      var activeSelectedIds = Array.isArray(forcedIds) && forcedIds.length > 0
+        ? Array.from(new Set(forcedIds.map(function(id) { return String(id); })))
+        : getActiveSelectedIds();
       var selectedCount = activeSelectedIds.length;
       if (selectedCount === 0) {
         showToast('Select at least one item first', 'warning');
@@ -2074,7 +2075,10 @@ const HTML_APP = `<!DOCTYPE html>
 
     on(selectAllDeleted, 'change', function() {
       var filtered = getFilteredDeletedItems();
-      if (selectAllDeleted.checked) {
+      var filteredUrlSet = new Set(filtered.map(function(item) { return item.url; }));
+      var filteredSelectedCount = Array.from(selectedItems).filter(function(url) { return filteredUrlSet.has(url); }).length;
+      var shouldSelectAllFiltered = filteredSelectedCount !== filtered.length;
+      if (shouldSelectAllFiltered) {
         filtered.forEach(function(item) { selectedItems.add(item.url); });
       } else {
         filtered.forEach(function(item) { selectedItems.delete(item.url); });
@@ -2101,7 +2105,7 @@ const HTML_APP = `<!DOCTYPE html>
         var res = await fetch('/api/deleted');
         var data = await parseApiJson(res);
         deletedItems = data.items || [];
-        selectedItems.clear();
+        selectedItems = new Set(deletedItems.map(function(item) { return item.url; }));
         renderDeletedItems();
         updateDeletedBadge();
       } catch (err) {
@@ -2139,9 +2143,14 @@ const HTML_APP = `<!DOCTYPE html>
         updateSelectedButtons();
         return;
       }
+      var sorted = filtered.slice().sort(function(a, b) {
+        var aTs = Date.parse(a.deletedAt || '') || 0;
+        var bTs = Date.parse(b.deletedAt || '') || 0;
+        return bTs - aTs;
+      });
 
       var html = '<div class="article-list">';
-      filtered.forEach(function(item) {
+      sorted.forEach(function(item) {
         html += '<div class="article-item">';
         html += '<input type="checkbox" data-url="' + escapeHtml(item.url) + '" onchange="toggleRestoreItem(this)"';
         if (selectedItems.has(item.url)) html += ' checked';
@@ -2152,7 +2161,7 @@ const HTML_APP = `<!DOCTYPE html>
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
         html += '<div class="article-info">';
-        html += '<div class="article-title">' + escapeHtml(item.title) + '</div>';
+        html += '<div class="title-row"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link deleted-open-link" href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener noreferrer" data-open-url="' + escapeHtml(item.url || '') + '"><div class="article-title">' + escapeHtml(item.title) + '</div></a></div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site) + '</span>';
         if (item.author) html += ' by ' + escapeHtml(item.author);
         if (item.savedAt) html += ' · Saved ' + formatDate(item.savedAt);
@@ -2161,6 +2170,11 @@ const HTML_APP = `<!DOCTYPE html>
       html += '</div>';
 
       deletedList.innerHTML = html;
+      deletedList.querySelectorAll('.deleted-open-link').forEach(function(link) {
+        on(link, 'click', function(evt) {
+          openPreviewUrl(evt, link.dataset.openUrl || link.getAttribute('href') || '');
+        });
+      });
       updateSelectedButtons();
     }
 
