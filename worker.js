@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.19';
+const APP_VERSION = '1.1.20';
 const VERSION_HISTORY = [
+  { version: '1.1.20', note: 'Fixed Deleted History All-toggle reliability and bounded archive preview pagination to prevent non-JSON 500 failures on sparse filters.' },
   { version: '1.1.19', note: 'Prevented non-JSON preview failures on large archive scans by limiting preview fetch size and enforcing JSON parse guards in preview requests.' },
   { version: '1.1.18', note: 'Added preview sort toggle (Added/Published) and right-aligned relevant date for faster scanning.' },
   { version: '1.1.17', note: 'Added Archive as a selectable cleanup location and preserved correct archive filtering in API processing.' },
@@ -147,6 +148,8 @@ async function handlePreview(request, env, corsHeaders) {
   const toDate = url.searchParams.get('to');
   const requestedLimit = parseInt(url.searchParams.get('limit') || '', 10);
   const previewLimit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100;
+  const requestedMaxPages = parseInt(url.searchParams.get('maxPages') || '', 10);
+  const previewMaxPages = Number.isFinite(requestedMaxPages) ? Math.max(1, Math.min(200, requestedMaxPages)) : 60;
 
   if (!beforeDate && !toDate && !fromDate) {
     return new Response(JSON.stringify({ error: 'Missing date range' }), {
@@ -160,6 +163,7 @@ async function handlePreview(request, env, corsHeaders) {
     fromDate,
     toDate,
     limit: previewLimit,
+    maxPages: previewMaxPages,
   });
   const preview = articles.map(a => ({
     id: a.id,
@@ -458,13 +462,18 @@ function normalizeInt(value, fallback, min, max) {
 async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const allArticles = [];
   let nextCursor = null;
+  let pagesFetched = 0;
   const beforeCutoff = beforeDate ? endOfDay(beforeDate) : null;
   const fromCutoff = options.fromDate ? startOfDay(options.fromDate) : null;
   const toCutoff = options.toDate ? endOfDay(options.toDate) : beforeCutoff;
   const withHtmlContent = options.withHtmlContent === true;
   const hardLimit = Number.isFinite(options.limit) ? Math.max(1, options.limit) : Infinity;
+  const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, options.maxPages) : Infinity;
 
   do {
+    if (pagesFetched >= maxPages) {
+      break;
+    }
     const params = new URLSearchParams({
       location,
       pageCursor: nextCursor || '',
@@ -487,6 +496,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     }
 
     const data = await response.json();
+    pagesFetched += 1;
 
     // Filter articles older than cutoff date
     // Skip archived items
@@ -2198,9 +2208,13 @@ const HTML_APP = `<!DOCTYPE html>
 
     on(selectAllDeleted, 'change', function() {
       var filtered = getFilteredDeletedItems();
-      var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
-      var filteredSelectedCount = Array.from(selectedDeletedIds).filter(function(id) { return filteredIdSet.has(id); }).length;
-      var shouldSelectAllFiltered = filteredSelectedCount !== filtered.length;
+      if (filtered.length === 0) {
+        updateSelectedButtons();
+        return;
+      }
+      var shouldSelectAllFiltered = filtered.some(function(item) {
+        return !selectedDeletedIds.has(getDeletedItemKey(item));
+      });
       if (shouldSelectAllFiltered) {
         filtered.forEach(function(item) { selectedDeletedIds.add(getDeletedItemKey(item)); });
       } else {
