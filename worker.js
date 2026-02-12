@@ -1,7 +1,25 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.15';
+const VERSION_HISTORY = [
+  { version: '1.1.15', note: 'Added non-destructive large-batch smoke coverage and switched cleanup client reconciliation to explicit processed IDs.' },
+  { version: '1.1.14', note: 'Batched delete/archive requests in 20-item chunks so large selections process fully instead of stopping after one batch.' },
+  { version: '1.1.13', note: 'Cleanup now processes exactly selected IDs and retries transient Readwise failures to avoid partial large-batch deletes.' },
+  { version: '1.1.12', note: 'Prevented JSON parse crashes during repeated swipe actions with API-response guards and cleanup action locking.' },
+  { version: '1.1.11', note: 'Fixed preview title click-to-open and kept preview list after swipe delete/archive by removing only acted-on items.' },
+  { version: '1.1.10', note: 'Fixed client script syntax error and hardened predeploy script checks against rendered HTML.' },
+  { version: '1.1.9', note: 'Added browser-smoke release gate to block broken UI deploys.' },
+  { version: '1.1.8', note: 'Fixed preview link rendering syntax error that blocked UI scripts.' },
+  { version: '1.1.7', note: 'Hotfix for frontend script runtime error.' },
+  { version: '1.1.6', note: 'Stabilized date shortcut buttons and target state.' },
+  { version: '1.1.5', note: 'Route-based tabs for back/forward navigation.' },
+  { version: '1.1.4', note: 'Fixed preview link opening and added version history.' },
+  { version: '1.1.3', note: 'Improved swipe delete indicator visuals.' },
+  { version: '1.1.2', note: 'Search count/date shortcut/drag interaction fixes.' },
+  { version: '1.1.1', note: 'URL cleanup, richer thumbnail extraction, favicon.' },
+  { version: '1.1.0', note: 'Settings, about, selective actions, preview cache.' },
+];
 const DEFAULT_SETTINGS = {
   defaultLocation: 'new',
   defaultDays: 30,
@@ -54,6 +72,12 @@ export default {
       if (url.pathname === '/api/version') {
         return handleGetVersion(corsHeaders);
       }
+      if (url.pathname.startsWith('/api/')) {
+        return new Response(JSON.stringify({ error: 'Unknown API route' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
       if (url.pathname === '/favicon.ico') {
         return handleFavicon();
       }
@@ -84,20 +108,27 @@ async function handleGetCount(request, env, corsHeaders) {
   const url = new URL(request.url);
   const location = url.searchParams.get('location') || 'new';
   const beforeDate = url.searchParams.get('before');
+  const fromDate = url.searchParams.get('from');
+  const toDate = url.searchParams.get('to');
 
-  if (!beforeDate) {
-    return new Response(JSON.stringify({ error: 'Missing before date' }), {
+  if (!beforeDate && !toDate && !fromDate) {
+    return new Response(JSON.stringify({ error: 'Missing date range' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
-  const articles = await fetchArticlesOlderThan(env, location, beforeDate);
+  const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+    fromDate,
+    toDate,
+  });
 
   return new Response(JSON.stringify({
     count: articles.length,
     location,
-    beforeDate
+    beforeDate,
+    fromDate,
+    toDate,
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -108,15 +139,21 @@ async function handlePreview(request, env, corsHeaders) {
   const url = new URL(request.url);
   const location = url.searchParams.get('location') || 'new';
   const beforeDate = url.searchParams.get('before');
+  const fromDate = url.searchParams.get('from');
+  const toDate = url.searchParams.get('to');
 
-  if (!beforeDate) {
-    return new Response(JSON.stringify({ error: 'Missing before date' }), {
+  if (!beforeDate && !toDate && !fromDate) {
+    return new Response(JSON.stringify({ error: 'Missing date range' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
-  const articles = await fetchArticlesOlderThan(env, location, beforeDate, { withHtmlContent: true });
+  const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+    withHtmlContent: true,
+    fromDate,
+    toDate,
+  });
   const preview = articles.map(a => ({
     id: a.id,
     title: a.title || 'Untitled',
@@ -124,13 +161,15 @@ async function handlePreview(request, env, corsHeaders) {
     url: deriveOpenUrl(a),
     savedAt: a.saved_at,
     site: extractDomain(a.source_url || a.url),
-    thumbnail: location === 'feed' ? getArticleThumbnail(a) : null
+    thumbnail: getArticleThumbnail(a),
+    searchable: buildSearchableText(a)
   }));
 
   return new Response(JSON.stringify({
     total: articles.length,
     preview,
-    showing: preview.length
+    showing: preview.length,
+    dateRange: { beforeDate, fromDate, toDate },
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -139,9 +178,9 @@ async function handlePreview(request, env, corsHeaders) {
 // Perform cleanup (delete or archive)
 async function handleCleanup(request, env, corsHeaders) {
   const body = await request.json();
-  const { location, beforeDate, action, ids } = body;
+  const { location, beforeDate, fromDate, toDate, action, ids, items } = body;
 
-  if (!location || !beforeDate || !action) {
+  if (!location || !action || (!beforeDate && !toDate && !fromDate)) {
     return new Response(JSON.stringify({ error: 'Missing required fields' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -162,13 +201,19 @@ async function handleCleanup(request, env, corsHeaders) {
     });
   }
 
-  let articles = await fetchArticlesOlderThan(env, location, beforeDate);
+  let articles = [];
+  let targetIds = [];
   if (Array.isArray(ids)) {
-    const idSet = new Set(ids.map((id) => String(id)));
-    articles = articles.filter((article) => idSet.has(String(article.id)));
+    targetIds = Array.from(new Set(ids.map((id) => String(id))));
+  } else {
+    articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+      fromDate,
+      toDate,
+    });
+    targetIds = articles.map((article) => String(article.id));
   }
 
-  if (articles.length === 0) {
+  if (targetIds.length === 0) {
     return new Response(JSON.stringify({
       processed: 0,
       action,
@@ -182,17 +227,27 @@ async function handleCleanup(request, env, corsHeaders) {
   if (action === 'delete') {
     const deletedItems = await getDeletedItems(env);
     const timestamp = new Date().toISOString();
+    const articleById = new Map(articles.map((article) => [String(article.id), article]));
+    const itemById = new Map(
+      Array.isArray(items)
+        ? items
+            .filter((item) => item && item.id !== undefined && item.id !== null)
+            .map((item) => [String(item.id), item])
+        : []
+    );
 
-    for (const article of articles) {
+    for (const id of targetIds) {
+      const article = articleById.get(id);
+      const item = itemById.get(id);
       deletedItems.push({
-        id: article.id,
-        title: article.title || 'Untitled',
-        author: article.author || 'Unknown',
-        url: article.source_url || article.url,
-        savedAt: article.saved_at,
+        id,
+        title: (article && article.title) || (item && item.title) || 'Untitled',
+        author: (article && article.author) || (item && item.author) || 'Unknown',
+        url: (article && (article.source_url || article.url)) || (item && item.url) || '',
+        savedAt: (article && article.saved_at) || (item && item.savedAt) || timestamp,
         deletedAt: timestamp,
-        site: extractDomain(article.source_url || article.url),
-        thumbnail: getArticleThumbnail(article)
+        site: extractDomain((article && (article.source_url || article.url)) || (item && item.url) || ''),
+        thumbnail: (article && getArticleThumbnail(article)) || (item && item.thumbnail) || null
       });
     }
 
@@ -202,25 +257,28 @@ async function handleCleanup(request, env, corsHeaders) {
   // Process each article
   let processed = 0;
   let errors = [];
+  let processedIds = [];
 
-  for (const article of articles) {
+  for (const id of targetIds) {
     try {
       if (action === 'delete') {
-        await deleteArticle(env, article.id);
+        await deleteArticle(env, id);
       } else {
-        await archiveArticle(env, article.id);
+        await archiveArticle(env, id);
       }
       processed++;
+      processedIds.push(String(id));
     } catch (err) {
-      errors.push({ id: article.id, error: err.message });
+      errors.push({ id, error: err.message });
     }
   }
 
   return new Response(JSON.stringify({
     processed,
+    processedIds,
     errors: errors.length > 0 ? errors : undefined,
     action,
-    total: articles.length
+    total: targetIds.length
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -392,7 +450,9 @@ function normalizeInt(value, fallback, min, max) {
 async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const allArticles = [];
   let nextCursor = null;
-  const cutoffDate = new Date(beforeDate);
+  const beforeCutoff = beforeDate ? endOfDay(beforeDate) : null;
+  const fromCutoff = options.fromDate ? startOfDay(options.fromDate) : null;
+  const toCutoff = options.toDate ? endOfDay(options.toDate) : beforeCutoff;
   const withHtmlContent = options.withHtmlContent === true;
 
   do {
@@ -423,7 +483,9 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     // Skip archived items
     const filtered = (data.results || []).filter(article => {
       const savedDate = new Date(article.saved_at);
-      return savedDate < cutoffDate && article.location !== 'archive';
+      const beforeOk = toCutoff ? savedDate <= toCutoff : true;
+      const fromOk = fromCutoff ? savedDate >= fromCutoff : true;
+      return beforeOk && fromOk && article.location !== 'archive';
     });
 
     allArticles.push(...filtered);
@@ -434,37 +496,57 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
 }
 
 // Helper: Delete article from Readwise
-async function deleteArticle(env, articleId) {
-  const response = await fetch(
-    `https://readwise.io/api/v3/delete/${articleId}/`,
-    {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Token ${env.READWISE_TOKEN}`,
-      },
-    }
-  );
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if (!response.ok && response.status !== 204) {
+function isRetryableStatus(status) {
+  return status === 429 || status >= 500;
+}
+
+async function deleteArticle(env, articleId) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(
+      `https://readwise.io/api/v3/delete/${articleId}/`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Token ${env.READWISE_TOKEN}`,
+        },
+      }
+    );
+
+    if (response.ok || response.status === 204) return;
+    if (attempt < maxAttempts && isRetryableStatus(response.status)) {
+      await sleep(200 * attempt);
+      continue;
+    }
     throw new Error(`Delete failed: ${response.status}`);
   }
 }
 
 // Helper: Archive article in Readwise
 async function archiveArticle(env, articleId) {
-  const response = await fetch(
-    `https://readwise.io/api/v3/update/${articleId}/`,
-    {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Token ${env.READWISE_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ location: 'archive' }),
-    }
-  );
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(
+      `https://readwise.io/api/v3/update/${articleId}/`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Token ${env.READWISE_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ location: 'archive' }),
+      }
+    );
 
-  if (!response.ok) {
+    if (response.ok) return;
+    if (attempt < maxAttempts && isRetryableStatus(response.status)) {
+      await sleep(200 * attempt);
+      continue;
+    }
     throw new Error(`Archive failed: ${response.status}`);
   }
 }
@@ -524,8 +606,8 @@ function getArticleThumbnail(article) {
 }
 
 function deriveOpenUrl(article) {
-  const sourceUrl = normalizeHttpUrl(article.source_url);
-  const readwiseUrl = normalizeHttpUrl(article.url);
+  const sourceUrl = cleanOpenUrl(normalizeHttpUrl(decodeHtmlEntities(article.source_url)));
+  const readwiseUrl = cleanOpenUrl(normalizeHttpUrl(decodeHtmlEntities(article.url)));
   const htmlUrl = extractFirstHttpUrlFromHtml(article.html_content);
 
   if (sourceUrl && !looksLikeEmailAddress(sourceUrl)) {
@@ -548,6 +630,31 @@ function normalizeHttpUrl(value) {
     return parsed.toString();
   } catch {
     return null;
+  }
+}
+
+function cleanOpenUrl(url) {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    for (const key of [...parsed.searchParams.keys()]) {
+      const lower = key.toLowerCase();
+      if (
+        lower.startsWith('utm_')
+        || lower === 'token'
+        || lower === '_bhlid'
+        || lower === 'fbclid'
+        || lower === 'gclid'
+      ) {
+        parsed.searchParams.delete(key);
+      }
+    }
+    if (parsed.hash && parsed.hash.toLowerCase().includes('play')) {
+      parsed.hash = '';
+    }
+    return parsed.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -582,22 +689,68 @@ function extractImageFromHtml(html) {
 
 function extractFirstHttpUrlFromHtml(html) {
   if (!html || typeof html !== 'string') return null;
-  const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
-    || html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i);
+  const decodedHtml = decodeHtmlEntities(html);
+  const canonicalMatch = decodedHtml.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
+    || decodedHtml.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i);
   if (canonicalMatch && canonicalMatch[1]) {
-    const canonical = normalizeHttpUrl(canonicalMatch[1]);
+    const canonical = cleanOpenUrl(normalizeHttpUrl(canonicalMatch[1]));
     if (canonical) return canonical;
   }
 
-  const hrefMatches = html.match(/href=["']([^"']+)["']/ig) || [];
+  const hrefMatches = decodedHtml.match(/href=["']([^"']+)["']/ig) || [];
   for (const raw of hrefMatches) {
     const extracted = raw.replace(/^href=["']|["']$/g, '');
-    const normalized = normalizeHttpUrl(extracted);
+    const normalized = cleanOpenUrl(normalizeHttpUrl(extracted));
     if (!normalized) continue;
     if (isReadwiseDomain(normalized)) continue;
     return normalized;
   }
   return null;
+}
+
+function decodeHtmlEntities(value) {
+  if (!value || typeof value !== 'string') return value;
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function buildSearchableText(article) {
+  const chunks = [
+    article.title,
+    article.author,
+    article.source_url,
+    article.url,
+    article.summary,
+    article.notes,
+    article.site_name,
+    article.content,
+  ];
+  if (typeof article.html_content === 'string' && article.html_content.length > 0) {
+    const plain = article.html_content
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (plain) chunks.push(plain.slice(0, 20000));
+  }
+  return chunks.filter(Boolean).join(' ').toLowerCase();
+}
+
+function startOfDay(dateValue) {
+  const d = new Date(dateValue);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfDay(dateValue) {
+  const d = new Date(dateValue);
+  d.setHours(23, 59, 59, 999);
+  return d;
 }
 
 const HTML_APP = `<!DOCTYPE html>
@@ -819,6 +972,7 @@ const HTML_APP = `<!DOCTYPE html>
       overflow-x: auto;
     }
     .tab {
+      display: inline-block;
       padding: 0.75rem 0.95rem;
       background: none;
       border: none;
@@ -828,6 +982,7 @@ const HTML_APP = `<!DOCTYPE html>
       border-bottom: 2px solid transparent;
       margin-bottom: -1px;
       white-space: nowrap;
+      text-decoration: none;
     }
     .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
     .tab:hover:not(.active) { color: var(--text); }
@@ -887,6 +1042,23 @@ const HTML_APP = `<!DOCTYPE html>
       margin-top: 0.5rem;
       flex-wrap: wrap;
     }
+    .date-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      align-items: end;
+    }
+    .shortcut-targets {
+      display: inline-flex;
+      gap: 0.4rem;
+      margin-top: 0.4rem;
+      margin-bottom: 0.35rem;
+    }
+    .shortcut-target-btn.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+    }
     .quick-date {
       padding: 0.25rem 0.75rem;
       background: var(--bg);
@@ -932,6 +1104,70 @@ const HTML_APP = `<!DOCTYPE html>
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+    .preview-search {
+      min-width: 220px;
+      flex: 1;
+      max-width: 420px;
+    }
+    .preview-search-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex: 1;
+      min-width: 240px;
+      max-width: 480px;
+    }
+    .search-clear-btn {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--text-muted);
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .search-clear-btn:hover {
+      background: var(--bg);
+      color: var(--text);
+    }
+    .swipe-item {
+      position: relative;
+      overflow: hidden;
+    }
+    .swipe-bg {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 50%;
+      display: flex;
+      align-items: center;
+      color: white;
+      font-weight: 600;
+      font-size: 0.85rem;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .swipe-bg.right {
+      left: 0;
+      justify-content: flex-start;
+      padding-left: 0.8rem;
+      background: #dc2626;
+    }
+    .swipe-bg.left {
+      right: 0;
+      justify-content: flex-end;
+      padding-right: 0.8rem;
+      background: #2563eb;
+    }
+    .swipe-content {
+      position: relative;
+      background: var(--card);
+      transition: transform 0.15s ease;
+      cursor: grab;
+      touch-action: pan-y;
+    }
     .pagination-controls {
       display: inline-flex;
       align-items: center;
@@ -950,6 +1186,16 @@ const HTML_APP = `<!DOCTYPE html>
     }
     .about-list { margin-left: 1rem; color: var(--text-muted); }
     .about-list li { margin-bottom: 0.35rem; }
+    .history-list {
+      margin-top: 0.5rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.6rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .history-item {
+      margin-bottom: 0.35rem;
+    }
     .version-badge {
       position: fixed;
       right: 0.75rem;
@@ -985,10 +1231,10 @@ const HTML_APP = `<!DOCTYPE html>
     </header>
 
     <div class="tabs">
-      <button class="tab active" data-tab="cleanup">Cleanup</button>
-      <button class="tab" data-tab="deleted">Deleted History <span id="deleted-count" class="badge" style="display:none">0</span></button>
-      <button class="tab" data-tab="settings">Settings</button>
-      <button class="tab" data-tab="about">About</button>
+      <a class="tab active" data-tab="cleanup" href="/">Cleanup</a>
+      <a class="tab" data-tab="deleted" href="/deleted">Deleted History <span id="deleted-count" class="badge" style="display:none">0</span></a>
+      <a class="tab" data-tab="settings" href="/settings">Settings</a>
+      <a class="tab" data-tab="about" href="/about">About</a>
     </div>
 
     <div id="cleanup-tab">
@@ -1004,14 +1250,29 @@ const HTML_APP = `<!DOCTYPE html>
           </select>
         </div>
         <div class="form-group">
-          <label for="before-date">Items saved before</label>
-          <input type="date" id="before-date">
+          <label for="from-date">Date Range</label>
+          <div class="shortcut-targets">
+            <button class="btn btn-outline shortcut-target-btn active" type="button" id="shortcut-target-end">Apply to End</button>
+            <button class="btn btn-outline shortcut-target-btn" type="button" id="shortcut-target-start">Apply to Start</button>
+          </div>
+          <div class="date-row">
+            <div>
+              <label for="to-date">End</label>
+              <input type="date" id="to-date">
+            </div>
+            <div>
+              <label for="from-date">Start (blank = all time)</label>
+              <input type="date" id="from-date">
+            </div>
+          </div>
           <div class="quick-dates">
-            <span class="quick-date" data-days="7">1 week ago</span>
-            <span class="quick-date" data-days="30">1 month ago</span>
-            <span class="quick-date" data-days="90">3 months ago</span>
-            <span class="quick-date" data-days="180">6 months ago</span>
-            <span class="quick-date" data-days="365">1 year ago</span>
+            <button type="button" class="quick-date" data-action="today">Today</button>
+            <button type="button" class="quick-date" data-action="all-time">All Time</button>
+            <button type="button" class="quick-date" data-days="7">1 week ago</button>
+            <button type="button" class="quick-date" data-days="30">1 month ago</button>
+            <button type="button" class="quick-date" data-days="90">3 months ago</button>
+            <button type="button" class="quick-date" data-days="180">6 months ago</button>
+            <button type="button" class="quick-date" data-days="365">1 year ago</button>
           </div>
         </div>
         <div class="btn-group">
@@ -1031,7 +1292,11 @@ const HTML_APP = `<!DOCTYPE html>
           </div>
         </div>
         <div class="preview-top-controls" id="preview-top-controls" style="display:none">
-          <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All</label>
+          <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All (filtered)</label>
+          <div class="preview-search-wrap">
+            <input class="preview-search" type="text" id="preview-search" placeholder="Search preview (title, author, content)">
+            <button type="button" class="search-clear-btn" id="preview-search-clear" title="Clear search">×</button>
+          </div>
           <div class="preview-actions">
             <button class="btn btn-outline" id="open-selected-btn" disabled>Open Selected</button>
             <button class="btn btn-danger" id="delete-btn" disabled>Delete Selected</button>
@@ -1116,6 +1381,7 @@ const HTML_APP = `<!DOCTYPE html>
         <p style="margin-top: 0.9rem; color: var(--text-muted);">
           Privacy: this app stores settings and deleted-item history in your Cloudflare KV namespace only.
         </p>
+        <div class="history-list" id="version-history"></div>
       </div>
     </div>
   </div>
@@ -1124,11 +1390,17 @@ const HTML_APP = `<!DOCTYPE html>
 
   <script>
     var APP_VERSION = '${APP_VERSION}';
+    var VERSION_HISTORY = ${JSON.stringify(VERSION_HISTORY)};
     var currentCount = 0;
     var previewData = [];
     var selectedPreviewIds = new Set();
     var previewPage = 1;
     var previewPageSize = 10;
+    var previewSearch = '';
+    var activeDateShortcutTarget = 'to';
+    var swipeStateById = {};
+    var cleanupInFlight = false;
+    var cleanupBatchSize = 20;
     var deletedItems = [];
     var selectedItems = new Set();
     var lastQuery = null;
@@ -1140,8 +1412,13 @@ const HTML_APP = `<!DOCTYPE html>
     };
 
     var locationSelect = document.getElementById('location');
-    var beforeDateInput = document.getElementById('before-date');
+    var fromDateInput = document.getElementById('from-date');
+    var toDateInput = document.getElementById('to-date');
+    var shortcutTargetEndBtn = document.getElementById('shortcut-target-end');
+    var shortcutTargetStartBtn = document.getElementById('shortcut-target-start');
     var previewBtn = document.getElementById('preview-btn');
+    var previewSearchInput = document.getElementById('preview-search');
+    var previewSearchClearBtn = document.getElementById('preview-search-clear');
     var openSelectedBtn = document.getElementById('open-selected-btn');
     var deleteBtn = document.getElementById('delete-btn');
     var archiveBtn = document.getElementById('archive-btn');
@@ -1167,17 +1444,39 @@ const HTML_APP = `<!DOCTYPE html>
     var settingsDefaultDays = document.getElementById('setting-default-days');
     var settingsPreviewLimit = document.getElementById('setting-preview-limit');
     var settingsConfirmActions = document.getElementById('setting-confirm-actions');
+    var TAB_ROUTES = {
+      cleanup: '/',
+      deleted: '/deleted',
+      settings: '/settings',
+      about: '/about',
+    };
+    var ROUTE_TABS = {
+      '/': 'cleanup',
+      '/deleted': 'deleted',
+      '/settings': 'settings',
+      '/about': 'about',
+    };
+
+    function formatInputDate(date) {
+      return date.toISOString().split('T')[0];
+    }
 
     function setDateFromDays(days) {
       var safeDays = Number.isFinite(days) ? days : 30;
       var date = new Date();
       date.setDate(date.getDate() - safeDays);
-      beforeDateInput.value = date.toISOString().split('T')[0];
+      var formatted = formatInputDate(date);
+      if (activeDateShortcutTarget === 'from') {
+        fromDateInput.value = formatted;
+      } else {
+        toDateInput.value = formatted;
+      }
     }
 
     function applySettingsToUI() {
       locationSelect.value = settings.defaultLocation;
-      setDateFromDays(settings.defaultDays);
+      fromDateInput.value = '';
+      toDateInput.value = formatInputDate(new Date());
       previewPageSize = settings.previewLimit;
       settingsDefaultLocation.value = settings.defaultLocation;
       settingsDefaultDays.value = settings.defaultDays;
@@ -1186,39 +1485,107 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function buildQueryKey() {
-      return locationSelect.value + '|' + beforeDateInput.value + '|' + settings.previewLimit;
+      return [
+        locationSelect.value,
+        fromDateInput.value || '',
+        toDateInput.value || '',
+        settings.previewLimit
+      ].join('|');
     }
 
+    function on(el, eventName, handler) {
+      if (!el) return;
+      el.addEventListener(eventName, handler);
+    }
+
+    function updateDateTargetButtons() {
+      shortcutTargetEndBtn.classList.toggle('active', activeDateShortcutTarget === 'to');
+      shortcutTargetStartBtn.classList.toggle('active', activeDateShortcutTarget === 'from');
+    }
+
+    on(shortcutTargetEndBtn, 'click', function() {
+      activeDateShortcutTarget = 'to';
+      updateDateTargetButtons();
+    });
+
+    on(shortcutTargetStartBtn, 'click', function() {
+      activeDateShortcutTarget = 'from';
+      updateDateTargetButtons();
+    });
+    updateDateTargetButtons();
+
     document.querySelectorAll('.quick-date').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+      on(btn, 'click', function() {
+        if (btn.dataset.action === 'today') {
+          var today = formatInputDate(new Date());
+          if (activeDateShortcutTarget === 'from') {
+            fromDateInput.value = today;
+          } else {
+            toDateInput.value = today;
+          }
+          return;
+        }
+        if (btn.dataset.action === 'all-time') {
+          if (activeDateShortcutTarget === 'from') {
+            fromDateInput.value = '';
+          } else {
+            toDateInput.value = formatInputDate(new Date());
+          }
+          return;
+        }
         var days = parseInt(btn.dataset.days, 10);
         setDateFromDays(days);
       });
     });
 
+    function normalizePath(pathname) {
+      if (!pathname || pathname === '') return '/';
+      if (pathname.length > 1 && pathname.endsWith('/')) return pathname.slice(0, -1);
+      return pathname;
+    }
+
+    function getTabFromPath(pathname) {
+      var normalized = normalizePath(pathname);
+      return ROUTE_TABS[normalized] || 'cleanup';
+    }
+
+    function setActiveTab(tabName, options) {
+      var opts = options || {};
+      var shouldPush = opts.push !== false;
+      document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+      var activeTabEl = document.querySelector('.tab[data-tab="' + tabName + '"]');
+      if (activeTabEl) activeTabEl.classList.add('active');
+
+      document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? 'block' : 'none';
+      document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
+      document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
+      document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
+
+      if (tabName === 'deleted') {
+        loadDeletedItems();
+      }
+
+      var targetPath = TAB_ROUTES[tabName] || '/';
+      if (shouldPush && normalizePath(window.location.pathname) !== targetPath) {
+        history.pushState({ tab: tabName }, '', targetPath);
+      }
+    }
+
     document.querySelectorAll('.tab').forEach(function(tab) {
-      tab.addEventListener('click', function() {
-        document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-        tab.classList.add('active');
-
-        var tabName = tab.dataset.tab;
-        document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? 'block' : 'none';
-        document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
-        document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
-        document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
-
-        if (tabName === 'deleted') {
-          loadDeletedItems();
-        }
+      on(tab, 'click', function(evt) {
+        evt.preventDefault();
+        setActiveTab(tab.dataset.tab, { push: true });
       });
     });
 
-    previewBtn.addEventListener('click', async function() {
-      var before = beforeDateInput.value;
-      if (!before) {
-        showToast('Please select a date', 'warning');
-        return;
-      }
+    on(window, 'popstate', function() {
+      setActiveTab(getTabFromPath(window.location.pathname), { push: false });
+    });
+
+    on(previewBtn, 'click', async function() {
+      var fromDate = fromDateInput.value || '';
+      var toDate = toDateInput.value || '';
+      if (!toDate) toDate = formatInputDate(new Date());
 
       var queryKey = buildQueryKey();
       if (lastQuery === queryKey && previewData.length > 0) {
@@ -1232,7 +1599,9 @@ const HTML_APP = `<!DOCTYPE html>
       previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
 
       try {
-        var res = await fetch('/api/preview?location=' + locationSelect.value + '&before=' + before);
+        var params = new URLSearchParams({ location: locationSelect.value, to: toDate });
+        if (fromDate) params.set('from', fromDate);
+        var res = await fetch('/api/preview?' + params.toString());
         var data = await res.json();
         if (data.error) throw new Error(data.error);
 
@@ -1258,26 +1627,46 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
+    function getFilteredPreviewItems() {
+      if (!previewSearch) return previewData;
+      return previewData.filter(function(article) {
+        return (article.searchable || '').includes(previewSearch);
+      });
+    }
+
+    function getActiveSelectedIds() {
+      if (!previewSearch) return Array.from(selectedPreviewIds);
+      var filteredIds = new Set(getFilteredPreviewItems().map(function(item) { return String(item.id); }));
+      return Array.from(selectedPreviewIds).filter(function(id) { return filteredIds.has(id); });
+    }
+
     function renderPreview() {
-      if (previewData.length === 0) {
-        previewList.innerHTML = '<div class="empty">No items to preview</div>';
-        previewTopControls.style.display = 'none';
+      var filtered = getFilteredPreviewItems();
+      if (filtered.length === 0) {
+        previewList.innerHTML = '<div class="empty">No items match this filter</div>';
         previewBottomControls.style.display = 'none';
         syncPreviewSelectionUI();
         return;
       }
 
-      var totalPages = Math.max(1, Math.ceil(previewData.length / previewPageSize));
+      var totalPages = Math.max(1, Math.ceil(filtered.length / previewPageSize));
       if (previewPage > totalPages) previewPage = totalPages;
       var start = (previewPage - 1) * previewPageSize;
       var end = start + previewPageSize;
-      var pageItems = previewData.slice(start, end);
+      var pageItems = filtered.slice(start, end);
 
       var html = '<div class="article-list">';
       pageItems.forEach(function(article) {
         var articleId = String(article.id);
         var checked = selectedPreviewIds.has(articleId) ? ' checked' : '';
-        html += '<div class="article-item">';
+        html += '<div class="swipe-item" data-article-id="' + escapeHtml(articleId) + '">';
+        html += '<div class="swipe-bg right">Delete</div>';
+        html += '<div class="swipe-bg left">Archive</div>';
+        html += '<div class="article-item swipe-content"';
+        html += ' onpointerdown="handlePreviewPointerDown(event,this)"';
+        html += ' onpointermove="handlePreviewPointerMove(event,this)"';
+        html += ' onpointerup="handlePreviewPointerUp(event,this)"';
+        html += ' onpointercancel="handlePreviewPointerCancel(event,this)">';
         html += '<input type="checkbox" data-article-id="' + escapeHtml(articleId) + '" onchange="togglePreviewItem(this)"' + checked + '>';
         if (article.thumbnail) {
           html += '<img class="preview-thumb" src="' + escapeHtml(article.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
@@ -1285,20 +1674,21 @@ const HTML_APP = `<!DOCTYPE html>
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
         html += '<div class="article-info">';
-        html += '<div class="title-row"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener noreferrer"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
+        html += '<div class="title-row"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener noreferrer" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
         }
-        html += ' · ' + formatDate(article.savedAt) + '</div></div></div>';
+        html += ' · ' + formatDate(article.savedAt) + '</div></div></div></div>';
       });
       html += '</div>';
 
-      if (currentCount > previewData.length) {
-        html += '<p style="text-align:center;color:var(--text-muted);margin-top:0.5rem;font-size:0.85rem">Showing ' + previewData.length + ' of ' + currentCount + ' items</p>';
-      }
-
       previewList.innerHTML = html;
+      previewList.querySelectorAll('.preview-open-link').forEach(function(link) {
+        on(link, 'click', function(evt) {
+          openPreviewUrl(evt, link.dataset.openUrl || link.getAttribute('href') || '');
+        });
+      });
       previewPageLabel.textContent = 'Page ' + previewPage + ' / ' + totalPages;
       previewPrevBtn.disabled = previewPage <= 1;
       previewNextBtn.disabled = previewPage >= totalPages;
@@ -1306,11 +1696,12 @@ const HTML_APP = `<!DOCTYPE html>
       syncPreviewSelectionUI();
     }
 
-    deleteBtn.addEventListener('click', function() { performCleanup('delete'); });
-    archiveBtn.addEventListener('click', function() { performCleanup('archive'); });
+    on(deleteBtn, 'click', function() { performCleanup('delete'); });
+    on(archiveBtn, 'click', function() { performCleanup('archive'); });
 
     function syncPreviewSelectionUI() {
-      if (previewData.length === 0) {
+      var filtered = getFilteredPreviewItems();
+      if (previewData.length === 0 || filtered.length === 0) {
         selectAllPreview.checked = false;
         selectAllPreview.indeterminate = false;
         openSelectedBtn.disabled = true;
@@ -1322,14 +1713,17 @@ const HTML_APP = `<!DOCTYPE html>
         return;
       }
       var selectedCount = selectedPreviewIds.size;
-      selectAllPreview.checked = selectedCount === previewData.length;
-      selectAllPreview.indeterminate = selectedCount > 0 && selectedCount < previewData.length;
-      openSelectedBtn.disabled = selectedCount === 0;
-      deleteBtn.disabled = selectedCount === 0;
-      archiveBtn.disabled = selectedCount === 0;
-      openSelectedBtn.textContent = selectedCount > 0 ? 'Open Selected (' + selectedCount + ')' : 'Open Selected';
-      deleteBtn.textContent = selectedCount > 0 ? 'Delete Selected (' + selectedCount + ')' : 'Delete Selected';
-      archiveBtn.textContent = selectedCount > 0 ? 'Archive Selected (' + selectedCount + ')' : 'Archive Selected';
+      var filteredIds = new Set(filtered.map(function(item) { return String(item.id); }));
+      var filteredSelected = [...selectedPreviewIds].filter(function(id) { return filteredIds.has(id); }).length;
+      var displayCount = previewSearch ? filteredSelected : selectedCount;
+      selectAllPreview.checked = filteredSelected > 0 && filteredSelected === filtered.length;
+      selectAllPreview.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
+      openSelectedBtn.disabled = displayCount === 0;
+      deleteBtn.disabled = displayCount === 0;
+      archiveBtn.disabled = displayCount === 0;
+      openSelectedBtn.textContent = displayCount > 0 ? 'Open Selected (' + displayCount + ')' : 'Open Selected';
+      deleteBtn.textContent = displayCount > 0 ? 'Delete Selected (' + displayCount + ')' : 'Delete Selected';
+      archiveBtn.textContent = displayCount > 0 ? 'Archive Selected (' + displayCount + ')' : 'Archive Selected';
     }
 
     function togglePreviewItem(checkbox) {
@@ -1340,32 +1734,135 @@ const HTML_APP = `<!DOCTYPE html>
     }
     window.togglePreviewItem = togglePreviewItem;
 
-    selectAllPreview.addEventListener('change', function() {
-      selectedPreviewIds.clear();
+    on(selectAllPreview, 'change', function() {
+      var filtered = getFilteredPreviewItems();
       if (selectAllPreview.checked) {
-        previewData.forEach(function(item) { selectedPreviewIds.add(String(item.id)); });
+        filtered.forEach(function(item) { selectedPreviewIds.add(String(item.id)); });
+      } else {
+        filtered.forEach(function(item) { selectedPreviewIds.delete(String(item.id)); });
       }
       renderPreview();
     });
 
-    previewPrevBtn.addEventListener('click', function() {
+    on(previewPrevBtn, 'click', function() {
       if (previewPage > 1) {
         previewPage--;
         renderPreview();
       }
     });
 
-    previewNextBtn.addEventListener('click', function() {
-      var totalPages = Math.max(1, Math.ceil(previewData.length / previewPageSize));
+    on(previewNextBtn, 'click', function() {
+      var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
       if (previewPage < totalPages) {
         previewPage++;
         renderPreview();
       }
     });
 
-    openSelectedBtn.addEventListener('click', function() {
-      if (selectedPreviewIds.size === 0) return;
-      var selected = previewData.filter(function(item) { return selectedPreviewIds.has(String(item.id)); });
+    on(previewSearchInput, 'input', function() {
+      previewSearch = (previewSearchInput.value || '').trim().toLowerCase();
+      previewPage = 1;
+      renderPreview();
+    });
+
+    on(previewSearchClearBtn, 'click', function() {
+      previewSearch = '';
+      previewSearchInput.value = '';
+      previewPage = 1;
+      renderPreview();
+      previewSearchInput.focus();
+    });
+
+    function runSwipeAction(articleId, action) {
+      var id = String(articleId);
+      selectedPreviewIds = new Set([id]);
+      syncPreviewSelectionUI();
+      performCleanup(action, true);
+    }
+
+    function handlePreviewPointerDown(evt, element) {
+      if (
+        evt.target &&
+        evt.target.closest &&
+        (evt.target.closest('.preview-open-link') || evt.target.closest('input[type="checkbox"]'))
+      ) {
+        return;
+      }
+      var parent = element.parentElement;
+      var articleId = parent.dataset.articleId;
+      swipeStateById[articleId] = { startX: evt.clientX, deltaX: 0, pointerId: evt.pointerId };
+      element.style.transition = 'none';
+      if (element.setPointerCapture) {
+        element.setPointerCapture(evt.pointerId);
+      }
+    }
+    window.handlePreviewPointerDown = handlePreviewPointerDown;
+
+    function handlePreviewPointerMove(evt, element) {
+      var parent = element.parentElement;
+      var articleId = parent.dataset.articleId;
+      var state = swipeStateById[articleId];
+      if (!state) return;
+      if (state.pointerId !== evt.pointerId) return;
+      state.deltaX = evt.clientX - state.startX;
+      element.style.transform = 'translateX(' + Math.max(-120, Math.min(120, state.deltaX)) + 'px)';
+    }
+    window.handlePreviewPointerMove = handlePreviewPointerMove;
+
+    function finishPreviewSwipe(evt, element) {
+      var parent = element.parentElement;
+      var articleId = parent.dataset.articleId;
+      var state = swipeStateById[articleId];
+      element.style.transition = 'transform 0.15s ease';
+      if (!state) {
+        element.style.transform = 'translateX(0px)';
+        return;
+      }
+      if (state.deltaX <= -80) {
+        element.style.transform = 'translateX(-120px)';
+        setTimeout(function() { runSwipeAction(articleId, 'archive'); }, 120);
+      } else if (state.deltaX >= 80) {
+        element.style.transform = 'translateX(120px)';
+        setTimeout(function() { runSwipeAction(articleId, 'delete'); }, 120);
+      } else {
+        element.style.transform = 'translateX(0px)';
+      }
+      delete swipeStateById[articleId];
+    }
+    function handlePreviewPointerUp(evt, element) {
+      finishPreviewSwipe(evt, element);
+    }
+    window.handlePreviewPointerUp = handlePreviewPointerUp;
+    function handlePreviewPointerCancel(evt, element) {
+      finishPreviewSwipe(evt, element);
+    }
+    window.handlePreviewPointerCancel = handlePreviewPointerCancel;
+
+    function openPreviewUrl(evt, url) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      if (!url) return;
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+    window.openPreviewUrl = openPreviewUrl;
+
+    async function parseApiJson(res) {
+      var text = await res.text();
+      var contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (contentType.indexOf('application/json') === -1) {
+        throw new Error('Server returned non-JSON response (' + res.status + ')');
+      }
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        throw new Error('Invalid JSON response from server');
+      }
+    }
+
+    on(openSelectedBtn, 'click', function() {
+      var activeIds = new Set(getActiveSelectedIds());
+      if (activeIds.size === 0) return;
+      var selected = previewData.filter(function(item) { return activeIds.has(String(item.id)); });
       selected.forEach(function(item) {
         if (item.url) {
           window.open(item.url, '_blank', 'noopener,noreferrer');
@@ -1373,19 +1870,25 @@ const HTML_APP = `<!DOCTYPE html>
       });
     });
 
-    async function performCleanup(action) {
-      var selectedCount = selectedPreviewIds.size;
+    async function performCleanup(action, skipConfirm) {
+      if (cleanupInFlight) {
+        showToast('Please wait for the current action to finish', 'warning');
+        return;
+      }
+      var activeSelectedIds = getActiveSelectedIds();
+      var selectedCount = activeSelectedIds.length;
       if (selectedCount === 0) {
         showToast('Select at least one item first', 'warning');
         return;
       }
-      if (settings.confirmActions) {
+      if (settings.confirmActions && !skipConfirm) {
         var confirmed = window.confirm('Confirm ' + action + ' for ' + selectedCount + ' selected items?');
         if (!confirmed) return;
       }
 
       deleteBtn.disabled = true;
       archiveBtn.disabled = true;
+      cleanupInFlight = true;
       var btn = action === 'delete' ? deleteBtn : archiveBtn;
       var originalText = btn.innerHTML;
       btn.innerHTML = '<span class="spinner"></span> Processing...';
@@ -1393,25 +1896,92 @@ const HTML_APP = `<!DOCTYPE html>
       document.getElementById('progress-bar').style.width = '50%';
 
       try {
-        var res = await fetch('/api/cleanup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: locationSelect.value,
-            beforeDate: beforeDateInput.value,
-            action: action,
-            ids: Array.from(selectedPreviewIds)
-          })
-        });
-        var data = await res.json();
-        if (data.error) throw new Error(data.error);
+        var selectedItems = previewData
+          .filter(function(item) { return activeSelectedIds.indexOf(String(item.id)) !== -1; })
+          .map(function(item) {
+            return {
+              id: String(item.id),
+              title: item.title || '',
+              author: item.author || '',
+              url: item.url || '',
+              savedAt: item.savedAt || '',
+              thumbnail: item.thumbnail || null
+            };
+          });
+
+        var processedTotal = 0;
+        var allErrors = [];
+        var allProcessedIds = [];
+        for (var batchStart = 0; batchStart < activeSelectedIds.length; batchStart += cleanupBatchSize) {
+          var idsBatch = activeSelectedIds.slice(batchStart, batchStart + cleanupBatchSize);
+          var batchIdSet = new Set(idsBatch);
+          var itemsBatch = selectedItems.filter(function(item) { return batchIdSet.has(String(item.id)); });
+
+          var progressPct = Math.round((batchStart / activeSelectedIds.length) * 90) + 5;
+          document.getElementById('progress-bar').style.width = String(progressPct) + '%';
+
+          var res = await fetch('/api/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              location: locationSelect.value,
+              fromDate: fromDateInput.value || undefined,
+              toDate: toDateInput.value || formatInputDate(new Date()),
+              action: action,
+              ids: idsBatch,
+              items: itemsBatch
+            })
+          });
+          var batchData = await parseApiJson(res);
+          if (batchData.error) throw new Error(batchData.error);
+          processedTotal += batchData.processed || 0;
+          if (Array.isArray(batchData.processedIds)) {
+            allProcessedIds = allProcessedIds.concat(batchData.processedIds.map(function(id) { return String(id); }));
+          } else {
+            allProcessedIds = allProcessedIds.concat(idsBatch.map(function(id) { return String(id); }));
+          }
+          if (Array.isArray(batchData.errors)) {
+            allErrors = allErrors.concat(batchData.errors);
+          }
+        }
+        var data = {
+          processed: processedTotal,
+          processedIds: allProcessedIds,
+          errors: allErrors.length > 0 ? allErrors : undefined
+        };
 
         document.getElementById('progress-bar').style.width = '100%';
-        showToast((action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' items', 'success');
+        if (data.processed < selectedCount) {
+          showToast(
+            (action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' of ' + selectedCount + ' items',
+            'warning'
+          );
+        } else {
+          showToast((action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' items', 'success');
+        }
 
-        setTimeout(function() {
-          currentCount = 0;
-          previewData = [];
+        var successfulIds = new Set(
+          Array.isArray(data.processedIds) && data.processedIds.length > 0
+            ? data.processedIds.map(function(id) { return String(id); })
+            : activeSelectedIds.map(function(id) { return String(id); })
+        );
+        if (Array.isArray(data.errors)) {
+          data.errors.forEach(function(err) {
+            if (err && err.id !== undefined && err.id !== null) {
+              successfulIds.delete(String(err.id));
+            }
+          });
+        }
+
+        if (successfulIds.size > 0) {
+          previewData = previewData.filter(function(item) {
+            return !successfulIds.has(String(item.id));
+          });
+          successfulIds.forEach(function(id) { selectedPreviewIds.delete(String(id)); });
+          currentCount = Math.max(0, currentCount - successfulIds.size);
+        }
+
+        if (previewData.length === 0) {
           selectedPreviewIds.clear();
           lastQuery = null;
           previewPage = 1;
@@ -1420,13 +1990,23 @@ const HTML_APP = `<!DOCTYPE html>
           previewTopControls.style.display = 'none';
           previewBottomControls.style.display = 'none';
           resultsCard.style.display = 'none';
-          document.getElementById('progress').style.display = 'none';
-          document.getElementById('progress-bar').style.width = '0%';
-          loadDeletedCount();
-        }, 600);
+        } else {
+          var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
+          if (previewPage > totalPages) previewPage = totalPages;
+          itemCountEl.textContent = String(currentCount);
+          renderPreview();
+          previewTopControls.style.display = 'flex';
+          previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
+          resultsCard.style.display = 'block';
+        }
+
+        document.getElementById('progress').style.display = 'none';
+        document.getElementById('progress-bar').style.width = '0%';
+        loadDeletedCount();
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
+        cleanupInFlight = false;
         deleteBtn.disabled = false;
         archiveBtn.disabled = false;
         btn.innerHTML = originalText;
@@ -1456,7 +2036,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
     window.toggleRestoreItem = toggleRestoreItem;
 
-    selectAllDeleted.addEventListener('change', function() {
+    on(selectAllDeleted, 'change', function() {
       selectedItems.clear();
       if (selectAllDeleted.checked) {
         deletedItems.forEach(function(item) { selectedItems.add(item.url); });
@@ -1469,7 +2049,7 @@ const HTML_APP = `<!DOCTYPE html>
       deletedList.innerHTML = '<div class="loading"><span class="spinner"></span> Loading...</div>';
       try {
         var res = await fetch('/api/deleted');
-        var data = await res.json();
+        var data = await parseApiJson(res);
         deletedItems = data.items || [];
         selectedItems.clear();
         renderDeletedItems();
@@ -1482,7 +2062,7 @@ const HTML_APP = `<!DOCTYPE html>
     async function loadDeletedCount() {
       try {
         var res = await fetch('/api/deleted');
-        var data = await res.json();
+        var data = await parseApiJson(res);
         deletedItems = data.items || [];
         updateDeletedBadge();
       } catch (err) {}
@@ -1528,7 +2108,7 @@ const HTML_APP = `<!DOCTYPE html>
       updateSelectedButtons();
     }
 
-    restoreBtn.addEventListener('click', async function() {
+    on(restoreBtn, 'click', async function() {
       if (selectedItems.size === 0) return;
       restoreBtn.disabled = true;
       restoreBtn.innerHTML = '<span class="spinner"></span> Restoring...';
@@ -1550,7 +2130,7 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
-    removeSelectedBtn.addEventListener('click', async function() {
+    on(removeSelectedBtn, 'click', async function() {
       if (selectedItems.size === 0) return;
       try {
         var res = await fetch('/api/clear-deleted', {
@@ -1568,7 +2148,7 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
-    clearHistoryBtn.addEventListener('click', async function() {
+    on(clearHistoryBtn, 'click', async function() {
       if (settings.confirmActions && !window.confirm('Clear all deleted-item history?')) return;
       try {
         var res = await fetch('/api/clear-deleted', { method: 'POST' });
@@ -1584,7 +2164,7 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
-    saveSettingsBtn.addEventListener('click', async function() {
+    on(saveSettingsBtn, 'click', async function() {
       var payload = {
         defaultLocation: settingsDefaultLocation.value,
         defaultDays: parseInt(settingsDefaultDays.value, 10),
@@ -1645,7 +2225,18 @@ const HTML_APP = `<!DOCTYPE html>
       return date.toLocaleDateString('en-US', opts);
     }
 
+    function renderVersionHistory() {
+      var historyEl = document.getElementById('version-history');
+      if (!historyEl) return;
+      var lines = VERSION_HISTORY.map(function(item) {
+        return '<div class="history-item"><strong>v' + escapeHtml(item.version) + '</strong> - ' + escapeHtml(item.note) + '</div>';
+      });
+      historyEl.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem;color:var(--text)">Version History</div>' + lines.join('');
+    }
+
+    setActiveTab(getTabFromPath(window.location.pathname), { push: false });
     loadSettings();
+    renderVersionHistory();
     loadDeletedCount();
   </script>
 </body>

@@ -62,12 +62,12 @@ describe('API Endpoints', () => {
   });
 
   describe('GET /api/count', () => {
-    it('returns 400 without before date', async () => {
+    it('returns 400 without date range', async () => {
       const res = await SELF.fetch('https://example.com/api/count?location=new');
       const data = await res.json();
 
       expect(res.status).toBe(400);
-      expect(data.error).toBe('Missing before date');
+      expect(data.error).toBe('Missing date range');
     });
 
     // Skip test that requires network access to Readwise
@@ -78,12 +78,12 @@ describe('API Endpoints', () => {
   });
 
   describe('GET /api/preview', () => {
-    it('returns 400 without before date', async () => {
+    it('returns 400 without date range', async () => {
       const res = await SELF.fetch('https://example.com/api/preview?location=new');
       const data = await res.json();
 
       expect(res.status).toBe(400);
-      expect(data.error).toBe('Missing before date');
+      expect(data.error).toBe('Missing date range');
     });
   });
 
@@ -302,7 +302,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('1.1.1');
+      expect(data.version).toBe('1.1.15');
     });
   });
 
@@ -341,6 +341,9 @@ describe('PWA Serving', () => {
     expect(html).toContain('data-tab="deleted"');
     expect(html).toContain('data-tab="settings"');
     expect(html).toContain('data-tab="about"');
+    expect(html).toContain('href="/settings"');
+    expect(html).toContain('href="/about"');
+    expect(html).toContain('href="/deleted"');
   });
 
   it('includes location selector', async () => {
@@ -357,6 +360,12 @@ describe('PWA Serving', () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
+    expect(html).toContain('Start (blank = all time)');
+    expect(html).toContain('End');
+    expect(html).toContain('shortcut-target-end');
+    expect(html).toContain('shortcut-target-start');
+    expect(html).toContain('Today');
+    expect(html).toContain('All Time');
     expect(html).toContain('1 week ago');
     expect(html).toContain('1 month ago');
     expect(html).toContain('3 months ago');
@@ -383,6 +392,9 @@ describe('PWA Serving', () => {
     expect(html).toContain('preview-thumb');
     expect(html).toContain('open-selected-btn');
     expect(html).toContain('article-link');
+    expect(html).toContain('preview-search');
+    expect(html).toContain('preview-search-clear');
+    expect(html).toContain('All (filtered)');
   });
 
   it('includes deleted-history selection controls', async () => {
@@ -404,7 +416,8 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v1.1.1');
+    expect(html).toContain('v1.1.15');
+    expect(html).toContain('Version History');
   });
 });
 

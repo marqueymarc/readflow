@@ -1,11 +1,13 @@
 {
   "name": "readwise-cleanup",
-  "version": "1.1.1",
+  "version": "1.1.15",
   "description": "Bulk delete/archive old Readwise Reader items with restoration support",
   "scripts": {
+    "check:ui": "node check-ui-script.mjs",
+    "check:browser": "node check-ui-browser-smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "wrangler deploy"
+    "deploy": "npm run check:ui && npm run check:browser && wrangler deploy"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5.0",
