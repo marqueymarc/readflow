@@ -402,6 +402,9 @@ describe('PWA Serving', () => {
     const html = await res.text();
 
     expect(html).toContain('select-all-deleted');
+    expect(html).toContain('deleted-search');
+    expect(html).toContain('deleted-search-clear');
+    expect(html).toContain('Search deleted history');
     expect(html).toContain('Restore Selected');
     expect(html).toContain('Remove from History');
     expect(html).toContain('Clear History');
