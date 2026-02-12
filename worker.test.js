@@ -303,7 +303,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('1.1.17');
+      expect(data.version).toBe('1.1.19');
     });
   });
 
@@ -395,6 +395,8 @@ describe('PWA Serving', () => {
     expect(html).toContain('article-link');
     expect(html).toContain('preview-search');
     expect(html).toContain('preview-search-clear');
+    expect(html).toContain('preview-sort-added');
+    expect(html).toContain('preview-sort-published');
     expect(html).toContain('All (filtered)');
   });
 
@@ -420,7 +422,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v1.1.17');
+    expect(html).toContain('v1.1.19');
     expect(html).toContain('Version History');
   });
 });

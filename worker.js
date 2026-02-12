@@ -1,8 +1,10 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.17';
+const APP_VERSION = '1.1.19';
 const VERSION_HISTORY = [
+  { version: '1.1.19', note: 'Prevented non-JSON preview failures on large archive scans by limiting preview fetch size and enforcing JSON parse guards in preview requests.' },
+  { version: '1.1.18', note: 'Added preview sort toggle (Added/Published) and right-aligned relevant date for faster scanning.' },
   { version: '1.1.17', note: 'Added Archive as a selectable cleanup location and preserved correct archive filtering in API processing.' },
   { version: '1.1.16', note: 'Preserved checkbox state after swipe actions and improved deleted-history selection/search behavior (default selected, filtered toggle, date-deleted sort).' },
   { version: '1.1.15', note: 'Added non-destructive large-batch smoke coverage and switched cleanup client reconciliation to explicit processed IDs.' },
@@ -143,6 +145,8 @@ async function handlePreview(request, env, corsHeaders) {
   const beforeDate = url.searchParams.get('before');
   const fromDate = url.searchParams.get('from');
   const toDate = url.searchParams.get('to');
+  const requestedLimit = parseInt(url.searchParams.get('limit') || '', 10);
+  const previewLimit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100;
 
   if (!beforeDate && !toDate && !fromDate) {
     return new Response(JSON.stringify({ error: 'Missing date range' }), {
@@ -155,6 +159,7 @@ async function handlePreview(request, env, corsHeaders) {
     withHtmlContent: true,
     fromDate,
     toDate,
+    limit: previewLimit,
   });
   const preview = articles.map(a => ({
     id: a.id,
@@ -162,6 +167,7 @@ async function handlePreview(request, env, corsHeaders) {
     author: a.author || 'Unknown',
     url: deriveOpenUrl(a),
     savedAt: a.saved_at,
+    publishedAt: a.published_date || a.published_at || null,
     site: extractDomain(a.source_url || a.url),
     thumbnail: getArticleThumbnail(a),
     searchable: buildSearchableText(a)
@@ -456,6 +462,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const fromCutoff = options.fromDate ? startOfDay(options.fromDate) : null;
   const toCutoff = options.toDate ? endOfDay(options.toDate) : beforeCutoff;
   const withHtmlContent = options.withHtmlContent === true;
+  const hardLimit = Number.isFinite(options.limit) ? Math.max(1, options.limit) : Infinity;
 
   do {
     const params = new URLSearchParams({
@@ -493,7 +500,11 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
       return beforeOk && fromOk && article.location !== 'archive';
     });
 
-    allArticles.push(...filtered);
+    const remaining = hardLimit - allArticles.length;
+    allArticles.push(...filtered.slice(0, Math.max(0, remaining)));
+    if (allArticles.length >= hardLimit) {
+      break;
+    }
     nextCursor = data.nextPageCursor;
   } while (nextCursor);
 
@@ -1122,6 +1133,46 @@ const HTML_APP = `<!DOCTYPE html>
       min-width: 240px;
       max-width: 480px;
     }
+    .sort-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+      background: white;
+    }
+    .sort-toggle button {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 0.25rem 0.6rem;
+      cursor: pointer;
+    }
+    .sort-toggle button.active {
+      background: var(--bg);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      justify-content: space-between;
+    }
+    .title-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+      flex: 1;
+    }
+    .article-date-right {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      margin-left: 0.6rem;
+      flex: 0 0 auto;
+    }
     .search-clear-btn {
       width: 2rem;
       height: 2rem;
@@ -1302,6 +1353,10 @@ const HTML_APP = `<!DOCTYPE html>
           <div class="preview-search-wrap">
             <input class="preview-search" type="text" id="preview-search" placeholder="Search preview (title, author, content)">
             <button type="button" class="search-clear-btn" id="preview-search-clear" title="Clear search">×</button>
+            <div class="sort-toggle" aria-label="Sort preview by date">
+              <button type="button" id="preview-sort-added" class="active" title="Sort by date added">Added</button>
+              <button type="button" id="preview-sort-published" title="Sort by publication date">Published</button>
+            </div>
           </div>
           <div class="preview-actions">
             <button class="btn btn-outline" id="open-selected-btn" disabled>Open Selected</button>
@@ -1408,6 +1463,7 @@ const HTML_APP = `<!DOCTYPE html>
     var previewPage = 1;
     var previewPageSize = 10;
     var previewSearch = '';
+    var previewSortMode = 'added';
     var activeDateShortcutTarget = 'to';
     var swipeStateById = {};
     var cleanupInFlight = false;
@@ -1431,6 +1487,8 @@ const HTML_APP = `<!DOCTYPE html>
     var previewBtn = document.getElementById('preview-btn');
     var previewSearchInput = document.getElementById('preview-search');
     var previewSearchClearBtn = document.getElementById('preview-search-clear');
+    var previewSortAddedBtn = document.getElementById('preview-sort-added');
+    var previewSortPublishedBtn = document.getElementById('preview-sort-published');
     var openSelectedBtn = document.getElementById('open-selected-btn');
     var deleteBtn = document.getElementById('delete-btn');
     var archiveBtn = document.getElementById('archive-btn');
@@ -1613,10 +1671,14 @@ const HTML_APP = `<!DOCTYPE html>
       previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
 
       try {
-        var params = new URLSearchParams({ location: locationSelect.value, to: toDate });
+        var params = new URLSearchParams({
+          location: locationSelect.value,
+          to: toDate,
+          limit: String(settings.previewLimit || 100)
+        });
         if (fromDate) params.set('from', fromDate);
         var res = await fetch('/api/preview?' + params.toString());
-        var data = await res.json();
+        var data = await parseApiJson(res);
         if (data.error) throw new Error(data.error);
 
         currentCount = data.total || 0;
@@ -1648,6 +1710,25 @@ const HTML_APP = `<!DOCTYPE html>
       });
     }
 
+    function getPreviewSortTimestamp(item) {
+      var rawDate = previewSortMode === 'published' ? item.publishedAt : item.savedAt;
+      var ts = Date.parse(rawDate || '');
+      return Number.isFinite(ts) ? ts : 0;
+    }
+
+    function getSortedFilteredPreviewItems() {
+      var filtered = getFilteredPreviewItems().slice();
+      filtered.sort(function(a, b) {
+        return getPreviewSortTimestamp(b) - getPreviewSortTimestamp(a);
+      });
+      return filtered;
+    }
+
+    function updatePreviewSortButtons() {
+      previewSortAddedBtn.classList.toggle('active', previewSortMode === 'added');
+      previewSortPublishedBtn.classList.toggle('active', previewSortMode === 'published');
+    }
+
     function getActiveSelectedIds() {
       if (!previewSearch) return Array.from(selectedPreviewIds);
       var filteredIds = new Set(getFilteredPreviewItems().map(function(item) { return String(item.id); }));
@@ -1655,7 +1736,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function renderPreview() {
-      var filtered = getFilteredPreviewItems();
+      var filtered = getSortedFilteredPreviewItems();
       if (filtered.length === 0) {
         previewList.innerHTML = '<div class="empty">No items match this filter</div>';
         previewBottomControls.style.display = 'none';
@@ -1688,7 +1769,12 @@ const HTML_APP = `<!DOCTYPE html>
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
         html += '<div class="article-info">';
-        html += '<div class="title-row"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener noreferrer" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
+        var activeDateValue = previewSortMode === 'published' ? article.publishedAt : article.savedAt;
+        var activeDateLabel = previewSortMode === 'published' ? 'Published' : 'Added';
+        html += '<div class="title-row">';
+        html += '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener noreferrer" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
+        html += '<span class="article-date-right">' + escapeHtml(activeDateLabel) + ' ' + escapeHtml(formatDate(activeDateValue || article.savedAt)) + '</span>';
+        html += '</div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
@@ -1786,6 +1872,21 @@ const HTML_APP = `<!DOCTYPE html>
       renderPreview();
       previewSearchInput.focus();
     });
+
+    on(previewSortAddedBtn, 'click', function() {
+      previewSortMode = 'added';
+      updatePreviewSortButtons();
+      previewPage = 1;
+      renderPreview();
+    });
+
+    on(previewSortPublishedBtn, 'click', function() {
+      previewSortMode = 'published';
+      updatePreviewSortButtons();
+      previewPage = 1;
+      renderPreview();
+    });
+    updatePreviewSortButtons();
 
     function runSwipeAction(articleId, action) {
       var id = String(articleId);
