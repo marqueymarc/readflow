@@ -1,6 +1,14 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
+const APP_VERSION = '1.1.0';
+const DEFAULT_SETTINGS = {
+  defaultLocation: 'new',
+  defaultDays: 30,
+  previewLimit: 100,
+  confirmActions: true,
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -35,7 +43,16 @@ export default {
         return handleRestore(request, env, corsHeaders);
       }
       if (url.pathname === '/api/clear-deleted') {
-        return handleClearDeleted(env, corsHeaders);
+        return handleClearDeleted(request, env, corsHeaders);
+      }
+      if (url.pathname === '/api/settings') {
+        if (request.method === 'POST') {
+          return handleSaveSettings(request, env, corsHeaders);
+        }
+        return handleGetSettings(env, corsHeaders);
+      }
+      if (url.pathname === '/api/version') {
+        return handleGetVersion(corsHeaders);
       }
 
       // Serve PWA
@@ -241,12 +258,103 @@ async function handleRestore(request, env, corsHeaders) {
   });
 }
 
-// Clear all deleted items history
-async function handleClearDeleted(env, corsHeaders) {
+// Clear all deleted items history or a selected subset by URL
+async function handleClearDeleted(request, env, corsHeaders) {
+  let urls = null;
+  try {
+    const bodyText = await request.text();
+    if (bodyText) {
+      const body = JSON.parse(bodyText);
+      if (Array.isArray(body.urls)) {
+        urls = body.urls;
+      }
+    }
+  } catch {
+    urls = null;
+  }
+
+  const deletedItems = await getDeletedItems(env);
+  if (urls && urls.length > 0) {
+    const remaining = deletedItems.filter((item) => !urls.includes(item.url));
+    await env.KV.put('deleted_items', JSON.stringify(remaining));
+    return new Response(JSON.stringify({
+      cleared: true,
+      scope: 'selected',
+      removed: deletedItems.length - remaining.length,
+      remaining: remaining.length,
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
   await env.KV.put('deleted_items', JSON.stringify([]));
-  return new Response(JSON.stringify({ cleared: true }), {
+  return new Response(JSON.stringify({
+    cleared: true,
+    scope: 'all',
+    removed: deletedItems.length,
+    remaining: 0,
+  }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+async function handleGetSettings(env, corsHeaders) {
+  const settings = await getSettings(env);
+  return new Response(JSON.stringify({ settings }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleSaveSettings(request, env, corsHeaders) {
+  const body = await request.json();
+  const settings = sanitizeSettings(body);
+  await env.KV.put('settings', JSON.stringify(settings));
+  return new Response(JSON.stringify({ saved: true, settings }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+function handleGetVersion(corsHeaders) {
+  return new Response(JSON.stringify({ version: APP_VERSION }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function getSettings(env) {
+  try {
+    const stored = await env.KV.get('settings');
+    if (!stored) return { ...DEFAULT_SETTINGS };
+    return sanitizeSettings(JSON.parse(stored));
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function sanitizeSettings(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const defaultLocation = ['new', 'later', 'shortlist', 'feed'].includes(source.defaultLocation)
+    ? source.defaultLocation
+    : DEFAULT_SETTINGS.defaultLocation;
+  const defaultDays = normalizeInt(source.defaultDays, DEFAULT_SETTINGS.defaultDays, 1, 3650);
+  const previewLimit = normalizeInt(source.previewLimit, DEFAULT_SETTINGS.previewLimit, 1, 500);
+  const confirmActions = typeof source.confirmActions === 'boolean'
+    ? source.confirmActions
+    : DEFAULT_SETTINGS.confirmActions;
+
+  return {
+    defaultLocation,
+    defaultDays,
+    previewLimit,
+    confirmActions,
+  };
+}
+
+function normalizeInt(value, fallback, min, max) {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  if (parsed < min) return min;
+  if (parsed > max) return max;
+  return parsed;
 }
 
 // Helper: Fetch articles older than date from specific location
@@ -362,7 +470,6 @@ function extractDomain(url) {
   }
 }
 
-// Embedded PWA HTML - using single quotes in JS to avoid escaping issues
 const HTML_APP = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -373,7 +480,6 @@ const HTML_APP = `<!DOCTYPE html>
   <title>Readwise Cleanup</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
       --primary: #4f46e5;
       --primary-hover: #4338ca;
@@ -388,7 +494,6 @@ const HTML_APP = `<!DOCTYPE html>
       --border: #e2e8f0;
       --shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
-
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg);
@@ -396,59 +501,50 @@ const HTML_APP = `<!DOCTYPE html>
       min-height: 100vh;
       padding: 1rem;
     }
-
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-    }
-
+    .container { max-width: 840px; margin: 0 auto; }
     header {
       text-align: center;
-      padding: 1.5rem 0;
-      margin-bottom: 1.5rem;
+      padding: 1.25rem 0;
+      margin-bottom: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
     }
-
-    h1 {
-      font-size: 1.75rem;
-      color: var(--primary);
-      margin-bottom: 0.5rem;
-    }
-
-    .subtitle {
-      color: var(--text-muted);
-      font-size: 0.9rem;
-    }
-
+    .logo { width: 56px; height: 56px; }
+    h1 { font-size: 1.75rem; color: var(--primary); }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; }
     .card {
       background: var(--card);
       border-radius: 12px;
-      padding: 1.5rem;
+      padding: 1.25rem;
       margin-bottom: 1rem;
       box-shadow: var(--shadow);
       border: 1px solid var(--border);
     }
-
     .card h2 {
       font-size: 1.1rem;
-      margin-bottom: 1rem;
+      margin-bottom: 0.9rem;
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.45rem;
     }
-
-    .form-group {
-      margin-bottom: 1rem;
-    }
-
+    .form-group { margin-bottom: 0.95rem; }
     label {
       display: block;
       font-size: 0.85rem;
       font-weight: 500;
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.45rem;
       color: var(--text-muted);
     }
-
-    select, input[type="date"] {
+    .checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin-bottom: 0;
+      color: var(--text);
+    }
+    select, input[type="date"], input[type="number"] {
       width: 100%;
       padding: 0.75rem;
       border: 1px solid var(--border);
@@ -457,19 +553,17 @@ const HTML_APP = `<!DOCTYPE html>
       background: var(--card);
       color: var(--text);
     }
-
     select:focus, input:focus {
       outline: none;
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
     }
-
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1.25rem;
+      gap: 0.45rem;
+      padding: 0.75rem 1.1rem;
       border: none;
       border-radius: 8px;
       font-size: 0.9rem;
@@ -477,80 +571,43 @@ const HTML_APP = `<!DOCTYPE html>
       cursor: pointer;
       transition: all 0.2s;
     }
-
-    .btn-primary {
-      background: var(--primary);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: var(--primary-hover);
-    }
-
-    .btn-danger {
-      background: var(--danger);
-      color: white;
-    }
-
-    .btn-danger:hover {
-      background: var(--danger-hover);
-    }
-
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-danger:hover { background: var(--danger-hover); }
     .btn-outline {
       background: transparent;
       border: 1px solid var(--border);
       color: var(--text);
     }
-
-    .btn-outline:hover {
-      background: var(--bg);
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-group {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-
+    .btn-outline:hover { background: var(--bg); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
       gap: 1rem;
       margin-bottom: 1rem;
     }
-
     .stat {
       text-align: center;
       padding: 1rem;
       background: var(--bg);
       border-radius: 8px;
     }
-
-    .stat-value {
-      font-size: 1.75rem;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
+    .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--primary); }
     .stat-label {
       font-size: 0.75rem;
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
-
     .article-list {
       max-height: 400px;
       overflow-y: auto;
       border: 1px solid var(--border);
       border-radius: 8px;
     }
-
     .article-item {
       display: flex;
       align-items: flex-start;
@@ -558,36 +615,22 @@ const HTML_APP = `<!DOCTYPE html>
       padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--border);
     }
-
-    .article-item:last-child {
-      border-bottom: none;
-    }
-
+    .article-item:last-child { border-bottom: none; }
     .article-item input[type="checkbox"] {
-      margin-top: 0.25rem;
+      margin-top: 0.2rem;
       width: 18px;
       height: 18px;
       cursor: pointer;
     }
-
-    .article-info {
-      flex: 1;
-      min-width: 0;
-    }
-
+    .article-info { flex: 1; min-width: 0; }
     .article-title {
       font-weight: 500;
-      margin-bottom: 0.25rem;
+      margin-bottom: 0.2rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-
-    .article-meta {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-    }
-
+    .article-meta { font-size: 0.8rem; color: var(--text-muted); }
     .article-site {
       display: inline-block;
       padding: 0.125rem 0.5rem;
@@ -596,16 +639,15 @@ const HTML_APP = `<!DOCTYPE html>
       font-size: 0.75rem;
       color: var(--text-muted);
     }
-
     .tabs {
       display: flex;
       gap: 0.25rem;
       margin-bottom: 1rem;
       border-bottom: 1px solid var(--border);
+      overflow-x: auto;
     }
-
     .tab {
-      padding: 0.75rem 1rem;
+      padding: 0.75rem 0.95rem;
       background: none;
       border: none;
       font-size: 0.9rem;
@@ -613,17 +655,10 @@ const HTML_APP = `<!DOCTYPE html>
       cursor: pointer;
       border-bottom: 2px solid transparent;
       margin-bottom: -1px;
+      white-space: nowrap;
     }
-
-    .tab.active {
-      color: var(--primary);
-      border-bottom-color: var(--primary);
-    }
-
-    .tab:hover:not(.active) {
-      color: var(--text);
-    }
-
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab:hover:not(.active) { color: var(--text); }
     .loading {
       display: flex;
       align-items: center;
@@ -631,49 +666,40 @@ const HTML_APP = `<!DOCTYPE html>
       padding: 2rem;
       color: var(--text-muted);
     }
-
     .spinner {
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       border: 3px solid var(--border);
       border-top-color: var(--primary);
       border-radius: 50%;
       animation: spin 1s linear infinite;
       margin-right: 0.5rem;
     }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
+    @keyframes spin { to { transform: rotate(360deg); } }
     .toast {
       position: fixed;
       bottom: 1rem;
       left: 50%;
       transform: translateX(-50%);
-      padding: 0.75rem 1.5rem;
+      padding: 0.75rem 1.4rem;
       border-radius: 8px;
       color: white;
       font-weight: 500;
       z-index: 1000;
       animation: slideUp 0.3s ease;
     }
-
     .toast.success { background: var(--success); }
     .toast.error { background: var(--danger); }
     .toast.warning { background: var(--warning); }
-
     @keyframes slideUp {
       from { transform: translate(-50%, 100%); opacity: 0; }
       to { transform: translate(-50%, 0); opacity: 1; }
     }
-
     .empty {
       text-align: center;
-      padding: 2rem;
+      padding: 1.5rem;
       color: var(--text-muted);
     }
-
     .badge {
       display: inline-block;
       padding: 0.125rem 0.5rem;
@@ -683,14 +709,12 @@ const HTML_APP = `<!DOCTYPE html>
       font-size: 0.75rem;
       margin-left: 0.5rem;
     }
-
     .quick-dates {
       display: flex;
       gap: 0.5rem;
       margin-top: 0.5rem;
       flex-wrap: wrap;
     }
-
     .quick-date {
       padding: 0.25rem 0.75rem;
       background: var(--bg);
@@ -698,15 +722,12 @@ const HTML_APP = `<!DOCTYPE html>
       border-radius: 20px;
       font-size: 0.8rem;
       cursor: pointer;
-      transition: all 0.2s;
     }
-
     .quick-date:hover {
       background: var(--primary);
       color: white;
       border-color: var(--primary);
     }
-
     .progress {
       height: 4px;
       background: var(--border);
@@ -714,37 +735,64 @@ const HTML_APP = `<!DOCTYPE html>
       overflow: hidden;
       margin-top: 1rem;
     }
-
     .progress-bar {
       height: 100%;
       background: var(--primary);
       transition: width 0.3s;
     }
-
+    .inline-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .about-list { margin-left: 1rem; color: var(--text-muted); }
+    .about-list li { margin-bottom: 0.35rem; }
+    .version-badge {
+      position: fixed;
+      right: 0.75rem;
+      bottom: 0.65rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.25rem 0.6rem;
+      box-shadow: var(--shadow);
+    }
     @media (max-width: 600px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
       .btn-group { flex-direction: column; }
       .btn { width: 100%; }
+      .inline-controls { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>🧹 Readwise Cleanup</h1>
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"></rect>
+        <path d="M20 40c8-1 14-7 15-15" stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none"></path>
+        <path d="M31 26h15" stroke="#ffffff" stroke-width="4" stroke-linecap="round"></path>
+        <circle cx="40" cy="42" r="8" fill="#ffffff"></circle>
+        <path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+      </svg>
+      <h1>Readwise Cleanup</h1>
       <p class="subtitle">Bulk delete or archive old Reader items</p>
     </header>
 
     <div class="tabs">
       <button class="tab active" data-tab="cleanup">Cleanup</button>
       <button class="tab" data-tab="deleted">Deleted History <span id="deleted-count" class="badge" style="display:none">0</span></button>
+      <button class="tab" data-tab="settings">Settings</button>
+      <button class="tab" data-tab="about">About</button>
     </div>
 
-    <!-- Cleanup Tab -->
     <div id="cleanup-tab">
       <div class="card">
-        <h2>📋 Select Items</h2>
-
+        <h2>Select Items</h2>
         <div class="form-group">
           <label for="location">Location</label>
           <select id="location">
@@ -754,7 +802,6 @@ const HTML_APP = `<!DOCTYPE html>
             <option value="feed">Feed</option>
           </select>
         </div>
-
         <div class="form-group">
           <label for="before-date">Items saved before</label>
           <input type="date" id="before-date">
@@ -766,10 +813,8 @@ const HTML_APP = `<!DOCTYPE html>
             <span class="quick-date" data-days="365">1 year ago</span>
           </div>
         </div>
-
         <div class="btn-group">
-          <button class="btn btn-primary" id="count-btn">Count Items</button>
-          <button class="btn btn-outline" id="preview-btn" disabled>Preview</button>
+          <button class="btn btn-primary" id="preview-btn">Preview Items</button>
         </div>
       </div>
 
@@ -784,59 +829,103 @@ const HTML_APP = `<!DOCTYPE html>
             <div class="stat-label">Location</div>
           </div>
         </div>
-
         <div id="preview-list"></div>
-
         <div class="btn-group" style="margin-top: 1rem">
-          <button class="btn btn-danger" id="delete-btn" disabled>
-            🗑️ Delete All
-          </button>
-          <button class="btn btn-primary" id="archive-btn" disabled>
-            📦 Archive All
-          </button>
+          <button class="btn btn-danger" id="delete-btn" disabled>Delete All</button>
+          <button class="btn btn-primary" id="archive-btn" disabled>Archive All</button>
         </div>
-
         <div class="progress" id="progress" style="display:none">
           <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
         </div>
       </div>
     </div>
 
-    <!-- Deleted History Tab -->
     <div id="deleted-tab" style="display:none">
       <div class="card">
-        <h2>📜 Deleted Items History</h2>
-        <p style="color: var(--text-muted); margin-bottom: 1rem; font-size: 0.9rem;">
-          Select items to restore them to your Readwise Reader.
+        <h2>Deleted Items History</h2>
+        <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
+          Select items to restore them to Reader, or remove only selected items from local history.
         </p>
-
-        <div id="deleted-list">
-          <div class="loading">Loading...</div>
+        <div class="inline-controls">
+          <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> Select all</label>
         </div>
-
+        <div id="deleted-list"><div class="loading">Loading...</div></div>
         <div class="btn-group" style="margin-top: 1rem">
-          <button class="btn btn-primary" id="restore-btn" disabled>
-            ↩️ Restore Selected
-          </button>
-          <button class="btn btn-outline" id="clear-history-btn">
-            Clear History
-          </button>
+          <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
+          <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
+          <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
         </div>
+      </div>
+    </div>
+
+    <div id="settings-tab" style="display:none">
+      <div class="card">
+        <h2>Settings</h2>
+        <div class="form-group">
+          <label for="setting-default-location">Default location</label>
+          <select id="setting-default-location">
+            <option value="new">Inbox (New)</option>
+            <option value="later">Later</option>
+            <option value="shortlist">Shortlist</option>
+            <option value="feed">Feed</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="setting-default-days">Default age in days</label>
+          <input id="setting-default-days" type="number" min="1" max="3650">
+        </div>
+        <div class="form-group">
+          <label for="setting-preview-limit">Preview item limit</label>
+          <input id="setting-preview-limit" type="number" min="1" max="500">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input id="setting-confirm-actions" type="checkbox">
+            Confirm before delete/archive actions
+          </label>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="about-tab" style="display:none">
+      <div class="card">
+        <h2>About</h2>
+        <p style="margin-bottom: 0.75rem;">Version <strong id="about-version">${APP_VERSION}</strong></p>
+        <p style="margin-bottom: 0.5rem;">Features:</p>
+        <ul class="about-list">
+          <li>Preview old items before action.</li>
+          <li>Delete or archive items by location/date.</li>
+          <li>Restore deleted URLs from history.</li>
+          <li>Store preferences for defaults and confirmations.</li>
+        </ul>
+        <p style="margin-top: 0.9rem; color: var(--text-muted);">
+          Privacy: this app stores settings and deleted-item history in your Cloudflare KV namespace only.
+        </p>
       </div>
     </div>
   </div>
 
+  <div class="version-badge">v${APP_VERSION}</div>
+
   <script>
-    // State
+    var APP_VERSION = '${APP_VERSION}';
     var currentCount = 0;
     var previewData = [];
     var deletedItems = [];
-    var selectedForRestore = new Set();
+    var selectedItems = new Set();
+    var lastQuery = null;
+    var settings = {
+      defaultLocation: 'new',
+      defaultDays: 30,
+      previewLimit: 100,
+      confirmActions: true
+    };
 
-    // Elements
     var locationSelect = document.getElementById('location');
     var beforeDateInput = document.getElementById('before-date');
-    var countBtn = document.getElementById('count-btn');
     var previewBtn = document.getElementById('preview-btn');
     var deleteBtn = document.getElementById('delete-btn');
     var archiveBtn = document.getElementById('archive-btn');
@@ -846,25 +935,44 @@ const HTML_APP = `<!DOCTYPE html>
     var previewList = document.getElementById('preview-list');
     var deletedList = document.getElementById('deleted-list');
     var restoreBtn = document.getElementById('restore-btn');
+    var removeSelectedBtn = document.getElementById('remove-selected-btn');
     var clearHistoryBtn = document.getElementById('clear-history-btn');
+    var selectAllDeleted = document.getElementById('select-all-deleted');
     var deletedCountBadge = document.getElementById('deleted-count');
+    var saveSettingsBtn = document.getElementById('save-settings-btn');
 
-    // Set default date to 1 month ago
-    var oneMonthAgo = new Date();
-    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
-    beforeDateInput.value = oneMonthAgo.toISOString().split('T')[0];
+    var settingsDefaultLocation = document.getElementById('setting-default-location');
+    var settingsDefaultDays = document.getElementById('setting-default-days');
+    var settingsPreviewLimit = document.getElementById('setting-preview-limit');
+    var settingsConfirmActions = document.getElementById('setting-confirm-actions');
 
-    // Quick date buttons
+    function setDateFromDays(days) {
+      var safeDays = Number.isFinite(days) ? days : 30;
+      var date = new Date();
+      date.setDate(date.getDate() - safeDays);
+      beforeDateInput.value = date.toISOString().split('T')[0];
+    }
+
+    function applySettingsToUI() {
+      locationSelect.value = settings.defaultLocation;
+      setDateFromDays(settings.defaultDays);
+      settingsDefaultLocation.value = settings.defaultLocation;
+      settingsDefaultDays.value = settings.defaultDays;
+      settingsPreviewLimit.value = settings.previewLimit;
+      settingsConfirmActions.checked = settings.confirmActions;
+    }
+
+    function buildQueryKey() {
+      return locationSelect.value + '|' + beforeDateInput.value + '|' + settings.previewLimit;
+    }
+
     document.querySelectorAll('.quick-date').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        var days = parseInt(btn.dataset.days);
-        var date = new Date();
-        date.setDate(date.getDate() - days);
-        beforeDateInput.value = date.toISOString().split('T')[0];
+        var days = parseInt(btn.dataset.days, 10);
+        setDateFromDays(days);
       });
     });
 
-    // Tab switching
     document.querySelectorAll('.tab').forEach(function(tab) {
       tab.addEventListener('click', function() {
         document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -873,6 +981,8 @@ const HTML_APP = `<!DOCTYPE html>
         var tabName = tab.dataset.tab;
         document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? 'block' : 'none';
         document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
+        document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
+        document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
 
         if (tabName === 'deleted') {
           loadDeletedItems();
@@ -880,72 +990,47 @@ const HTML_APP = `<!DOCTYPE html>
       });
     });
 
-    // Count items
-    countBtn.addEventListener('click', async function() {
-      var location = locationSelect.value;
+    previewBtn.addEventListener('click', async function() {
       var before = beforeDateInput.value;
-
       if (!before) {
         showToast('Please select a date', 'warning');
         return;
       }
 
-      countBtn.disabled = true;
-      countBtn.innerHTML = '<span class="spinner"></span> Counting...';
-
-      try {
-        var res = await fetch('/api/count?location=' + location + '&before=' + before);
-        var data = await res.json();
-
-        if (data.error) throw new Error(data.error);
-
-        currentCount = data.count;
-        itemCountEl.textContent = currentCount;
-        locationDisplay.textContent = location;
-        resultsCard.style.display = 'block';
-        previewBtn.disabled = currentCount === 0;
-        deleteBtn.disabled = currentCount === 0;
-        archiveBtn.disabled = currentCount === 0;
-        previewList.innerHTML = '';
-
-        if (currentCount === 0) {
-          showToast('No items found before that date', 'warning');
-        } else {
-          showToast('Found ' + currentCount + ' items', 'success');
-        }
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        countBtn.disabled = false;
-        countBtn.innerHTML = 'Count Items';
+      var queryKey = buildQueryKey();
+      if (lastQuery === queryKey && previewData.length > 0) {
+        renderPreview();
+        showToast('Using cached preview', 'success');
+        return;
       }
-    });
-
-    // Preview items
-    previewBtn.addEventListener('click', async function() {
-      var location = locationSelect.value;
-      var before = beforeDateInput.value;
 
       previewBtn.disabled = true;
       previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
 
       try {
-        var res = await fetch('/api/preview?location=' + location + '&before=' + before + '&limit=100');
+        var res = await fetch('/api/preview?location=' + locationSelect.value + '&before=' + before + '&limit=' + settings.previewLimit);
         var data = await res.json();
-
         if (data.error) throw new Error(data.error);
 
-        previewData = data.preview;
+        currentCount = data.total || 0;
+        previewData = data.preview || [];
+        lastQuery = queryKey;
         renderPreview();
+
+        itemCountEl.textContent = currentCount;
+        locationDisplay.textContent = locationSelect.value;
+        resultsCard.style.display = 'block';
+        deleteBtn.disabled = currentCount === 0;
+        archiveBtn.disabled = currentCount === 0;
+        showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
         previewBtn.disabled = false;
-        previewBtn.innerHTML = 'Preview';
+        previewBtn.innerHTML = 'Preview Items';
       }
     });
 
-    // Render preview list
     function renderPreview() {
       if (previewData.length === 0) {
         previewList.innerHTML = '<div class="empty">No items to preview</div>';
@@ -954,16 +1039,13 @@ const HTML_APP = `<!DOCTYPE html>
 
       var html = '<div class="article-list">';
       previewData.forEach(function(article) {
-        html += '<div class="article-item">';
-        html += '<div class="article-info">';
+        html += '<div class="article-item"><div class="article-info">';
         html += '<div class="article-title">' + escapeHtml(article.title) + '</div>';
-        html += '<div class="article-meta">';
-        html += '<span class="article-site">' + escapeHtml(article.site) + '</span>';
+        html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
         }
-        html += ' · ' + formatDate(article.savedAt);
-        html += '</div></div></div>';
+        html += ' · ' + formatDate(article.savedAt) + '</div></div></div>';
       });
       html += '</div>';
 
@@ -974,28 +1056,20 @@ const HTML_APP = `<!DOCTYPE html>
       previewList.innerHTML = html;
     }
 
-    // Delete all
-    deleteBtn.addEventListener('click', function() {
-      performCleanup('delete');
-    });
+    deleteBtn.addEventListener('click', function() { performCleanup('delete'); });
+    archiveBtn.addEventListener('click', function() { performCleanup('archive'); });
 
-    // Archive all
-    archiveBtn.addEventListener('click', function() {
-      performCleanup('archive');
-    });
-
-    // Perform cleanup
     async function performCleanup(action) {
-      var location = locationSelect.value;
-      var before = beforeDateInput.value;
+      if (settings.confirmActions) {
+        var confirmed = window.confirm('Confirm ' + action + ' for ' + currentCount + ' items?');
+        if (!confirmed) return;
+      }
 
       deleteBtn.disabled = true;
       archiveBtn.disabled = true;
-
       var btn = action === 'delete' ? deleteBtn : archiveBtn;
       var originalText = btn.innerHTML;
       btn.innerHTML = '<span class="spinner"></span> Processing...';
-
       document.getElementById('progress').style.display = 'block';
       document.getElementById('progress-bar').style.width = '50%';
 
@@ -1003,30 +1077,25 @@ const HTML_APP = `<!DOCTYPE html>
         var res = await fetch('/api/cleanup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ location: location, beforeDate: before, action: action })
+          body: JSON.stringify({ location: locationSelect.value, beforeDate: beforeDateInput.value, action: action })
         });
         var data = await res.json();
-
         if (data.error) throw new Error(data.error);
 
         document.getElementById('progress-bar').style.width = '100%';
+        showToast((action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' items', 'success');
 
-        var msg = (action === 'delete' ? 'Deleted' : 'Archived') + ' ' + data.processed + ' items';
-        showToast(msg, 'success');
-
-        // Reset UI
         setTimeout(function() {
           currentCount = 0;
+          previewData = [];
+          lastQuery = null;
           itemCountEl.textContent = '0';
           previewList.innerHTML = '';
           resultsCard.style.display = 'none';
           document.getElementById('progress').style.display = 'none';
           document.getElementById('progress-bar').style.width = '0%';
-
-          // Update deleted count badge
           loadDeletedCount();
-        }, 1000);
-
+        }, 600);
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
@@ -1036,16 +1105,45 @@ const HTML_APP = `<!DOCTYPE html>
       }
     }
 
-    // Load deleted items
+    function updateSelectedButtons() {
+      restoreBtn.disabled = selectedItems.size === 0;
+      removeSelectedBtn.disabled = selectedItems.size === 0;
+      restoreBtn.textContent = selectedItems.size > 0 ? 'Restore Selected (' + selectedItems.size + ')' : 'Restore Selected';
+      removeSelectedBtn.textContent = selectedItems.size > 0 ? 'Remove from History (' + selectedItems.size + ')' : 'Remove from History';
+
+      if (deletedItems.length === 0) {
+        selectAllDeleted.checked = false;
+        selectAllDeleted.indeterminate = false;
+        return;
+      }
+      selectAllDeleted.checked = selectedItems.size === deletedItems.length;
+      selectAllDeleted.indeterminate = selectedItems.size > 0 && selectedItems.size < deletedItems.length;
+    }
+
+    function toggleRestoreItem(checkbox) {
+      var url = checkbox.dataset.url;
+      if (checkbox.checked) selectedItems.add(url);
+      else selectedItems.delete(url);
+      updateSelectedButtons();
+    }
+    window.toggleRestoreItem = toggleRestoreItem;
+
+    selectAllDeleted.addEventListener('change', function() {
+      selectedItems.clear();
+      if (selectAllDeleted.checked) {
+        deletedItems.forEach(function(item) { selectedItems.add(item.url); });
+      }
+      renderDeletedItems();
+      updateSelectedButtons();
+    });
+
     async function loadDeletedItems() {
       deletedList.innerHTML = '<div class="loading"><span class="spinner"></span> Loading...</div>';
-
       try {
         var res = await fetch('/api/deleted');
         var data = await res.json();
-
         deletedItems = data.items || [];
-        selectedForRestore.clear();
+        selectedItems.clear();
         renderDeletedItems();
         updateDeletedBadge();
       } catch (err) {
@@ -1053,7 +1151,6 @@ const HTML_APP = `<!DOCTYPE html>
       }
     }
 
-    // Load deleted count for badge
     async function loadDeletedCount() {
       try {
         var res = await fetch('/api/deleted');
@@ -1063,7 +1160,6 @@ const HTML_APP = `<!DOCTYPE html>
       } catch (err) {}
     }
 
-    // Update badge
     function updateDeletedBadge() {
       if (deletedItems.length > 0) {
         deletedCountBadge.textContent = deletedItems.length;
@@ -1073,92 +1169,79 @@ const HTML_APP = `<!DOCTYPE html>
       }
     }
 
-    // Render deleted items
     function renderDeletedItems() {
       if (deletedItems.length === 0) {
         deletedList.innerHTML = '<div class="empty">No deleted items in history</div>';
-        restoreBtn.disabled = true;
+        updateSelectedButtons();
         return;
       }
 
       var html = '<div class="article-list">';
-      deletedItems.forEach(function(item, index) {
+      deletedItems.forEach(function(item) {
         html += '<div class="article-item">';
         html += '<input type="checkbox" data-url="' + escapeHtml(item.url) + '" onchange="toggleRestoreItem(this)"';
-        if (selectedForRestore.has(item.url)) {
-          html += ' checked';
-        }
+        if (selectedItems.has(item.url)) html += ' checked';
         html += '>';
         html += '<div class="article-info">';
         html += '<div class="article-title">' + escapeHtml(item.title) + '</div>';
-        html += '<div class="article-meta">';
-        html += '<span class="article-site">' + escapeHtml(item.site) + '</span>';
-        if (item.author) {
-          html += ' by ' + escapeHtml(item.author);
-        }
-        html += ' · Deleted ' + formatDate(item.deletedAt);
-        html += '</div></div></div>';
+        html += '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site) + '</span>';
+        if (item.author) html += ' by ' + escapeHtml(item.author);
+        html += ' · Deleted ' + formatDate(item.deletedAt) + '</div></div></div>';
       });
       html += '</div>';
 
       deletedList.innerHTML = html;
-      updateRestoreButton();
+      updateSelectedButtons();
     }
 
-    // Toggle item for restore
-    function toggleRestoreItem(checkbox) {
-      var url = checkbox.dataset.url;
-      if (checkbox.checked) {
-        selectedForRestore.add(url);
-      } else {
-        selectedForRestore.delete(url);
-      }
-      updateRestoreButton();
-    }
-
-    // Update restore button
-    function updateRestoreButton() {
-      restoreBtn.disabled = selectedForRestore.size === 0;
-      if (selectedForRestore.size > 0) {
-        restoreBtn.innerHTML = '↩️ Restore Selected (' + selectedForRestore.size + ')';
-      } else {
-        restoreBtn.innerHTML = '↩️ Restore Selected';
-      }
-    }
-
-    // Restore selected items
     restoreBtn.addEventListener('click', async function() {
-      if (selectedForRestore.size === 0) return;
-
+      if (selectedItems.size === 0) return;
       restoreBtn.disabled = true;
       restoreBtn.innerHTML = '<span class="spinner"></span> Restoring...';
-
       try {
         var res = await fetch('/api/restore', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: Array.from(selectedForRestore) })
+          body: JSON.stringify({ urls: Array.from(selectedItems) })
         });
         var data = await res.json();
-
         if (data.error) throw new Error(data.error);
-
         showToast('Restored ' + data.restored + ' items', 'success');
-        selectedForRestore.clear();
+        selectedItems.clear();
         loadDeletedItems();
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
-        restoreBtn.disabled = false;
-        restoreBtn.innerHTML = '↩️ Restore Selected';
+        restoreBtn.innerHTML = 'Restore Selected';
       }
     });
 
-    // Clear history
-    clearHistoryBtn.addEventListener('click', async function() {
+    removeSelectedBtn.addEventListener('click', async function() {
+      if (selectedItems.size === 0) return;
       try {
-        await fetch('/api/clear-deleted', { method: 'POST' });
+        var res = await fetch('/api/clear-deleted', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls: Array.from(selectedItems) })
+        });
+        var data = await res.json();
+        if (data.error) throw new Error(data.error);
+        showToast('Removed ' + data.removed + ' items from history', 'success');
+        selectedItems.clear();
+        loadDeletedItems();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+
+    clearHistoryBtn.addEventListener('click', async function() {
+      if (settings.confirmActions && !window.confirm('Clear all deleted-item history?')) return;
+      try {
+        var res = await fetch('/api/clear-deleted', { method: 'POST' });
+        var data = await res.json();
+        if (data.error) throw new Error(data.error);
         deletedItems = [];
+        selectedItems.clear();
         renderDeletedItems();
         updateDeletedBadge();
         showToast('History cleared', 'success');
@@ -1167,17 +1250,47 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
-    // Helpers
+    saveSettingsBtn.addEventListener('click', async function() {
+      var payload = {
+        defaultLocation: settingsDefaultLocation.value,
+        defaultDays: parseInt(settingsDefaultDays.value, 10),
+        previewLimit: parseInt(settingsPreviewLimit.value, 10),
+        confirmActions: !!settingsConfirmActions.checked
+      };
+      try {
+        var res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        var data = await res.json();
+        if (data.error) throw new Error(data.error);
+        settings = data.settings;
+        applySettingsToUI();
+        lastQuery = null;
+        showToast('Settings saved', 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+
+    async function loadSettings() {
+      try {
+        var res = await fetch('/api/settings');
+        var data = await res.json();
+        if (data.settings) settings = data.settings;
+      } catch (err) {}
+      applySettingsToUI();
+    }
+
     function showToast(message, type) {
       type = type || 'success';
       var existing = document.querySelector('.toast');
       if (existing) existing.remove();
-
       var toast = document.createElement('div');
       toast.className = 'toast ' + type;
       toast.textContent = message;
       document.body.appendChild(toast);
-
       setTimeout(function() { toast.remove(); }, 3000);
     }
 
@@ -1194,13 +1307,11 @@ const HTML_APP = `<!DOCTYPE html>
       if (!dateStr) return '';
       var date = new Date(dateStr);
       var opts = { month: 'short', day: 'numeric' };
-      if (date.getFullYear() !== new Date().getFullYear()) {
-        opts.year = 'numeric';
-      }
+      if (date.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
       return date.toLocaleDateString('en-US', opts);
     }
 
-    // Initial load
+    loadSettings();
     loadDeletedCount();
   </script>
 </body>
