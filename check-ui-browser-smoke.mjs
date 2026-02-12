@@ -165,6 +165,35 @@ const previewItems = Array.from({ length: 57 }, (_, i) => {
     searchable: `item ${id} a example.com`
   };
 });
+const deletedHistoryItems = [
+  {
+    id: 'd1',
+    title: 'Alpha newest',
+    author: 'Author A',
+    url: 'https://example.com/a-new',
+    site: 'example.com',
+    savedAt: '2025-01-03T00:00:00.000Z',
+    deletedAt: '2025-02-03T00:00:00.000Z',
+  },
+  {
+    id: 'd2',
+    title: 'Beta middle',
+    author: 'Author B',
+    url: 'https://example.com/b-mid',
+    site: 'example.com',
+    savedAt: '2025-01-02T00:00:00.000Z',
+    deletedAt: '2025-02-02T00:00:00.000Z',
+  },
+  {
+    id: 'd3',
+    title: 'Alpha older',
+    author: 'Author C',
+    url: 'https://example.com/a-old',
+    site: 'example.com',
+    savedAt: '2025-01-01T00:00:00.000Z',
+    deletedAt: '2025-02-01T00:00:00.000Z',
+  },
+];
 const cleanupCalls = [];
 
 async function fetchMock(url, options = {}) {
@@ -172,7 +201,7 @@ async function fetchMock(url, options = {}) {
   if (u.includes('/api/settings')) {
     return makeJsonResponse({ settings: { defaultLocation: 'new', defaultDays: 30, previewLimit: 100, confirmActions: false } });
   }
-  if (u.includes('/api/deleted')) return makeJsonResponse({ items: [] });
+  if (u.includes('/api/deleted')) return makeJsonResponse({ items: deletedHistoryItems });
   if (u.includes('/api/version')) return makeJsonResponse({ version: '0.0.0' });
   if (u.includes('/api/preview')) return makeJsonResponse({ total: 57, preview: previewItems, showing: 57 });
   if (u.includes('/api/cleanup')) {
@@ -262,6 +291,56 @@ if (sizes[0] !== 20 || sizes[1] !== 20 || sizes[2] !== 17) {
 const unique = new Set(cleanupCalls.flat());
 if (unique.size !== 57) {
   console.error('Browser smoke failed: expected 57 unique cleanup ids, got ' + unique.size);
+  process.exit(1);
+}
+
+const deletedTab = tabs.find((t) => t.dataset.tab === 'deleted');
+const deletedSearchInput = byId.get('deleted-search');
+const selectAllDeleted = byId.get('select-all-deleted');
+const restoreBtn = byId.get('restore-btn');
+const deletedList = byId.get('deleted-list');
+if (!deletedTab || !deletedSearchInput || !selectAllDeleted || !restoreBtn || !deletedList) {
+  console.error('Browser smoke failed: deleted-history controls missing');
+  process.exit(1);
+}
+
+await deletedTab.dispatch('click', { preventDefault() {} });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (!restoreBtn.textContent.includes('(3)')) {
+  console.error('Browser smoke failed: expected deleted-history default selection count 3, got "' + restoreBtn.textContent + '"');
+  process.exit(1);
+}
+
+deletedSearchInput.value = 'alpha';
+await deletedSearchInput.dispatch('input');
+if (!restoreBtn.textContent.includes('(2)')) {
+  console.error('Browser smoke failed: expected filtered deleted-history selection count 2, got "' + restoreBtn.textContent + '"');
+  process.exit(1);
+}
+
+const alphaNewestIdx = deletedList.innerHTML.indexOf('Alpha newest');
+const alphaOlderIdx = deletedList.innerHTML.indexOf('Alpha older');
+if (alphaNewestIdx < 0 || alphaOlderIdx < 0 || alphaNewestIdx > alphaOlderIdx) {
+  console.error('Browser smoke failed: expected deleted-history sort by deleted date (newest first)');
+  process.exit(1);
+}
+
+await selectAllDeleted.dispatch('change');
+if (!restoreBtn.disabled) {
+  console.error('Browser smoke failed: expected filtered select-all toggle to deselect filtered subset');
+  process.exit(1);
+}
+
+deletedSearchInput.value = '';
+await deletedSearchInput.dispatch('input');
+if (!restoreBtn.textContent.includes('(1)')) {
+  console.error('Browser smoke failed: expected one non-filtered item to remain selected after filtered deselect');
+  process.exit(1);
+}
+
+await selectAllDeleted.dispatch('change');
+if (!restoreBtn.textContent.includes('(3)')) {
+  console.error('Browser smoke failed: expected select-all to restore full deleted-history selection, got "' + restoreBtn.textContent + '"');
   process.exit(1);
 }
 

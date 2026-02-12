@@ -1407,7 +1407,7 @@ const HTML_APP = `<!DOCTYPE html>
     var cleanupInFlight = false;
     var cleanupBatchSize = 20;
     var deletedItems = [];
-    var selectedItems = new Set();
+    var selectedDeletedIds = new Set();
     var deletedSearch = '';
     var lastQuery = null;
     var settings = {
@@ -2023,14 +2023,14 @@ const HTML_APP = `<!DOCTYPE html>
 
     function updateSelectedButtons() {
       var filtered = getFilteredDeletedItems();
-      var activeSelectedUrls = getActiveSelectedDeletedUrls();
-      var selectedCount = selectedItems.size;
-      var filteredUrlSet = new Set(filtered.map(function(item) { return item.url; }));
-      var filteredSelected = Array.from(selectedItems).filter(function(url) { return filteredUrlSet.has(url); }).length;
+      var activeSelectedItems = getActiveSelectedDeletedItems();
+      var selectedCount = selectedDeletedIds.size;
+      var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
+      var filteredSelected = Array.from(selectedDeletedIds).filter(function(id) { return filteredIdSet.has(id); }).length;
       var displayCount = deletedSearch ? filteredSelected : selectedCount;
 
-      restoreBtn.disabled = activeSelectedUrls.length === 0;
-      removeSelectedBtn.disabled = activeSelectedUrls.length === 0;
+      restoreBtn.disabled = activeSelectedItems.length === 0;
+      removeSelectedBtn.disabled = activeSelectedItems.length === 0;
       restoreBtn.textContent = displayCount > 0 ? 'Restore Selected (' + displayCount + ')' : 'Restore Selected';
       removeSelectedBtn.textContent = displayCount > 0 ? 'Remove from History (' + displayCount + ')' : 'Remove from History';
 
@@ -2044,12 +2044,22 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function toggleRestoreItem(checkbox) {
-      var url = checkbox.dataset.url;
-      if (checkbox.checked) selectedItems.add(url);
-      else selectedItems.delete(url);
+      var itemId = checkbox.dataset.itemId;
+      if (checkbox.checked) selectedDeletedIds.add(itemId);
+      else selectedDeletedIds.delete(itemId);
       updateSelectedButtons();
     }
     window.toggleRestoreItem = toggleRestoreItem;
+
+    function getDeletedItemKey(item) {
+      if (item && item.id !== undefined && item.id !== null) return String(item.id);
+      return [
+        item && item.url ? item.url : '',
+        item && item.deletedAt ? item.deletedAt : '',
+        item && item.savedAt ? item.savedAt : '',
+        item && item.title ? item.title : '',
+      ].join('|');
+    }
 
     function buildDeletedSearchableText(item) {
       return [
@@ -2067,21 +2077,27 @@ const HTML_APP = `<!DOCTYPE html>
       });
     }
 
-    function getActiveSelectedDeletedUrls() {
-      if (!deletedSearch) return Array.from(selectedItems);
-      var filteredUrls = new Set(getFilteredDeletedItems().map(function(item) { return item.url; }));
-      return Array.from(selectedItems).filter(function(url) { return filteredUrls.has(url); });
+    function getActiveSelectedDeletedItems() {
+      var filtered = getFilteredDeletedItems();
+      if (!deletedSearch) {
+        return deletedItems.filter(function(item) { return selectedDeletedIds.has(getDeletedItemKey(item)); });
+      }
+      var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
+      return deletedItems.filter(function(item) {
+        var id = getDeletedItemKey(item);
+        return selectedDeletedIds.has(id) && filteredIdSet.has(id);
+      });
     }
 
     on(selectAllDeleted, 'change', function() {
       var filtered = getFilteredDeletedItems();
-      var filteredUrlSet = new Set(filtered.map(function(item) { return item.url; }));
-      var filteredSelectedCount = Array.from(selectedItems).filter(function(url) { return filteredUrlSet.has(url); }).length;
+      var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
+      var filteredSelectedCount = Array.from(selectedDeletedIds).filter(function(id) { return filteredIdSet.has(id); }).length;
       var shouldSelectAllFiltered = filteredSelectedCount !== filtered.length;
       if (shouldSelectAllFiltered) {
-        filtered.forEach(function(item) { selectedItems.add(item.url); });
+        filtered.forEach(function(item) { selectedDeletedIds.add(getDeletedItemKey(item)); });
       } else {
-        filtered.forEach(function(item) { selectedItems.delete(item.url); });
+        filtered.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
       }
       renderDeletedItems();
       updateSelectedButtons();
@@ -2105,7 +2121,7 @@ const HTML_APP = `<!DOCTYPE html>
         var res = await fetch('/api/deleted');
         var data = await parseApiJson(res);
         deletedItems = data.items || [];
-        selectedItems = new Set(deletedItems.map(function(item) { return item.url; }));
+        selectedDeletedIds = new Set(deletedItems.map(function(item) { return getDeletedItemKey(item); }));
         renderDeletedItems();
         updateDeletedBadge();
       } catch (err) {
@@ -2151,9 +2167,10 @@ const HTML_APP = `<!DOCTYPE html>
 
       var html = '<div class="article-list">';
       sorted.forEach(function(item) {
+        var itemId = getDeletedItemKey(item);
         html += '<div class="article-item">';
-        html += '<input type="checkbox" data-url="' + escapeHtml(item.url) + '" onchange="toggleRestoreItem(this)"';
-        if (selectedItems.has(item.url)) html += ' checked';
+        html += '<input type="checkbox" data-item-id="' + escapeHtml(itemId) + '" onchange="toggleRestoreItem(this)"';
+        if (selectedDeletedIds.has(itemId)) html += ' checked';
         html += '>';
         if (item.thumbnail) {
           html += '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
@@ -2179,8 +2196,9 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     on(restoreBtn, 'click', async function() {
-      var activeSelectedUrls = getActiveSelectedDeletedUrls();
-      if (activeSelectedUrls.length === 0) return;
+      var activeSelectedItems = getActiveSelectedDeletedItems();
+      if (activeSelectedItems.length === 0) return;
+      var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
       restoreBtn.disabled = true;
       restoreBtn.innerHTML = '<span class="spinner"></span> Restoring...';
       try {
@@ -2192,7 +2210,7 @@ const HTML_APP = `<!DOCTYPE html>
         var data = await res.json();
         if (data.error) throw new Error(data.error);
         showToast('Restored ' + data.restored + ' items', 'success');
-        activeSelectedUrls.forEach(function(url) { selectedItems.delete(url); });
+        activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
         loadDeletedItems();
       } catch (err) {
         showToast(err.message, 'error');
@@ -2202,8 +2220,9 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     on(removeSelectedBtn, 'click', async function() {
-      var activeSelectedUrls = getActiveSelectedDeletedUrls();
-      if (activeSelectedUrls.length === 0) return;
+      var activeSelectedItems = getActiveSelectedDeletedItems();
+      if (activeSelectedItems.length === 0) return;
+      var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
       try {
         var res = await fetch('/api/clear-deleted', {
           method: 'POST',
@@ -2213,7 +2232,7 @@ const HTML_APP = `<!DOCTYPE html>
         var data = await res.json();
         if (data.error) throw new Error(data.error);
         showToast('Removed ' + data.removed + ' items from history', 'success');
-        activeSelectedUrls.forEach(function(url) { selectedItems.delete(url); });
+        activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
         loadDeletedItems();
       } catch (err) {
         showToast(err.message, 'error');
@@ -2227,7 +2246,7 @@ const HTML_APP = `<!DOCTYPE html>
         var data = await res.json();
         if (data.error) throw new Error(data.error);
         deletedItems = [];
-        selectedItems.clear();
+        selectedDeletedIds.clear();
         renderDeletedItems();
         updateDeletedBadge();
         showToast('History cleared', 'success');
