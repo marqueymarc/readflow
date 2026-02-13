@@ -46,6 +46,7 @@ describe('API Endpoints', () => {
       previewLimit: 100,
       confirmActions: true,
     }));
+    await env.KV.delete('custom_readwise_token');
   });
 
   describe('GET /api/locations', () => {
@@ -290,7 +291,7 @@ describe('API Endpoints', () => {
 
       expect(res.status).toBe(200);
       expect(data.saved).toBe(true);
-      expect(data.settings.defaultLocation).toBe('new');
+      expect(data.settings.defaultLocation).toBe('invalid-location');
       expect(data.settings.defaultDays).toBe(1);
       expect(data.settings.previewLimit).toBe(500);
       expect(data.settings.confirmActions).toBe(true);
@@ -303,7 +304,29 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('2.0.0');
+      expect(data.version).toBe('2.0.2');
+    });
+  });
+
+  describe('API token settings', () => {
+    it('returns token status', async () => {
+      const res = await SELF.fetch('https://example.com/api/token-status');
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.hasToken).toBe(true);
+      expect(data.source).toBe('env');
+    });
+
+    it('stores a custom token', async () => {
+      const res = await SELF.fetch('https://example.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'rw_test_custom_123' }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.saved).toBe(true);
+      expect(data.overwritten).toBe(false);
     });
   });
 
@@ -340,10 +363,6 @@ describe('PWA Serving', () => {
 
     expect(html).toContain('data-tab="cleanup"');
     expect(html).toContain('data-tab="deleted"');
-    expect(html).toContain('data-tab="settings"');
-    expect(html).toContain('data-tab="about"');
-    expect(html).toContain('href="/settings"');
-    expect(html).toContain('href="/about"');
     expect(html).toContain('href="/deleted"');
   });
 
@@ -408,7 +427,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('deleted-sort-added');
     expect(html).toContain('deleted-sort-published');
     expect(html).toContain('deleted-sort-deleted');
-    expect(html).toContain('Search deleted history');
+    expect(html).toContain('Search history');
     expect(html).toContain('Restore Selected');
     expect(html).toContain('Remove from History');
     expect(html).toContain('Clear History');
@@ -423,8 +442,10 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v2.0.0');
+    expect(html).toContain('v2.0.2');
     expect(html).toContain('Version History');
+    expect(html).toContain('Readwise API Key');
+    expect(html).toContain('Save API Key');
   });
 });
 

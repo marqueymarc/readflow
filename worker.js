@@ -1,8 +1,10 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.2';
 const VERSION_HISTORY = [
+  { version: '2.0.2', note: 'Refined control rail sizing, moved preview filter/sort/actions to right results header, and hide Open Selected when 5 or more items are selected.' },
+  { version: '2.0.1', note: 'Reworked UI into a single control rail with compact mobile mode, dynamic Readwise locations, and settings-managed token override with overwrite confirmation.' },
   { version: '2.0.0', note: 'Introduced v2 layout shell with Readwise-style left rail and top route bar while preserving existing cleanup/deleted/settings/about affordances.' },
   { version: '1.1.27', note: 'Fixed Deleted History title alignment to stay left-aligned and avoid right-justified title rows.' },
   { version: '1.1.26', note: 'Deleted History now supports Added/Published/Deleted sorting with full available date metadata; startup defaults initialize to Inbox + last 7 days.' },
@@ -82,6 +84,18 @@ export default {
         }
         return handleGetSettings(env, corsHeaders);
       }
+      if (url.pathname === '/api/token-status') {
+        return handleTokenStatus(env, corsHeaders);
+      }
+      if (url.pathname === '/api/token') {
+        if (request.method === 'POST') {
+          return handleSaveToken(request, env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
       if (url.pathname === '/api/version') {
         return handleGetVersion(corsHeaders);
       }
@@ -110,7 +124,38 @@ export default {
 
 // Get available locations/feeds from Readwise
 async function handleGetLocations(env, corsHeaders) {
-  const locations = ['new', 'later', 'shortlist', 'feed', 'archive'];
+  const defaults = ['new', 'later', 'shortlist', 'feed', 'archive'];
+  const discovered = new Set();
+  const token = await getReadwiseToken(env);
+
+  if (token) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 600);
+      let response;
+      try {
+        response = await fetch('https://readwise.io/api/v3/list/?page_size=200', {
+          headers: { Authorization: `Token ${token}` },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      if (response.ok) {
+        const data = await response.json();
+        for (const article of data.results || []) {
+          if (article && typeof article.location === 'string' && article.location.trim()) {
+            discovered.add(article.location.trim());
+          }
+        }
+      }
+    } catch {
+      // Fallback to defaults when discovery fails.
+    }
+  }
+
+  const extras = Array.from(discovered).filter((loc) => !defaults.includes(loc)).sort();
+  const locations = [...defaults, ...extras];
   return new Response(JSON.stringify({ locations }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -411,6 +456,56 @@ async function handleSaveSettings(request, env, corsHeaders) {
   });
 }
 
+async function handleTokenStatus(env, corsHeaders) {
+  const hasCustomToken = !!(await env.KV.get('custom_readwise_token'));
+  const hasEnvToken = typeof env.READWISE_TOKEN === 'string' && env.READWISE_TOKEN.length > 0;
+  const source = hasCustomToken ? 'custom' : (hasEnvToken ? 'env' : 'none');
+  return new Response(JSON.stringify({
+    hasToken: hasCustomToken || hasEnvToken,
+    hasCustomToken,
+    source,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleSaveToken(request, env, corsHeaders) {
+  const body = await request.json();
+  const token = typeof body.token === 'string' ? body.token.trim() : '';
+  const confirmOverwrite = body.confirmOverwrite === true;
+
+  if (!token) {
+    return new Response(JSON.stringify({ error: 'Token is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  if (!token.startsWith('rw_')) {
+    return new Response(JSON.stringify({ error: 'Token format looks invalid' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const existing = await env.KV.get('custom_readwise_token');
+  const hasExisting = !!existing;
+  if (hasExisting && !confirmOverwrite) {
+    return new Response(JSON.stringify({ error: 'Token already set; confirm overwrite' }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  await env.KV.put('custom_readwise_token', token);
+  return new Response(JSON.stringify({
+    saved: true,
+    overwritten: hasExisting,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
 function handleGetVersion(corsHeaders) {
   return new Response(JSON.stringify({ version: APP_VERSION }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -445,8 +540,8 @@ async function getSettings(env) {
 
 function sanitizeSettings(input) {
   const source = input && typeof input === 'object' ? input : {};
-  const defaultLocation = ['new', 'later', 'shortlist', 'feed', 'archive'].includes(source.defaultLocation)
-    ? source.defaultLocation
+  const defaultLocation = typeof source.defaultLocation === 'string' && source.defaultLocation.trim()
+    ? source.defaultLocation.trim()
     : DEFAULT_SETTINGS.defaultLocation;
   const defaultDays = normalizeInt(source.defaultDays, DEFAULT_SETTINGS.defaultDays, 1, 3650);
   const previewLimit = normalizeInt(source.previewLimit, DEFAULT_SETTINGS.previewLimit, 1, 500);
@@ -481,6 +576,10 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const withHtmlContent = options.withHtmlContent === true;
   const hardLimit = Number.isFinite(options.limit) ? Math.max(1, options.limit) : Infinity;
   const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, options.maxPages) : Infinity;
+  const token = options.token || await getReadwiseToken(env);
+  if (!token) {
+    throw new Error('Readwise token is not configured');
+  }
 
   do {
     if (pagesFetched >= maxPages) {
@@ -498,7 +597,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
       `https://readwise.io/api/v3/list/?${params}`,
       {
         headers: {
-          Authorization: `Token ${env.READWISE_TOKEN}`,
+          Authorization: `Token ${token}`,
         },
       }
     );
@@ -543,6 +642,8 @@ function isRetryableStatus(status) {
 }
 
 async function deleteArticle(env, articleId) {
+  const token = await getReadwiseToken(env);
+  if (!token) throw new Error('Readwise token is not configured');
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const response = await fetch(
@@ -550,7 +651,7 @@ async function deleteArticle(env, articleId) {
       {
         method: 'DELETE',
         headers: {
-          Authorization: `Token ${env.READWISE_TOKEN}`,
+          Authorization: `Token ${token}`,
         },
       }
     );
@@ -566,6 +667,8 @@ async function deleteArticle(env, articleId) {
 
 // Helper: Archive article in Readwise
 async function archiveArticle(env, articleId) {
+  const token = await getReadwiseToken(env);
+  if (!token) throw new Error('Readwise token is not configured');
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const response = await fetch(
@@ -573,7 +676,7 @@ async function archiveArticle(env, articleId) {
       {
         method: 'PATCH',
         headers: {
-          Authorization: `Token ${env.READWISE_TOKEN}`,
+          Authorization: `Token ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ location: 'archive' }),
@@ -591,10 +694,12 @@ async function archiveArticle(env, articleId) {
 
 // Helper: Add URL back to Readwise
 async function addToReadwise(env, url) {
+  const token = await getReadwiseToken(env);
+  if (!token) throw new Error('Readwise token is not configured');
   const response = await fetch('https://readwise.io/api/v3/save/', {
     method: 'POST',
     headers: {
-      Authorization: `Token ${env.READWISE_TOKEN}`,
+      Authorization: `Token ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ url }),
@@ -603,6 +708,13 @@ async function addToReadwise(env, url) {
   if (!response.ok) {
     throw new Error(`Add failed: ${response.status}`);
   }
+}
+
+async function getReadwiseToken(env) {
+  const customToken = await env.KV.get('custom_readwise_token');
+  if (customToken && customToken.trim()) return customToken.trim();
+  if (typeof env.READWISE_TOKEN === 'string' && env.READWISE_TOKEN.trim()) return env.READWISE_TOKEN.trim();
+  return null;
 }
 
 // Helper: Get deleted items from KV
@@ -826,7 +938,7 @@ const HTML_APP = `<!DOCTYPE html>
     .container { max-width: none; margin: 0; }
     .app-shell {
       display: grid;
-      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-columns: 332px minmax(0, 1fr);
       min-height: 100vh;
     }
     .left-rail {
@@ -837,15 +949,21 @@ const HTML_APP = `<!DOCTYPE html>
       top: 0;
       height: 100vh;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
     }
     .main-pane {
       min-width: 0;
       padding: 0.75rem 1.1rem 2rem;
+      height: 100vh;
+      overflow: hidden;
     }
     .main-inner {
       max-width: 1120px;
       margin: 0 auto;
+      height: 100%;
     }
+    #cleanup-tab { height: 100%; }
     .rail-brand {
       display: flex;
       align-items: center;
@@ -979,7 +1097,8 @@ const HTML_APP = `<!DOCTYPE html>
       letter-spacing: 0.05em;
     }
     .article-list {
-      max-height: 400px;
+      max-height: none;
+      height: 100%;
       overflow-y: auto;
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -1055,17 +1174,6 @@ const HTML_APP = `<!DOCTYPE html>
       border-radius: 4px;
       font-size: 0.75rem;
       color: var(--text-muted);
-    }
-    .tabs {
-      display: flex;
-      gap: 0.25rem;
-      margin-bottom: 1rem;
-      border-bottom: 1px solid var(--border);
-      overflow-x: auto;
-      background: var(--card);
-      border-radius: 10px;
-      padding: 0.2rem 0.4rem;
-      box-shadow: var(--shadow);
     }
     .tab {
       display: inline-block;
@@ -1143,6 +1251,10 @@ const HTML_APP = `<!DOCTYPE html>
       grid-template-columns: 1fr 1fr;
       gap: 0.75rem;
       align-items: end;
+    }
+    .left-rail .date-row {
+      grid-template-columns: 1fr;
+      gap: 0.55rem;
     }
     .quick-date {
       padding: 0.25rem 0.75rem;
@@ -1322,9 +1434,8 @@ const HTML_APP = `<!DOCTYPE html>
       margin-bottom: 0.35rem;
     }
     .version-badge {
-      position: fixed;
-      right: 0.75rem;
-      bottom: 0.65rem;
+      margin-top: auto;
+      width: 100%;
       font-size: 0.75rem;
       color: var(--text-muted);
       background: white;
@@ -1332,6 +1443,17 @@ const HTML_APP = `<!DOCTYPE html>
       border-radius: 999px;
       padding: 0.25rem 0.6rem;
       box-shadow: var(--shadow);
+      cursor: pointer;
+    }
+    #results-card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      margin-bottom: 0;
+    }
+    #preview-list {
+      flex: 1;
+      min-height: 0;
     }
     @media (max-width: 600px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
@@ -1348,9 +1470,12 @@ const HTML_APP = `<!DOCTYPE html>
         height: auto;
         border-right: none;
         border-bottom: 1px solid var(--border);
+        padding-bottom: 0.5rem;
       }
       .main-pane {
-        padding-top: 0.5rem;
+        padding-top: 0.4rem;
+        height: auto;
+        overflow: visible;
       }
       .rail-section {
         display: flex;
@@ -1359,6 +1484,24 @@ const HTML_APP = `<!DOCTYPE html>
       }
       .rail-item {
         margin-bottom: 0;
+      }
+      .left-rail .card {
+        margin-bottom: 0.55rem;
+        padding: 0.85rem;
+      }
+      .date-row {
+        grid-template-columns: 1fr;
+      }
+      .quick-dates {
+        gap: 0.25rem;
+      }
+      .quick-date {
+        padding: 0.3rem 0.45rem;
+        font-size: 0.76rem;
+      }
+      #cleanup-tab,
+      .main-inner {
+        height: auto;
       }
     }
   </style>
@@ -1379,71 +1522,88 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <div class="rail-section">
           <a class="rail-item tab active" data-tab="cleanup" href="/">Cleanup</a>
-          <a class="rail-item tab" data-tab="deleted" href="/deleted">Deleted History <span id="deleted-count" class="badge" style="display:none">0</span></a>
-          <a class="rail-item tab" data-tab="settings" href="/settings">Settings</a>
-          <a class="rail-item tab" data-tab="about" href="/about">About</a>
+          <a class="rail-item tab" data-tab="deleted" href="/deleted">History <span id="deleted-count" class="badge" style="display:none">0</span></a>
         </div>
+        <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
+        <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
+        <div id="cleanup-controls" class="card" style="margin-top:0.8rem;">
+          <h2>Cleanup</h2>
+          <div class="form-group">
+            <label for="location">Source</label>
+            <select id="location">
+              <option value="new">Inbox (New)</option>
+              <option value="later">Later</option>
+              <option value="shortlist">Shortlist</option>
+              <option value="feed">Feed</option>
+              <option value="archive">Archive</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="from-date">Date Range</label>
+            <div class="date-row">
+              <div id="to-date-wrap">
+                <label for="to-date">End</label>
+                <input type="date" id="to-date">
+              </div>
+              <div id="from-date-wrap">
+                <label for="from-date">Start (blank = all time)</label>
+                <input type="date" id="from-date">
+              </div>
+            </div>
+            <div class="quick-dates">
+              <button type="button" class="quick-date" data-action="today">Today</button>
+              <button type="button" class="quick-date" data-action="all-time">All Time</button>
+              <button type="button" class="quick-date" data-days="7">1 week ago</button>
+              <button type="button" class="quick-date" data-days="30">1 month ago</button>
+              <button type="button" class="quick-date" data-days="90">3 months ago</button>
+              <button type="button" class="quick-date" data-days="180">6 months ago</button>
+              <button type="button" class="quick-date" data-days="365">1 year ago</button>
+            </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-primary" id="preview-btn">Preview Items</button>
+          </div>
+          <div class="stats" style="margin-top:0.8rem;">
+            <div class="stat">
+              <div class="stat-value" id="item-count">0</div>
+              <div class="stat-label">Items Found</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value" id="location-display">-</div>
+              <div class="stat-label">Origin</div>
+            </div>
+          </div>
+        </div>
+        <div id="deleted-controls" class="card" style="display:none;margin-top:0.8rem;">
+          <h2>History</h2>
+          <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
+            Restore selected items to Reader or remove them from local history.
+          </p>
+          <div class="inline-controls">
+            <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
+            <div class="preview-search-wrap">
+              <input class="preview-search" type="text" id="deleted-search" placeholder="Search history (title, author, site, URL)">
+              <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
+              <div class="sort-toggle" aria-label="Sort deleted history by date">
+                <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
+                <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
+                <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
+              </div>
+            </div>
+          </div>
+          <div class="btn-group" style="margin-top: 1rem">
+            <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
+            <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
+            <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
+          </div>
+        </div>
+        <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
       </aside>
       <main class="main-pane">
         <div class="main-inner">
-          <div class="tabs">
-            <a class="tab active" data-tab="cleanup" href="/">Cleanup</a>
-            <a class="tab" data-tab="deleted" href="/deleted">Deleted History</a>
-            <a class="tab" data-tab="settings" href="/settings">Settings</a>
-            <a class="tab" data-tab="about" href="/about">About</a>
-          </div>
-
     <div id="cleanup-tab">
-      <div class="card">
-        <h2>Select Items</h2>
-        <div class="form-group">
-          <label for="location">Location</label>
-          <select id="location">
-            <option value="new">Inbox (New)</option>
-            <option value="later">Later</option>
-            <option value="shortlist">Shortlist</option>
-            <option value="feed">Feed</option>
-            <option value="archive">Archive</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="from-date">Date Range</label>
-          <div class="date-row">
-            <div id="to-date-wrap">
-              <label for="to-date">End</label>
-              <input type="date" id="to-date">
-            </div>
-            <div id="from-date-wrap">
-              <label for="from-date">Start (blank = all time)</label>
-              <input type="date" id="from-date">
-            </div>
-          </div>
-          <div class="quick-dates">
-            <button type="button" class="quick-date" data-action="today">Today</button>
-            <button type="button" class="quick-date" data-action="all-time">All Time</button>
-            <button type="button" class="quick-date" data-days="7">1 week ago</button>
-            <button type="button" class="quick-date" data-days="30">1 month ago</button>
-            <button type="button" class="quick-date" data-days="90">3 months ago</button>
-            <button type="button" class="quick-date" data-days="180">6 months ago</button>
-            <button type="button" class="quick-date" data-days="365">1 year ago</button>
-          </div>
-        </div>
-        <div class="btn-group">
-          <button class="btn btn-primary" id="preview-btn">Preview Items</button>
-        </div>
-      </div>
-
-      <div class="card" id="results-card" style="display:none">
-        <div class="stats">
-          <div class="stat">
-            <div class="stat-value" id="item-count">0</div>
-            <div class="stat-label">Items Found</div>
-          </div>
-          <div class="stat">
-            <div class="stat-value" id="location-display">-</div>
-            <div class="stat-label">Location</div>
-          </div>
-        </div>
+      <div class="card" id="results-card">
+        <h2>Preview Results</h2>
         <div class="preview-top-controls" id="preview-top-controls" style="display:none">
           <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All (filtered)</label>
           <div class="preview-search-wrap">
@@ -1477,27 +1637,7 @@ const HTML_APP = `<!DOCTYPE html>
     <div id="deleted-tab" style="display:none">
       <div class="card">
         <h2>Deleted Items History</h2>
-        <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
-          Select items to restore them to Reader, or remove only selected items from local history.
-        </p>
-        <div class="inline-controls">
-          <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
-          <div class="preview-search-wrap">
-            <input class="preview-search" type="text" id="deleted-search" placeholder="Search deleted history (title, author, site, URL)">
-            <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
-            <div class="sort-toggle" aria-label="Sort deleted history by date">
-              <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
-              <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
-              <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
-            </div>
-          </div>
-        </div>
         <div id="deleted-list"><div class="loading">Loading...</div></div>
-        <div class="btn-group" style="margin-top: 1rem">
-          <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
-          <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
-          <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
-        </div>
       </div>
     </div>
 
@@ -1531,6 +1671,25 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="btn-group">
           <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
         </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
+        <h2 style="font-size:1rem;margin-bottom:0.65rem;">Readwise API Key</h2>
+        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.6rem;">
+          Key is stored server-side in this Worker KV and is never returned to browser clients after save.
+        </p>
+        <p id="token-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking token status…</p>
+        <div class="form-group">
+          <label for="setting-readwise-token">Set/replace API key</label>
+          <input id="setting-readwise-token" type="password" autocomplete="off" placeholder="rw_...">
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-outline" id="save-token-btn">Save API Key</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
+        <h2 style="font-size:1rem;margin-bottom:0.5rem;">About & History</h2>
+        <p style="margin-bottom: 0.75rem; color: var(--text-muted);">
+          Use this tool to quickly review and clean Readwise Reader items by source and date range, while keeping a restorable local delete history.
+        </p>
+        <div class="history-list" id="version-history"></div>
       </div>
     </div>
 
@@ -1538,6 +1697,9 @@ const HTML_APP = `<!DOCTYPE html>
       <div class="card">
         <h2>About</h2>
         <p style="margin-bottom: 0.75rem;">Version <strong id="about-version">${APP_VERSION}</strong></p>
+        <p style="margin-bottom: 0.75rem; color: var(--text-muted);">
+          Use this tool to quickly review and clean Readwise Reader items by source and date range, while keeping a restorable local delete history.
+        </p>
         <p style="margin-bottom: 0.5rem;">Features:</p>
         <ul class="about-list">
           <li>Preview old items before action.</li>
@@ -1548,15 +1710,13 @@ const HTML_APP = `<!DOCTYPE html>
         <p style="margin-top: 0.9rem; color: var(--text-muted);">
           Privacy: this app stores settings and deleted-item history in your Cloudflare KV namespace only.
         </p>
-        <div class="history-list" id="version-history"></div>
+        <div class="history-list"></div>
       </div>
     </div>
         </div>
       </main>
     </div>
   </div>
-
-  <div class="version-badge">v${APP_VERSION}</div>
 
   <script>
     var APP_VERSION = '${APP_VERSION}';
@@ -1619,6 +1779,12 @@ const HTML_APP = `<!DOCTYPE html>
     var deletedSortDeletedBtn = document.getElementById('deleted-sort-deleted');
     var deletedCountBadge = document.getElementById('deleted-count');
     var saveSettingsBtn = document.getElementById('save-settings-btn');
+    var cleanupControlsCard = document.getElementById('cleanup-controls');
+    var deletedControlsCard = document.getElementById('deleted-controls');
+    var versionBadgeBtn = document.getElementById('version-badge');
+    var saveTokenBtn = document.getElementById('save-token-btn');
+    var tokenStatusEl = document.getElementById('token-status');
+    var settingsTokenInput = document.getElementById('setting-readwise-token');
 
     var settingsDefaultLocation = document.getElementById('setting-default-location');
     var settingsDefaultDays = document.getElementById('setting-default-days');
@@ -1658,17 +1824,56 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function applySettingsToUI() {
-      locationSelect.value = settings.defaultLocation;
+      var hasDefaultLocation = Array.from(locationSelect.options || []).some(function(opt) {
+        return opt && opt.value === settings.defaultLocation;
+      });
+      if (hasDefaultLocation) {
+        locationSelect.value = settings.defaultLocation;
+      }
       var today = new Date();
       var fromDate = new Date(today);
       fromDate.setDate(fromDate.getDate() - settings.defaultDays);
       fromDateInput.value = formatInputDate(fromDate);
       toDateInput.value = formatInputDate(today);
       previewPageSize = settings.previewLimit;
-      settingsDefaultLocation.value = settings.defaultLocation;
+      var hasSettingsDefaultLocation = Array.from(settingsDefaultLocation.options || []).some(function(opt) {
+        return opt && opt.value === settings.defaultLocation;
+      });
+      if (hasSettingsDefaultLocation) {
+        settingsDefaultLocation.value = settings.defaultLocation;
+      }
       settingsDefaultDays.value = settings.defaultDays;
       settingsPreviewLimit.value = settings.previewLimit;
       settingsConfirmActions.checked = settings.confirmActions;
+    }
+
+    function buildLocationOptionLabel(location) {
+      if (location === 'new') return 'Inbox (New)';
+      if (location === 'later') return 'Later';
+      if (location === 'shortlist') return 'Shortlist';
+      if (location === 'feed') return 'Feed';
+      if (location === 'archive') return 'Archive';
+      return location.charAt(0).toUpperCase() + location.slice(1);
+    }
+
+    function setLocations(locations) {
+      var safeLocations = Array.isArray(locations) && locations.length > 0 ? locations : ['new', 'later', 'shortlist', 'feed', 'archive'];
+      var locationHtml = safeLocations.map(function(loc) {
+        return '<option value="' + escapeHtml(loc) + '">' + escapeHtml(buildLocationOptionLabel(loc)) + '</option>';
+      }).join('');
+      locationSelect.innerHTML = locationHtml;
+      settingsDefaultLocation.innerHTML = locationHtml;
+      applySettingsToUI();
+    }
+
+    async function loadLocations() {
+      try {
+        var res = await fetch('/api/locations');
+        var data = await parseApiJson(res);
+        setLocations(data.locations || []);
+      } catch (err) {
+        setLocations([]);
+      }
     }
 
     function buildQueryKey() {
@@ -1731,13 +1936,16 @@ const HTML_APP = `<!DOCTYPE html>
       var opts = options || {};
       var shouldPush = opts.push !== false;
       document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-      var activeTabEl = document.querySelector('.tab[data-tab="' + tabName + '"]');
-      if (activeTabEl) activeTabEl.classList.add('active');
+      document.querySelectorAll('.tab[data-tab="' + tabName + '"]').forEach(function(activeTabEl) {
+        activeTabEl.classList.add('active');
+      });
 
       document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? 'block' : 'none';
       document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
       document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
       document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
+      cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
+      deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
 
       if (tabName === 'deleted') {
         loadDeletedItems();
@@ -1758,6 +1966,11 @@ const HTML_APP = `<!DOCTYPE html>
 
     on(window, 'popstate', function() {
       setActiveTab(getTabFromPath(window.location.pathname), { push: false });
+    });
+
+    on(versionBadgeBtn, 'click', function() {
+      setActiveTab('settings', { push: true });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
     on(previewBtn, 'click', async function() {
@@ -1797,7 +2010,6 @@ const HTML_APP = `<!DOCTYPE html>
 
         itemCountEl.textContent = currentCount;
         locationDisplay.textContent = locationSelect.value;
-        resultsCard.style.display = 'block';
         previewTopControls.style.display = previewData.length > 0 ? 'flex' : 'none';
         previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
         showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
@@ -1878,7 +2090,7 @@ const HTML_APP = `<!DOCTYPE html>
         var activeDateValue = previewSortMode === 'published' ? article.publishedAt : article.savedAt;
         var activeDateLabel = previewSortMode === 'published' ? 'Published' : 'Added';
         html += '<div class="title-row">';
-        html += '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener noreferrer" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
+        html += '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
         html += '<span class="article-date-right">' + escapeHtml(activeDateLabel) + ' ' + escapeHtml(formatDate(activeDateValue || article.savedAt)) + '</span>';
         html += '</div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
@@ -1911,6 +2123,7 @@ const HTML_APP = `<!DOCTYPE html>
         selectAllPreview.checked = false;
         selectAllPreview.indeterminate = false;
         openSelectedBtn.disabled = true;
+        openSelectedBtn.style.display = 'none';
         deleteBtn.disabled = true;
         archiveBtn.disabled = true;
         openSelectedBtn.textContent = 'Open Selected';
@@ -1924,7 +2137,9 @@ const HTML_APP = `<!DOCTYPE html>
       var displayCount = previewSearch ? filteredSelected : selectedCount;
       selectAllPreview.checked = filteredSelected > 0 && filteredSelected === filtered.length;
       selectAllPreview.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
-      openSelectedBtn.disabled = displayCount === 0;
+      var canOpenFew = displayCount > 0 && displayCount < 5;
+      openSelectedBtn.style.display = canOpenFew ? 'inline-flex' : 'none';
+      openSelectedBtn.disabled = !canOpenFew;
       deleteBtn.disabled = displayCount === 0;
       archiveBtn.disabled = displayCount === 0;
       openSelectedBtn.textContent = displayCount > 0 ? 'Open Selected (' + displayCount + ')' : 'Open Selected';
@@ -2061,7 +2276,7 @@ const HTML_APP = `<!DOCTYPE html>
       evt.preventDefault();
       evt.stopPropagation();
       if (!url) return;
-      window.open(url, '_blank', 'noopener,noreferrer');
+      window.open(url, '_blank');
     }
     window.openPreviewUrl = openPreviewUrl;
 
@@ -2084,7 +2299,7 @@ const HTML_APP = `<!DOCTYPE html>
       var selected = previewData.filter(function(item) { return activeIds.has(String(item.id)); });
       selected.forEach(function(item) {
         if (item.url) {
-          window.open(item.url, '_blank', 'noopener,noreferrer');
+          window.open(item.url, '_blank');
         }
       });
     });
@@ -2208,10 +2423,9 @@ const HTML_APP = `<!DOCTYPE html>
           lastQuery = null;
           previewPage = 1;
           itemCountEl.textContent = '0';
-          previewList.innerHTML = '';
+          renderPreview();
           previewTopControls.style.display = 'none';
           previewBottomControls.style.display = 'none';
-          resultsCard.style.display = 'none';
         } else {
           var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
           if (previewPage > totalPages) previewPage = totalPages;
@@ -2219,7 +2433,6 @@ const HTML_APP = `<!DOCTYPE html>
           renderPreview();
           previewTopControls.style.display = 'flex';
           previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
-          resultsCard.style.display = 'block';
         }
 
         document.getElementById('progress').style.display = 'none';
@@ -2430,7 +2643,7 @@ const HTML_APP = `<!DOCTYPE html>
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
         html += '<div class="article-info">';
-        html += '<div class="title-row"><div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link deleted-open-link" href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener noreferrer" data-open-url="' + escapeHtml(item.url || '') + '"><div class="article-title">' + escapeHtml(item.title) + '</div></a></div></div>';
+        html += '<div class="title-row"><div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link deleted-open-link" href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener" data-open-url="' + escapeHtml(item.url || '') + '"><div class="article-title">' + escapeHtml(item.title) + '</div></a></div></div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site) + '</span>';
         if (item.author) html += ' by ' + escapeHtml(item.author);
         if (item.savedAt) html += ' · Added ' + formatDate(item.savedAt);
@@ -2536,11 +2749,66 @@ const HTML_APP = `<!DOCTYPE html>
     async function loadSettings() {
       try {
         var res = await fetch('/api/settings');
-        var data = await res.json();
+        var data = await parseApiJson(res);
         if (data.settings) settings = data.settings;
       } catch (err) {}
       applySettingsToUI();
     }
+
+    async function loadTokenStatus() {
+      try {
+        var res = await fetch('/api/token-status');
+        var data = await parseApiJson(res);
+        if (!data.hasToken) {
+          tokenStatusEl.textContent = 'No API key configured.';
+          return;
+        }
+        if (data.source === 'custom') {
+          tokenStatusEl.textContent = 'Custom API key is configured.';
+          return;
+        }
+        tokenStatusEl.textContent = 'Using environment API key.';
+      } catch (err) {
+        tokenStatusEl.textContent = 'Unable to read token status.';
+      }
+    }
+
+    on(saveTokenBtn, 'click', async function() {
+      var token = (settingsTokenInput.value || '').trim();
+      if (!token) {
+        showToast('Enter an API key first', 'warning');
+        return;
+      }
+      var confirmOverwrite = false;
+      try {
+        var statusRes = await fetch('/api/token-status');
+        var statusData = await parseApiJson(statusRes);
+        if (statusData.hasCustomToken) {
+          confirmOverwrite = window.confirm('A custom API key is already set. Overwrite it?');
+          if (!confirmOverwrite) return;
+        }
+      } catch (err) {}
+      saveTokenBtn.disabled = true;
+      var originalText = saveTokenBtn.textContent;
+      saveTokenBtn.innerHTML = '<span class="spinner"></span> Saving...';
+      try {
+        var res = await fetch('/api/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: token, confirmOverwrite: confirmOverwrite }),
+        });
+        var data = await parseApiJson(res);
+        if (data.error) throw new Error(data.error);
+        settingsTokenInput.value = '';
+        showToast(data.overwritten ? 'API key overwritten' : 'API key saved', 'success');
+        loadTokenStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        saveTokenBtn.disabled = false;
+        saveTokenBtn.textContent = originalText;
+      }
+    });
 
     function showToast(message, type) {
       type = type || 'success';
@@ -2581,8 +2849,11 @@ const HTML_APP = `<!DOCTYPE html>
 
     setActiveTab(getTabFromPath(window.location.pathname), { push: false });
     loadSettings();
+    loadLocations();
+    loadTokenStatus();
     renderVersionHistory();
     loadDeletedCount();
+    renderPreview();
   </script>
 </body>
 </html>`;
