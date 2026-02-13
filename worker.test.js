@@ -303,7 +303,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('1.1.25');
+      expect(data.version).toBe('1.1.26');
     });
   });
 
@@ -407,6 +407,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('deleted-search-clear');
     expect(html).toContain('deleted-sort-added');
     expect(html).toContain('deleted-sort-published');
+    expect(html).toContain('deleted-sort-deleted');
     expect(html).toContain('Search deleted history');
     expect(html).toContain('Restore Selected');
     expect(html).toContain('Remove from History');
@@ -422,7 +423,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v1.1.25');
+    expect(html).toContain('v1.1.26');
     expect(html).toContain('Version History');
   });
 });
