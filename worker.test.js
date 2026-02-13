@@ -40,6 +40,13 @@ describe('API Endpoints', () => {
   beforeEach(async () => {
     // Clear KV
     await env.KV.put('deleted_items', JSON.stringify([]));
+    await env.KV.put('settings', JSON.stringify({
+      defaultLocation: 'new',
+      defaultDays: 30,
+      previewLimit: 100,
+      confirmActions: true,
+    }));
+    await env.KV.delete('custom_readwise_token');
   });
 
   describe('GET /api/locations', () => {
@@ -52,16 +59,17 @@ describe('API Endpoints', () => {
       expect(data.locations).toContain('later');
       expect(data.locations).toContain('shortlist');
       expect(data.locations).toContain('feed');
+      expect(data.locations).toContain('archive');
     });
   });
 
   describe('GET /api/count', () => {
-    it('returns 400 without before date', async () => {
+    it('returns 400 without date range', async () => {
       const res = await SELF.fetch('https://example.com/api/count?location=new');
       const data = await res.json();
 
       expect(res.status).toBe(400);
-      expect(data.error).toBe('Missing before date');
+      expect(data.error).toBe('Missing date range');
     });
 
     // Skip test that requires network access to Readwise
@@ -72,12 +80,12 @@ describe('API Endpoints', () => {
   });
 
   describe('GET /api/preview', () => {
-    it('returns 400 without before date', async () => {
+    it('returns 400 without date range', async () => {
       const res = await SELF.fetch('https://example.com/api/preview?location=new');
       const data = await res.json();
 
       expect(res.status).toBe(400);
-      expect(data.error).toBe('Missing before date');
+      expect(data.error).toBe('Missing date range');
     });
   });
 
@@ -108,6 +116,23 @@ describe('API Endpoints', () => {
 
       expect(res.status).toBe(400);
       expect(data.error).toBe('Action must be delete or archive');
+    });
+
+    it('returns 400 with empty ids array', async () => {
+      const res = await SELF.fetch('https://example.com/api/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'new',
+          beforeDate: '2024-01-01',
+          action: 'archive',
+          ids: [],
+        }),
+      });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe('No item IDs provided');
     });
 
     // Skip tests that require network access to Readwise
@@ -205,6 +230,115 @@ describe('API Endpoints', () => {
       const stored = await env.KV.get('deleted_items');
       expect(JSON.parse(stored)).toEqual([]);
     });
+
+    it('clears only selected URLs when urls are provided', async () => {
+      await env.KV.put('deleted_items', JSON.stringify([
+        { id: '1', url: 'https://example.com/1', title: 'One' },
+        { id: '2', url: 'https://example.com/2', title: 'Two' },
+        { id: '3', url: 'https://example.com/3', title: 'Three' },
+      ]));
+
+      const res = await SELF.fetch('https://example.com/api/clear-deleted', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: ['https://example.com/2'] }),
+      });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.cleared).toBe(true);
+      expect(data.scope).toBe('selected');
+      expect(data.removed).toBe(1);
+
+      const stored = await env.KV.get('deleted_items');
+      const parsed = JSON.parse(stored);
+      expect(parsed).toHaveLength(2);
+      expect(parsed.find((item) => item.url === 'https://example.com/2')).toBeFalsy();
+    });
+  });
+
+  describe('GET/POST /api/settings', () => {
+    it('returns persisted settings', async () => {
+      await env.KV.put('settings', JSON.stringify({
+        defaultLocation: 'later',
+        defaultDays: 45,
+        previewLimit: 120,
+        confirmActions: false,
+      }));
+
+      const res = await SELF.fetch('https://example.com/api/settings');
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.settings.defaultLocation).toBe('later');
+      expect(data.settings.defaultDays).toBe(45);
+      expect(data.settings.previewLimit).toBe(120);
+      expect(data.settings.confirmActions).toBe(false);
+    });
+
+    it('saves and sanitizes settings values', async () => {
+      const res = await SELF.fetch('https://example.com/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          defaultLocation: 'invalid-location',
+          defaultDays: -10,
+          previewLimit: 9999,
+          confirmActions: 'not-a-bool',
+        }),
+      });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.saved).toBe(true);
+      expect(data.settings.defaultLocation).toBe('invalid-location');
+      expect(data.settings.defaultDays).toBe(1);
+      expect(data.settings.previewLimit).toBe(500);
+      expect(data.settings.confirmActions).toBe(true);
+    });
+  });
+
+  describe('GET /api/version', () => {
+    it('returns API version', async () => {
+      const res = await SELF.fetch('https://example.com/api/version');
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.version).toBe('2.0.2');
+    });
+  });
+
+  describe('API token settings', () => {
+    it('returns token status', async () => {
+      const res = await SELF.fetch('https://example.com/api/token-status');
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.hasToken).toBe(true);
+      expect(data.source).toBe('env');
+    });
+
+    it('stores a custom token', async () => {
+      const res = await SELF.fetch('https://example.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'rw_test_custom_123' }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.saved).toBe(true);
+      expect(data.overwritten).toBe(false);
+    });
+  });
+
+  describe('GET /favicon.ico', () => {
+    it('returns a graphical favicon response', async () => {
+      const res = await SELF.fetch('https://example.com/favicon.ico');
+      const body = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('image/svg+xml');
+      expect(body).toContain('<svg');
+    });
   });
 });
 
@@ -229,6 +363,7 @@ describe('PWA Serving', () => {
 
     expect(html).toContain('data-tab="cleanup"');
     expect(html).toContain('data-tab="deleted"');
+    expect(html).toContain('href="/deleted"');
   });
 
   it('includes location selector', async () => {
@@ -245,25 +380,72 @@ describe('PWA Serving', () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
+    expect(html).toContain('Start (blank = all time)');
+    expect(html).toContain('End');
+    expect(html).toContain('Today');
+    expect(html).toContain('All Time');
     expect(html).toContain('1 week ago');
     expect(html).toContain('1 month ago');
     expect(html).toContain('3 months ago');
   });
 
-  it('includes delete and archive buttons', async () => {
+  it('includes preview, delete and archive buttons', async () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
-    expect(html).toContain('Delete All');
-    expect(html).toContain('Archive All');
+    expect(html).toContain('Preview Items');
+    expect(html).toContain('Delete Selected');
+    expect(html).toContain('Archive Selected');
   });
 
-  it('includes restore functionality', async () => {
+  it('includes preview selection and pagination controls', async () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
+    expect(html).toContain('select-all-preview');
+    expect(html).toContain('preview-prev-btn');
+    expect(html).toContain('preview-next-btn');
+    expect(html).toContain('preview-page-label');
+    expect(html).toContain('webpage-icon');
+    expect(html).toContain('preview-thumb');
+    expect(html).toContain('open-selected-btn');
+    expect(html).toContain('article-link');
+    expect(html).toContain('preview-search');
+    expect(html).toContain('preview-search-clear');
+    expect(html).toContain('preview-sort-added');
+    expect(html).toContain('preview-sort-published');
+    expect(html).toContain('All (filtered)');
+  });
+
+  it('includes deleted-history selection controls', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+
+    expect(html).toContain('select-all-deleted');
+    expect(html).toContain('deleted-search');
+    expect(html).toContain('deleted-search-clear');
+    expect(html).toContain('deleted-sort-added');
+    expect(html).toContain('deleted-sort-published');
+    expect(html).toContain('deleted-sort-deleted');
+    expect(html).toContain('Search history');
     expect(html).toContain('Restore Selected');
+    expect(html).toContain('Remove from History');
     expect(html).toContain('Clear History');
+  });
+
+  it('includes settings and about content', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+
+    expect(html).toContain('Default location');
+    expect(html).toContain('Default age in days');
+    expect(html).toContain('Preview item limit');
+    expect(html).toContain('Confirm before delete/archive actions');
+    expect(html).toContain('Version');
+    expect(html).toContain('v2.0.2');
+    expect(html).toContain('Version History');
+    expect(html).toContain('Readwise API Key');
+    expect(html).toContain('Save API Key');
   });
 });
 
