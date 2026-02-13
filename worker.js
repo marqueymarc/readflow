@@ -1,8 +1,10 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.20';
+const APP_VERSION = '1.1.22';
 const VERSION_HISTORY = [
+  { version: '1.1.22', note: 'Quick-date shortcuts now target the selected date input directly (Start/End), removing the separate apply-target buttons.' },
+  { version: '1.1.21', note: 'Hardened archive previews by avoiding heavy HTML-content fetches and tightening preview scan bounds to prevent 1101 non-JSON failures.' },
   { version: '1.1.20', note: 'Fixed Deleted History All-toggle reliability and bounded archive preview pagination to prevent non-JSON 500 failures on sparse filters.' },
   { version: '1.1.19', note: 'Prevented non-JSON preview failures on large archive scans by limiting preview fetch size and enforcing JSON parse guards in preview requests.' },
   { version: '1.1.18', note: 'Added preview sort toggle (Added/Published) and right-aligned relevant date for faster scanning.' },
@@ -149,7 +151,8 @@ async function handlePreview(request, env, corsHeaders) {
   const requestedLimit = parseInt(url.searchParams.get('limit') || '', 10);
   const previewLimit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100;
   const requestedMaxPages = parseInt(url.searchParams.get('maxPages') || '', 10);
-  const previewMaxPages = Number.isFinite(requestedMaxPages) ? Math.max(1, Math.min(200, requestedMaxPages)) : 60;
+  const previewMaxPages = Number.isFinite(requestedMaxPages) ? Math.max(1, Math.min(200, requestedMaxPages)) : 20;
+  const includeHtmlContent = location !== 'archive';
 
   if (!beforeDate && !toDate && !fromDate) {
     return new Response(JSON.stringify({ error: 'Missing date range' }), {
@@ -159,7 +162,7 @@ async function handlePreview(request, env, corsHeaders) {
   }
 
   const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
-    withHtmlContent: true,
+    withHtmlContent: includeHtmlContent,
     fromDate,
     toDate,
     limit: previewLimit,
@@ -1074,17 +1077,6 @@ const HTML_APP = `<!DOCTYPE html>
       gap: 0.75rem;
       align-items: end;
     }
-    .shortcut-targets {
-      display: inline-flex;
-      gap: 0.4rem;
-      margin-top: 0.4rem;
-      margin-bottom: 0.35rem;
-    }
-    .shortcut-target-btn.active {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: white;
-    }
     .quick-date {
       padding: 0.25rem 0.75rem;
       background: var(--bg);
@@ -1318,10 +1310,6 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <div class="form-group">
           <label for="from-date">Date Range</label>
-          <div class="shortcut-targets">
-            <button class="btn btn-outline shortcut-target-btn active" type="button" id="shortcut-target-end">Apply to End</button>
-            <button class="btn btn-outline shortcut-target-btn" type="button" id="shortcut-target-start">Apply to Start</button>
-          </div>
           <div class="date-row">
             <div>
               <label for="to-date">End</label>
@@ -1492,8 +1480,6 @@ const HTML_APP = `<!DOCTYPE html>
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
     var toDateInput = document.getElementById('to-date');
-    var shortcutTargetEndBtn = document.getElementById('shortcut-target-end');
-    var shortcutTargetStartBtn = document.getElementById('shortcut-target-start');
     var previewBtn = document.getElementById('preview-btn');
     var previewSearchInput = document.getElementById('preview-search');
     var previewSearchClearBtn = document.getElementById('preview-search-clear');
@@ -1580,21 +1566,10 @@ const HTML_APP = `<!DOCTYPE html>
       el.addEventListener(eventName, handler);
     }
 
-    function updateDateTargetButtons() {
-      shortcutTargetEndBtn.classList.toggle('active', activeDateShortcutTarget === 'to');
-      shortcutTargetStartBtn.classList.toggle('active', activeDateShortcutTarget === 'from');
-    }
-
-    on(shortcutTargetEndBtn, 'click', function() {
-      activeDateShortcutTarget = 'to';
-      updateDateTargetButtons();
-    });
-
-    on(shortcutTargetStartBtn, 'click', function() {
-      activeDateShortcutTarget = 'from';
-      updateDateTargetButtons();
-    });
-    updateDateTargetButtons();
+    on(toDateInput, 'focus', function() { activeDateShortcutTarget = 'to'; });
+    on(toDateInput, 'click', function() { activeDateShortcutTarget = 'to'; });
+    on(fromDateInput, 'focus', function() { activeDateShortcutTarget = 'from'; });
+    on(fromDateInput, 'click', function() { activeDateShortcutTarget = 'from'; });
 
     document.querySelectorAll('.quick-date').forEach(function(btn) {
       on(btn, 'click', function() {

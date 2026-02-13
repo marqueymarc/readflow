@@ -303,7 +303,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('1.1.20');
+      expect(data.version).toBe('1.1.22');
     });
   });
 
@@ -363,8 +363,6 @@ describe('PWA Serving', () => {
 
     expect(html).toContain('Start (blank = all time)');
     expect(html).toContain('End');
-    expect(html).toContain('shortcut-target-end');
-    expect(html).toContain('shortcut-target-start');
     expect(html).toContain('Today');
     expect(html).toContain('All Time');
     expect(html).toContain('1 week ago');
@@ -422,7 +420,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v1.1.20');
+    expect(html).toContain('v1.1.22');
     expect(html).toContain('Version History');
   });
 });
