@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 const VERSION_HISTORY = [
+  { version: '2.1.1', note: 'Added extracted-text visibility in preview items so TTS input can be inspected before playback.' },
   { version: '2.1.0', note: 'Added audio TTS API with KV caching, mock-audio mode for low-cost testing, and settings hooks for OpenAI key plus playback skip controls.' },
   { version: '2.0.2', note: 'Refined control rail sizing, moved preview filter/sort/actions to right results header, and hide Open Selected when 5 or more items are selected.' },
   { version: '2.0.1', note: 'Reworked UI into a single control rail with compact mobile mode, dynamic Readwise locations, and settings-managed token override with overwrite confirmation.' },
@@ -256,7 +257,8 @@ async function handlePreview(request, env, corsHeaders) {
     publishedAt: a.published_date || a.published_at || null,
     site: extractDomain(a.source_url || a.url),
     thumbnail: getArticleThumbnail(a),
-    searchable: buildSearchableText(a)
+    searchable: buildSearchableText(a),
+    ttsPreview: buildTtsText(a).slice(0, 2000)
   }));
 
   return new Response(JSON.stringify({
@@ -1119,6 +1121,28 @@ function buildSearchableText(article) {
   return chunks.filter(Boolean).join(' ').toLowerCase();
 }
 
+function buildTtsText(article) {
+  const chunks = [
+    article.title,
+    article.author ? `By ${article.author}` : '',
+    article.summary,
+    article.content,
+    article.notes,
+  ].filter(Boolean);
+
+  if (typeof article.html_content === 'string' && article.html_content.length > 0) {
+    const plain = article.html_content
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (plain) chunks.push(plain);
+  }
+
+  return chunks.join('\n\n').trim();
+}
+
 function startOfDay(dateValue) {
   const d = new Date(dateValue);
   d.setHours(0, 0, 0, 0);
@@ -1395,6 +1419,32 @@ const HTML_APP = `<!DOCTYPE html>
       flex: 0 0 auto;
     }
     .article-meta { font-size: 0.8rem; color: var(--text-muted); }
+    .text-preview-toggle {
+      margin-left: 0.4rem;
+      font-size: 0.72rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.08rem 0.45rem;
+      background: white;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .text-preview-toggle:hover {
+      background: var(--bg);
+      color: var(--text);
+    }
+    .tts-preview {
+      margin-top: 0.45rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.55rem 0.65rem;
+      background: #fafcff;
+      font-size: 0.8rem;
+      color: var(--text);
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
     .article-site {
       display: inline-block;
       padding: 0.125rem 0.5rem;
@@ -2361,10 +2411,12 @@ const HTML_APP = `<!DOCTYPE html>
         html += '<span class="article-date-right">' + escapeHtml(activeDateLabel) + ' ' + escapeHtml(formatDate(activeDateValue || article.savedAt)) + '</span>';
         html += '</div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
+        html += '<button type="button" class="text-preview-toggle" data-article-id="' + escapeHtml(articleId) + '">Text</button>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
         }
         html += ' · ' + formatDate(article.savedAt) + '</div></div></div></div>';
+        html += '<div id="tts-preview-' + escapeHtml(articleId) + '" class="tts-preview" style="display:none">' + escapeHtml(article.ttsPreview || 'No extracted text available.') + '</div>';
       });
       html += '</div>';
 
@@ -2372,6 +2424,16 @@ const HTML_APP = `<!DOCTYPE html>
       previewList.querySelectorAll('.preview-open-link').forEach(function(link) {
         on(link, 'click', function(evt) {
           openPreviewUrl(evt, link.dataset.openUrl || link.getAttribute('href') || '');
+        });
+      });
+      previewList.querySelectorAll('.text-preview-toggle').forEach(function(btn) {
+        on(btn, 'click', function() {
+          var articleId = btn.dataset.articleId;
+          var previewEl = document.getElementById('tts-preview-' + articleId);
+          if (!previewEl) return;
+          var shouldShow = previewEl.style.display === 'none';
+          previewEl.style.display = shouldShow ? 'block' : 'none';
+          btn.textContent = shouldShow ? 'Hide text' : 'Text';
         });
       });
       previewPageLabel.textContent = 'Page ' + previewPage + ' / ' + totalPages;
