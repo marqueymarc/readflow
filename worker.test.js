@@ -689,6 +689,18 @@ describe('HTML/JavaScript validity', () => {
     expect(openParens).toBe(closeParens);
   });
 
+  it('player queue rows are wired for click-to-jump', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(script).toContain("querySelectorAll('.player-queue-row')");
+    expect(script).toContain("querySelectorAll('.player-queue-jump')");
+    expect(script).toContain('loadPlayerIndex(idx)');
+  });
+
   it('HTML does not contain escaped backticks', async () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
