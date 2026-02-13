@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.27';
+const APP_VERSION = '2.0.0';
 const VERSION_HISTORY = [
+  { version: '2.0.0', note: 'Introduced v2 layout shell with Readwise-style left rail and top route bar while preserving existing cleanup/deleted/settings/about affordances.' },
   { version: '1.1.27', note: 'Fixed Deleted History title alignment to stay left-aligned and avoid right-justified title rows.' },
   { version: '1.1.26', note: 'Deleted History now supports Added/Published/Deleted sorting with full available date metadata; startup defaults initialize to Inbox + last 7 days.' },
   { version: '1.1.25', note: 'Added Added/Published sort toggle to Deleted History and preserved publication metadata in deleted-item records.' },
@@ -820,21 +821,75 @@ const HTML_APP = `<!DOCTYPE html>
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
-      padding: 1rem;
+      padding: 0;
     }
-    .container { max-width: 840px; margin: 0 auto; }
-    header {
-      text-align: center;
-      padding: 1.25rem 0;
-      margin-bottom: 1.25rem;
+    .container { max-width: none; margin: 0; }
+    .app-shell {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .left-rail {
+      border-right: 1px solid var(--border);
+      background: #f3f6fb;
+      padding: 1rem 0.75rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .main-pane {
+      min-width: 0;
+      padding: 0.75rem 1.1rem 2rem;
+    }
+    .main-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+    .rail-brand {
       display: flex;
-      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: #1f2937;
+      padding: 0.35rem 0.5rem 1rem;
+    }
+    .rail-section {
+      margin-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.65rem;
+    }
+    .rail-item {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.95rem;
+      margin-bottom: 0.2rem;
+    }
+    .rail-item.active {
+      background: #e9eef8;
+      color: #1d4ed8;
+    }
+    .rail-item:hover {
+      background: #e9eef8;
+    }
+    header {
+      padding: 0;
+      margin-bottom: 0;
+      display: flex;
+      flex-direction: row;
       align-items: center;
       gap: 0.5rem;
     }
-    .logo { width: 56px; height: 56px; }
-    h1 { font-size: 1.75rem; color: var(--primary); }
-    .subtitle { color: var(--text-muted); font-size: 0.9rem; }
+    .logo { width: 28px; height: 28px; }
+    h1 { font-size: 1.1rem; color: var(--text); }
+    .subtitle { display: none; }
     .card {
       background: var(--card);
       border-radius: 12px;
@@ -1007,6 +1062,10 @@ const HTML_APP = `<!DOCTYPE html>
       margin-bottom: 1rem;
       border-bottom: 1px solid var(--border);
       overflow-x: auto;
+      background: var(--card);
+      border-radius: 10px;
+      padding: 0.2rem 0.4rem;
+      box-shadow: var(--shadow);
     }
     .tab {
       display: inline-block;
@@ -1280,28 +1339,59 @@ const HTML_APP = `<!DOCTYPE html>
       .btn { width: 100%; }
       .inline-controls { flex-direction: column; align-items: flex-start; }
     }
+    @media (max-width: 1024px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+      .left-rail {
+        position: static;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .main-pane {
+        padding-top: 0.5rem;
+      }
+      .rail-section {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+      .rail-item {
+        margin-bottom: 0;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
-      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-        <rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"></rect>
-        <path d="M20 40c8-1 14-7 15-15" stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none"></path>
-        <path d="M31 26h15" stroke="#ffffff" stroke-width="4" stroke-linecap="round"></path>
-        <circle cx="40" cy="42" r="8" fill="#ffffff"></circle>
-        <path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
-      </svg>
-      <h1>Readwise Cleanup</h1>
-      <p class="subtitle">Bulk delete or archive old Reader items</p>
-    </header>
-
-    <div class="tabs">
-      <a class="tab active" data-tab="cleanup" href="/">Cleanup</a>
-      <a class="tab" data-tab="deleted" href="/deleted">Deleted History <span id="deleted-count" class="badge" style="display:none">0</span></a>
-      <a class="tab" data-tab="settings" href="/settings">Settings</a>
-      <a class="tab" data-tab="about" href="/about">About</a>
-    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="rail-brand">
+          <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+            <rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"></rect>
+            <path d="M20 40c8-1 14-7 15-15" stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none"></path>
+            <path d="M31 26h15" stroke="#ffffff" stroke-width="4" stroke-linecap="round"></path>
+            <circle cx="40" cy="42" r="8" fill="#ffffff"></circle>
+            <path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+          </svg>
+          <span>Readwise</span>
+        </div>
+        <div class="rail-section">
+          <a class="rail-item tab active" data-tab="cleanup" href="/">Cleanup</a>
+          <a class="rail-item tab" data-tab="deleted" href="/deleted">Deleted History <span id="deleted-count" class="badge" style="display:none">0</span></a>
+          <a class="rail-item tab" data-tab="settings" href="/settings">Settings</a>
+          <a class="rail-item tab" data-tab="about" href="/about">About</a>
+        </div>
+      </aside>
+      <main class="main-pane">
+        <div class="main-inner">
+          <div class="tabs">
+            <a class="tab active" data-tab="cleanup" href="/">Cleanup</a>
+            <a class="tab" data-tab="deleted" href="/deleted">Deleted History</a>
+            <a class="tab" data-tab="settings" href="/settings">Settings</a>
+            <a class="tab" data-tab="about" href="/about">About</a>
+          </div>
 
     <div id="cleanup-tab">
       <div class="card">
@@ -1460,6 +1550,9 @@ const HTML_APP = `<!DOCTYPE html>
         </p>
         <div class="history-list" id="version-history"></div>
       </div>
+    </div>
+        </div>
+      </main>
     </div>
   </div>
 
