@@ -45,8 +45,12 @@ describe('API Endpoints', () => {
       defaultDays: 30,
       previewLimit: 100,
       confirmActions: true,
+      mockTts: true,
+      audioBackSeconds: 15,
+      audioForwardSeconds: 30,
     }));
     await env.KV.delete('custom_readwise_token');
+    await env.KV.delete('custom_openai_key');
   });
 
   describe('GET /api/locations', () => {
@@ -285,6 +289,8 @@ describe('API Endpoints', () => {
           defaultDays: -10,
           previewLimit: 9999,
           confirmActions: 'not-a-bool',
+          audioBackSeconds: -99,
+          audioForwardSeconds: 9999,
         }),
       });
       const data = await res.json();
@@ -295,6 +301,9 @@ describe('API Endpoints', () => {
       expect(data.settings.defaultDays).toBe(1);
       expect(data.settings.previewLimit).toBe(500);
       expect(data.settings.confirmActions).toBe(true);
+      expect(data.settings.mockTts).toBe(true);
+      expect(data.settings.audioBackSeconds).toBe(5);
+      expect(data.settings.audioForwardSeconds).toBe(180);
     });
   });
 
@@ -304,7 +313,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('2.0.2');
+      expect(data.version).toBe('2.1.0');
     });
   });
 
@@ -327,6 +336,92 @@ describe('API Endpoints', () => {
       expect(res.status).toBe(200);
       expect(data.saved).toBe(true);
       expect(data.overwritten).toBe(false);
+    });
+  });
+
+  describe('OpenAI key settings', () => {
+    it('returns OpenAI key status', async () => {
+      const res = await SELF.fetch('https://example.com/api/openai-key-status');
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.hasKey).toBe(false);
+      expect(data.source).toBe('none');
+    });
+
+    it('stores a custom OpenAI key', async () => {
+      const res = await SELF.fetch('https://example.com/api/openai-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'sk-test-custom-123' }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.saved).toBe(true);
+      expect(data.overwritten).toBe(false);
+    });
+  });
+
+  describe('POST /api/audio/tts', () => {
+    it('returns mock audio and then serves cache hit', async () => {
+      const body = {
+        articleId: 'article-1',
+        text: 'Short mock text for audio clip.',
+        voice: 'alloy',
+        speed: 1,
+        chunkIndex: 0,
+      };
+
+      const first = await SELF.fetch('https://example.com/api/audio/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const firstBytes = new Uint8Array(await first.arrayBuffer());
+      expect(first.status).toBe(200);
+      expect(first.headers.get('content-type')).toContain('audio/');
+      expect(first.headers.get('X-TTS-Cache')).toBe('MISS');
+      expect(first.headers.get('X-TTS-Mock')).toBe('1');
+      expect(firstBytes.length).toBeGreaterThan(0);
+
+      const second = await SELF.fetch('https://example.com/api/audio/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const secondBytes = new Uint8Array(await second.arrayBuffer());
+      expect(second.status).toBe(200);
+      expect(second.headers.get('X-TTS-Cache')).toBe('HIT');
+      expect(second.headers.get('X-TTS-Mock')).toBe('1');
+      expect(secondBytes.length).toBe(firstBytes.length);
+    });
+
+    it('does not call OpenAI endpoint in mock mode', async () => {
+      const originalFetch = globalThis.fetch;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const target = String(input);
+        if (target.includes('api.openai.com')) {
+          throw new Error('Unexpected OpenAI call in mock mode');
+        }
+        return originalFetch(input, init);
+      });
+
+      try {
+        const res = await SELF.fetch('https://example.com/api/audio/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            articleId: 'article-2',
+            text: 'Another mock clip',
+            voice: 'alloy',
+            speed: 1,
+            chunkIndex: 0,
+          }),
+        });
+        expect(res.status).toBe(200);
+        expect(res.headers.get('X-TTS-Mock')).toBe('1');
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
   });
 
@@ -442,10 +537,12 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v2.0.2');
+    expect(html).toContain('v2.1.0');
     expect(html).toContain('Version History');
     expect(html).toContain('Readwise API Key');
     expect(html).toContain('Save API Key');
+    expect(html).toContain('Mock TTS mode');
+    expect(html).toContain('OpenAI API Key');
   });
 });
 

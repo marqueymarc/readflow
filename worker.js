@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.0.2';
+const APP_VERSION = '2.1.0';
 const VERSION_HISTORY = [
+  { version: '2.1.0', note: 'Added audio TTS API with KV caching, mock-audio mode for low-cost testing, and settings hooks for OpenAI key plus playback skip controls.' },
   { version: '2.0.2', note: 'Refined control rail sizing, moved preview filter/sort/actions to right results header, and hide Open Selected when 5 or more items are selected.' },
   { version: '2.0.1', note: 'Reworked UI into a single control rail with compact mobile mode, dynamic Readwise locations, and settings-managed token override with overwrite confirmation.' },
   { version: '2.0.0', note: 'Introduced v2 layout shell with Readwise-style left rail and top route bar while preserving existing cleanup/deleted/settings/about affordances.' },
@@ -40,7 +41,11 @@ const DEFAULT_SETTINGS = {
   defaultDays: 7,
   previewLimit: 100,
   confirmActions: true,
+  mockTts: true,
+  audioBackSeconds: 15,
+  audioForwardSeconds: 30,
 };
+const MOCK_TTS_WAV_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
 export default {
   async fetch(request, env) {
@@ -90,6 +95,27 @@ export default {
       if (url.pathname === '/api/token') {
         if (request.method === 'POST') {
           return handleSaveToken(request, env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/api/openai-key-status') {
+        return handleOpenAIKeyStatus(env, corsHeaders);
+      }
+      if (url.pathname === '/api/openai-key') {
+        if (request.method === 'POST') {
+          return handleSaveOpenAIKey(request, env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/api/audio/tts') {
+        if (request.method === 'POST') {
+          return handleAudioTts(request, env, corsHeaders);
         }
         return new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
@@ -506,6 +532,155 @@ async function handleSaveToken(request, env, corsHeaders) {
   });
 }
 
+async function handleOpenAIKeyStatus(env, corsHeaders) {
+  const hasCustomKey = !!(await env.KV.get('custom_openai_key'));
+  const hasEnvKey = typeof env.OPENAI_API_KEY === 'string' && env.OPENAI_API_KEY.length > 0;
+  const source = hasCustomKey ? 'custom' : (hasEnvKey ? 'env' : 'none');
+  return new Response(JSON.stringify({
+    hasKey: hasCustomKey || hasEnvKey,
+    hasCustomKey,
+    source,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleSaveOpenAIKey(request, env, corsHeaders) {
+  const body = await request.json();
+  const key = typeof body.key === 'string' ? body.key.trim() : '';
+  const confirmOverwrite = body.confirmOverwrite === true;
+
+  if (!key) {
+    return new Response(JSON.stringify({ error: 'OpenAI key is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  if (!key.startsWith('sk-')) {
+    return new Response(JSON.stringify({ error: 'OpenAI key format looks invalid' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const existing = await env.KV.get('custom_openai_key');
+  const hasExisting = !!existing;
+  if (hasExisting && !confirmOverwrite) {
+    return new Response(JSON.stringify({ error: 'OpenAI key already set; confirm overwrite' }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  await env.KV.put('custom_openai_key', key);
+  return new Response(JSON.stringify({
+    saved: true,
+    overwritten: hasExisting,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleAudioTts(request, env, corsHeaders) {
+  const body = await request.json();
+  const articleId = String(body.articleId || '');
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  const voice = typeof body.voice === 'string' && body.voice.trim() ? body.voice.trim() : 'alloy';
+  const speed = Number.isFinite(Number(body.speed)) ? Math.min(4, Math.max(0.5, Number(body.speed))) : 1;
+  const chunkIndex = Number.isFinite(Number(body.chunkIndex)) ? Math.max(0, parseInt(body.chunkIndex, 10)) : 0;
+
+  if (!text) {
+    return new Response(JSON.stringify({ error: 'Text is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const settings = await getSettings(env);
+  const useMockTts = body.mock === true || settings.mockTts === true;
+  const cacheKey = await getTtsCacheKey({
+    articleId: articleId || 'none',
+    text,
+    voice,
+    speed,
+    chunkIndex,
+    model: 'gpt-4o-mini-tts',
+    mock: useMockTts,
+  });
+  const cacheStoreKey = `tts_cache:${cacheKey}`;
+
+  const cached = await env.KV.get(cacheStoreKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      const bytes = base64ToUint8Array(parsed.audioBase64 || '');
+      return new Response(bytes, {
+        headers: {
+          'Content-Type': parsed.contentType || 'audio/mpeg',
+          'Cache-Control': 'private, max-age=3600',
+          'X-TTS-Cache': 'HIT',
+          'X-TTS-Mock': parsed.mock ? '1' : '0',
+          ...corsHeaders,
+        },
+      });
+    } catch {
+      // continue and regenerate below when cache is malformed
+    }
+  }
+
+  let audioBytes;
+  let contentType;
+  if (useMockTts) {
+    audioBytes = base64ToUint8Array(MOCK_TTS_WAV_BASE64);
+    contentType = 'audio/wav';
+  } else {
+    const openaiKey = await getOpenAIKey(env);
+    if (!openaiKey) {
+      return new Response(JSON.stringify({ error: 'OpenAI key is not configured' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    const openaiRes = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini-tts',
+        voice,
+        input: text.slice(0, 12000),
+        format: 'mp3',
+        speed,
+      }),
+    });
+    if (!openaiRes.ok) {
+      throw new Error(`OpenAI TTS failed: ${openaiRes.status}`);
+    }
+    contentType = openaiRes.headers.get('content-type') || 'audio/mpeg';
+    audioBytes = new Uint8Array(await openaiRes.arrayBuffer());
+  }
+
+  await env.KV.put(cacheStoreKey, JSON.stringify({
+    audioBase64: uint8ToBase64(audioBytes),
+    contentType,
+    mock: useMockTts,
+  }), { expirationTtl: 60 * 60 * 24 * 14 });
+
+  return new Response(audioBytes, {
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'private, max-age=3600',
+      'X-TTS-Cache': 'MISS',
+      'X-TTS-Mock': useMockTts ? '1' : '0',
+      ...corsHeaders,
+    },
+  });
+}
+
 function handleGetVersion(corsHeaders) {
   return new Response(JSON.stringify({ version: APP_VERSION }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -548,12 +723,20 @@ function sanitizeSettings(input) {
   const confirmActions = typeof source.confirmActions === 'boolean'
     ? source.confirmActions
     : DEFAULT_SETTINGS.confirmActions;
+  const mockTts = typeof source.mockTts === 'boolean'
+    ? source.mockTts
+    : DEFAULT_SETTINGS.mockTts;
+  const audioBackSeconds = normalizeInt(source.audioBackSeconds, DEFAULT_SETTINGS.audioBackSeconds, 5, 120);
+  const audioForwardSeconds = normalizeInt(source.audioForwardSeconds, DEFAULT_SETTINGS.audioForwardSeconds, 5, 180);
 
   return {
     defaultLocation,
     defaultDays,
     previewLimit,
     confirmActions,
+    mockTts,
+    audioBackSeconds,
+    audioForwardSeconds,
   };
 }
 
@@ -715,6 +898,51 @@ async function getReadwiseToken(env) {
   if (customToken && customToken.trim()) return customToken.trim();
   if (typeof env.READWISE_TOKEN === 'string' && env.READWISE_TOKEN.trim()) return env.READWISE_TOKEN.trim();
   return null;
+}
+
+async function getOpenAIKey(env) {
+  const customKey = await env.KV.get('custom_openai_key');
+  if (customKey && customKey.trim()) return customKey.trim();
+  if (typeof env.OPENAI_API_KEY === 'string' && env.OPENAI_API_KEY.trim()) return env.OPENAI_API_KEY.trim();
+  return null;
+}
+
+async function getTtsCacheKey(parts) {
+  const textHash = await sha256Hex(parts.text || '');
+  return [
+    parts.articleId || 'none',
+    parts.model || 'gpt-4o-mini-tts',
+    parts.voice || 'alloy',
+    String(parts.speed || 1),
+    String(parts.chunkIndex || 0),
+    parts.mock ? 'mock' : 'real',
+    textHash.slice(0, 24),
+  ].join(':');
+}
+
+async function sha256Hex(value) {
+  const data = new TextEncoder().encode(String(value || ''));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function uint8ToBase64(uint8) {
+  let binary = '';
+  for (let i = 0; i < uint8.length; i++) {
+    binary += String.fromCharCode(uint8[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(String(base64 || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 // Helper: Get deleted items from KV
@@ -1668,6 +1896,20 @@ const HTML_APP = `<!DOCTYPE html>
             Confirm before delete/archive actions
           </label>
         </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input id="setting-mock-tts" type="checkbox">
+            Mock TTS mode (use local test clip; no OpenAI call)
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="setting-audio-back-seconds">Audio back skip (seconds)</label>
+          <input id="setting-audio-back-seconds" type="number" min="5" max="120">
+        </div>
+        <div class="form-group">
+          <label for="setting-audio-forward-seconds">Audio forward skip (seconds)</label>
+          <input id="setting-audio-forward-seconds" type="number" min="5" max="180">
+        </div>
         <div class="btn-group">
           <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
         </div>
@@ -1683,6 +1925,19 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <div class="btn-group">
           <button class="btn btn-outline" id="save-token-btn">Save API Key</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
+        <h2 style="font-size:1rem;margin-bottom:0.65rem;">OpenAI API Key</h2>
+        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.6rem;">
+          Used only for real TTS generation when mock mode is off.
+        </p>
+        <p id="openai-key-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking OpenAI key status…</p>
+        <div class="form-group">
+          <label for="setting-openai-key">Set/replace OpenAI key</label>
+          <input id="setting-openai-key" type="password" autocomplete="off" placeholder="sk-...">
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-outline" id="save-openai-key-btn">Save OpenAI Key</button>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
         <h2 style="font-size:1rem;margin-bottom:0.5rem;">About & History</h2>
@@ -1741,7 +1996,10 @@ const HTML_APP = `<!DOCTYPE html>
       defaultLocation: 'new',
       defaultDays: 30,
       previewLimit: 100,
-      confirmActions: true
+      confirmActions: true,
+      mockTts: true,
+      audioBackSeconds: 15,
+      audioForwardSeconds: 30
     };
 
     var locationSelect = document.getElementById('location');
@@ -1785,6 +2043,12 @@ const HTML_APP = `<!DOCTYPE html>
     var saveTokenBtn = document.getElementById('save-token-btn');
     var tokenStatusEl = document.getElementById('token-status');
     var settingsTokenInput = document.getElementById('setting-readwise-token');
+    var settingMockTts = document.getElementById('setting-mock-tts');
+    var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
+    var settingAudioForwardSeconds = document.getElementById('setting-audio-forward-seconds');
+    var openAiKeyStatusEl = document.getElementById('openai-key-status');
+    var saveOpenAiKeyBtn = document.getElementById('save-openai-key-btn');
+    var settingsOpenAiKeyInput = document.getElementById('setting-openai-key');
 
     var settingsDefaultLocation = document.getElementById('setting-default-location');
     var settingsDefaultDays = document.getElementById('setting-default-days');
@@ -1845,6 +2109,9 @@ const HTML_APP = `<!DOCTYPE html>
       settingsDefaultDays.value = settings.defaultDays;
       settingsPreviewLimit.value = settings.previewLimit;
       settingsConfirmActions.checked = settings.confirmActions;
+      settingMockTts.checked = settings.mockTts;
+      settingAudioBackSeconds.value = settings.audioBackSeconds;
+      settingAudioForwardSeconds.value = settings.audioForwardSeconds;
     }
 
     function buildLocationOptionLabel(location) {
@@ -2727,7 +2994,10 @@ const HTML_APP = `<!DOCTYPE html>
         defaultLocation: settingsDefaultLocation.value,
         defaultDays: parseInt(settingsDefaultDays.value, 10),
         previewLimit: parseInt(settingsPreviewLimit.value, 10),
-        confirmActions: !!settingsConfirmActions.checked
+        confirmActions: !!settingsConfirmActions.checked,
+        mockTts: !!settingMockTts.checked,
+        audioBackSeconds: parseInt(settingAudioBackSeconds.value, 10),
+        audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10)
       };
       try {
         var res = await fetch('/api/settings', {
@@ -2810,6 +3080,61 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
+    async function loadOpenAiKeyStatus() {
+      try {
+        var res = await fetch('/api/openai-key-status');
+        var data = await parseApiJson(res);
+        if (!data.hasKey) {
+          openAiKeyStatusEl.textContent = 'No OpenAI key configured.';
+          return;
+        }
+        if (data.source === 'custom') {
+          openAiKeyStatusEl.textContent = 'Custom OpenAI key is configured.';
+          return;
+        }
+        openAiKeyStatusEl.textContent = 'Using environment OpenAI key.';
+      } catch (err) {
+        openAiKeyStatusEl.textContent = 'Unable to read OpenAI key status.';
+      }
+    }
+
+    on(saveOpenAiKeyBtn, 'click', async function() {
+      var key = (settingsOpenAiKeyInput.value || '').trim();
+      if (!key) {
+        showToast('Enter an OpenAI key first', 'warning');
+        return;
+      }
+      var confirmOverwrite = false;
+      try {
+        var statusRes = await fetch('/api/openai-key-status');
+        var statusData = await parseApiJson(statusRes);
+        if (statusData.hasCustomKey) {
+          confirmOverwrite = window.confirm('A custom OpenAI key is already set. Overwrite it?');
+          if (!confirmOverwrite) return;
+        }
+      } catch (err) {}
+      saveOpenAiKeyBtn.disabled = true;
+      var originalText = saveOpenAiKeyBtn.textContent;
+      saveOpenAiKeyBtn.innerHTML = '<span class="spinner"></span> Saving...';
+      try {
+        var res = await fetch('/api/openai-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: key, confirmOverwrite: confirmOverwrite }),
+        });
+        var data = await parseApiJson(res);
+        if (data.error) throw new Error(data.error);
+        settingsOpenAiKeyInput.value = '';
+        showToast(data.overwritten ? 'OpenAI key overwritten' : 'OpenAI key saved', 'success');
+        loadOpenAiKeyStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        saveOpenAiKeyBtn.disabled = false;
+        saveOpenAiKeyBtn.textContent = originalText;
+      }
+    });
+
     function showToast(message, type) {
       type = type || 'success';
       var existing = document.querySelector('.toast');
@@ -2851,6 +3176,7 @@ const HTML_APP = `<!DOCTYPE html>
     loadSettings();
     loadLocations();
     loadTokenStatus();
+    loadOpenAiKeyStatus();
     renderVersionHistory();
     loadDeletedCount();
     renderPreview();
