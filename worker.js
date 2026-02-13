@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.22';
+const APP_VERSION = '1.1.23';
 const VERSION_HISTORY = [
+  { version: '1.1.23', note: 'Improved quick-date targeting reliability by tracking Start/End picker interaction across focus/click/change/pointer events.' },
   { version: '1.1.22', note: 'Quick-date shortcuts now target the selected date input directly (Start/End), removing the separate apply-target buttons.' },
   { version: '1.1.21', note: 'Hardened archive previews by avoiding heavy HTML-content fetches and tightening preview scan bounds to prevent 1101 non-JSON failures.' },
   { version: '1.1.20', note: 'Fixed Deleted History All-toggle reliability and bounded archive preview pagination to prevent non-JSON 500 failures on sparse filters.' },
@@ -1311,11 +1312,11 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="form-group">
           <label for="from-date">Date Range</label>
           <div class="date-row">
-            <div>
+            <div id="to-date-wrap">
               <label for="to-date">End</label>
               <input type="date" id="to-date">
             </div>
-            <div>
+            <div id="from-date-wrap">
               <label for="from-date">Start (blank = all time)</label>
               <input type="date" id="from-date">
             </div>
@@ -1480,6 +1481,8 @@ const HTML_APP = `<!DOCTYPE html>
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
     var toDateInput = document.getElementById('to-date');
+    var fromDateWrap = document.getElementById('from-date-wrap');
+    var toDateWrap = document.getElementById('to-date-wrap');
     var previewBtn = document.getElementById('preview-btn');
     var previewSearchInput = document.getElementById('preview-search');
     var previewSearchClearBtn = document.getElementById('preview-search-clear');
@@ -1541,6 +1544,10 @@ const HTML_APP = `<!DOCTYPE html>
       }
     }
 
+    function setDateShortcutTarget(target) {
+      activeDateShortcutTarget = target === 'from' ? 'from' : 'to';
+    }
+
     function applySettingsToUI() {
       locationSelect.value = settings.defaultLocation;
       fromDateInput.value = '';
@@ -1566,10 +1573,12 @@ const HTML_APP = `<!DOCTYPE html>
       el.addEventListener(eventName, handler);
     }
 
-    on(toDateInput, 'focus', function() { activeDateShortcutTarget = 'to'; });
-    on(toDateInput, 'click', function() { activeDateShortcutTarget = 'to'; });
-    on(fromDateInput, 'focus', function() { activeDateShortcutTarget = 'from'; });
-    on(fromDateInput, 'click', function() { activeDateShortcutTarget = 'from'; });
+    on(toDateWrap, 'pointerdown', function() { setDateShortcutTarget('to'); });
+    on(fromDateWrap, 'pointerdown', function() { setDateShortcutTarget('from'); });
+    ['focus', 'click', 'input', 'change', 'pointerdown'].forEach(function(evtName) {
+      on(toDateInput, evtName, function() { setDateShortcutTarget('to'); });
+      on(fromDateInput, evtName, function() { setDateShortcutTarget('from'); });
+    });
 
     document.querySelectorAll('.quick-date').forEach(function(btn) {
       on(btn, 'click', function() {

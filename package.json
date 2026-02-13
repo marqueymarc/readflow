@@ -1,6 +1,6 @@
 {
   "name": "readwise-cleanup",
-  "version": "1.1.22",
+  "version": "1.1.23",
   "description": "Bulk delete/archive old Readwise Reader items with restoration support",
   "scripts": {
     "check:ui": "node check-ui-script.mjs",
