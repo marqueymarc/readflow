@@ -314,7 +314,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('2.1.2');
+      expect(data.version).toBe('2.1.4');
     });
   });
 
@@ -538,11 +538,12 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v2.1.2');
+    expect(html).toContain('v2.1.4');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
     expect(html).toContain('setting-max-open-tabs');
     expect(html).toContain('Audio Player');
+    expect(html).toContain('player-auto-next');
     expect(html).toContain('Version History');
     expect(html).toContain('Readwise API Key');
     expect(html).toContain('Save API Key');

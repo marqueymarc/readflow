@@ -1,8 +1,10 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.1.2';
+const APP_VERSION = '2.1.4';
 const VERSION_HISTORY = [
+  { version: '2.1.4', note: 'Made player queue rows fully clickable so selecting the current-arrow title reliably jumps to that item.' },
+  { version: '2.1.3', note: 'Mock TTS now returns a testable ~20s clip, and Player queue now supports selectable items with an Auto play next toggle.' },
   { version: '2.1.2', note: 'Added configurable max-open-tabs setting and preview Play controls that open and run audio in a dedicated Player tab.' },
   { version: '2.1.1', note: 'Added extracted-text visibility in preview items so TTS input can be inspected before playback.' },
   { version: '2.1.0', note: 'Added audio TTS API with KV caching, mock-audio mode for low-cost testing, and settings hooks for OpenAI key plus playback skip controls.' },
@@ -48,7 +50,8 @@ const DEFAULT_SETTINGS = {
   audioForwardSeconds: 30,
   maxOpenTabs: 5,
 };
-const MOCK_TTS_WAV_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+const MOCK_TTS_SECONDS = 20;
+let MOCK_TTS_BYTES = null;
 
 export default {
   async fetch(request, env) {
@@ -636,7 +639,10 @@ async function handleAudioTts(request, env, corsHeaders) {
   let audioBytes;
   let contentType;
   if (useMockTts) {
-    audioBytes = base64ToUint8Array(MOCK_TTS_WAV_BASE64);
+    if (!MOCK_TTS_BYTES) {
+      MOCK_TTS_BYTES = createMockWavClip(MOCK_TTS_SECONDS);
+    }
+    audioBytes = MOCK_TTS_BYTES;
     contentType = 'audio/wav';
   } else {
     const openaiKey = await getOpenAIKey(env);
@@ -949,6 +955,51 @@ function base64ToUint8Array(base64) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+function createMockWavClip(seconds) {
+  const sampleRate = 16000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const samples = Math.max(1, Math.floor(sampleRate * seconds));
+  const bytesPerSample = bitsPerSample / 8;
+  const dataSize = samples * channels * bytesPerSample;
+  const totalSize = 44 + dataSize;
+  const buffer = new ArrayBuffer(totalSize);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * bytesPerSample, true);
+  view.setUint16(32, channels * bytesPerSample, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const baseFreq = 220;
+  let offset = 44;
+  for (let i = 0; i < samples; i++) {
+    const t = i / sampleRate;
+    const envelope = 0.5 + 0.5 * Math.sin(2 * Math.PI * 0.25 * t);
+    const sample = Math.sin(2 * Math.PI * baseFreq * t) * 0.2 * envelope;
+    const intSample = Math.max(-1, Math.min(1, sample)) * 32767;
+    view.setInt16(offset, intSample, true);
+    offset += 2;
+  }
+
+  return new Uint8Array(buffer);
+}
+
+function writeAscii(view, offset, text) {
+  for (let i = 0; i < text.length; i++) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
 }
 
 // Helper: Get deleted items from KV
@@ -2035,11 +2086,17 @@ const HTML_APP = `<!DOCTYPE html>
         <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
         <div id="player-current-title" style="font-weight:600; margin-bottom:0.5rem;"></div>
         <div class="btn-group" style="margin-bottom:0.6rem;">
-          <button class="btn btn-outline" id="player-prev-btn">Prev</button>
-          <button class="btn btn-primary" id="player-playpause-btn">Play</button>
-          <button class="btn btn-outline" id="player-next-btn">Next</button>
-          <button class="btn btn-outline" id="player-back-btn">-15s</button>
-          <button class="btn btn-outline" id="player-forward-btn">+30s</button>
+          <button class="btn btn-outline" id="player-prev-btn" title="Previous" aria-label="Previous">⏮</button>
+          <button class="btn btn-primary" id="player-playpause-btn" title="Play or pause" aria-label="Play or pause">⏯</button>
+          <button class="btn btn-outline" id="player-next-btn" title="Next" aria-label="Next">⏭</button>
+          <button class="btn btn-outline" id="player-back-btn" title="Back" aria-label="Back">⏪ 15s</button>
+          <button class="btn btn-outline" id="player-forward-btn" title="Forward" aria-label="Forward">30s ⏩</button>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input id="player-auto-next" type="checkbox" checked>
+            Auto play next
+          </label>
         </div>
         <div class="form-group" style="max-width: 200px;">
           <label for="player-speed">Speed</label>
@@ -2092,6 +2149,7 @@ const HTML_APP = `<!DOCTYPE html>
     };
     var playerQueue = [];
     var playerIndex = 0;
+    var playerEnabledIds = new Set();
 
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
@@ -2152,6 +2210,7 @@ const HTML_APP = `<!DOCTYPE html>
     var playerBackBtn = document.getElementById('player-back-btn');
     var playerForwardBtn = document.getElementById('player-forward-btn');
     var playerSpeedSelect = document.getElementById('player-speed');
+    var playerAutoNextCheckbox = document.getElementById('player-auto-next');
 
     var settingsDefaultLocation = document.getElementById('setting-default-location');
     var settingsDefaultDays = document.getElementById('setting-default-days');
@@ -2728,8 +2787,44 @@ const HTML_APP = `<!DOCTYPE html>
       playerCurrentTitle.textContent = playerQueue[playerIndex].title || 'Untitled';
       playerQueueEl.innerHTML = playerQueue.map(function(item, idx) {
         var prefix = idx === playerIndex ? '▶ ' : '';
-        return '<div class="history-item">' + escapeHtml(prefix + (item.title || 'Untitled')) + '</div>';
+        var queueId = getPlayerQueueId(item, idx);
+        var checked = playerEnabledIds.has(queueId) ? ' checked' : '';
+        var itemClass = idx === playerIndex ? 'history-item current player-queue-row' : 'history-item player-queue-row';
+        return '<div class="' + itemClass + '">' +
+          '<label class="checkbox-label" style="gap:0.35rem;">' +
+          '<input type="checkbox" class="player-queue-check" data-queue-id="' + escapeHtml(queueId) + '"' + checked + '>' +
+          '</label>' +
+          '<button type="button" class="text-preview-toggle player-queue-jump" data-queue-idx="' + idx + '" style="text-align:left;flex:1;">' + escapeHtml(prefix + (item.title || 'Untitled')) + '</button>' +
+          '</div>';
       }).join('');
+      playerQueueEl.querySelectorAll('.player-queue-check').forEach(function(cb) {
+        on(cb, 'change', function() {
+          var queueId = String(cb.dataset.queueId || '');
+          if (!queueId) return;
+          if (cb.checked) playerEnabledIds.add(queueId);
+          else playerEnabledIds.delete(queueId);
+          if (playerEnabledIds.size === 0) {
+            cb.checked = true;
+            playerEnabledIds.add(queueId);
+            showToast('At least one item must remain selected', 'warning');
+          }
+        });
+      });
+      playerQueueEl.querySelectorAll('.player-queue-jump').forEach(function(btn) {
+        on(btn, 'click', function() {
+          var idx = parseInt(btn.dataset.queueIdx, 10);
+          if (Number.isFinite(idx)) loadPlayerIndex(idx);
+        });
+      });
+      playerQueueEl.querySelectorAll('.player-queue-row').forEach(function(row) {
+        on(row, 'click', function(evt) {
+          if (evt.target && evt.target.closest && evt.target.closest('.player-queue-check')) return;
+          var jumpBtn = row.querySelector('.player-queue-jump');
+          if (!jumpBtn) return;
+          var idx = parseInt(jumpBtn.dataset.queueIdx, 10);
+          if (Number.isFinite(idx)) loadPlayerIndex(idx);
+        });
+      });
     }
 
     async function loadPlayerIndex(idx) {
@@ -2766,16 +2861,37 @@ const HTML_APP = `<!DOCTYPE html>
     function startPlayerWithItems(items) {
       if (!Array.isArray(items) || items.length === 0) return;
       playerQueue = items.slice();
+      playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
       playerIndex = 0;
       setActiveTab('player', { push: true });
       loadPlayerIndex(0);
     }
 
+    function getPlayerQueueId(item, idx) {
+      return String(item && item.id ? item.id : 'item-' + idx) + ':' + idx;
+    }
+
+    function findNextPlayableIndex(fromIdx) {
+      for (var i = fromIdx + 1; i < playerQueue.length; i++) {
+        if (playerEnabledIds.has(getPlayerQueueId(playerQueue[i], i))) return i;
+      }
+      return -1;
+    }
+
+    function findPreviousPlayableIndex(fromIdx) {
+      for (var i = fromIdx - 1; i >= 0; i--) {
+        if (playerEnabledIds.has(getPlayerQueueId(playerQueue[i], i))) return i;
+      }
+      return -1;
+    }
+
     on(playerPrevBtn, 'click', function() {
-      if (playerIndex > 0) loadPlayerIndex(playerIndex - 1);
+      var prevIdx = findPreviousPlayableIndex(playerIndex);
+      if (prevIdx >= 0) loadPlayerIndex(prevIdx);
     });
     on(playerNextBtn, 'click', function() {
-      if (playerIndex < playerQueue.length - 1) loadPlayerIndex(playerIndex + 1);
+      var nextIdx = findNextPlayableIndex(playerIndex);
+      if (nextIdx >= 0) loadPlayerIndex(nextIdx);
     });
     on(playerPlayPauseBtn, 'click', function() {
       if (!playerAudio.src) return;
@@ -2793,8 +2909,10 @@ const HTML_APP = `<!DOCTYPE html>
       playerAudio.playbackRate = speed;
     });
     on(playerAudio, 'ended', function() {
-      if (playerIndex < playerQueue.length - 1) {
-        loadPlayerIndex(playerIndex + 1);
+      if (!playerAutoNextCheckbox.checked) return;
+      var nextIdx = findNextPlayableIndex(playerIndex);
+      if (nextIdx >= 0) {
+        loadPlayerIndex(nextIdx);
       }
     });
 
