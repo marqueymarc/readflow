@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.23';
+const APP_VERSION = '1.1.24';
 const VERSION_HISTORY = [
+  { version: '1.1.24', note: 'Applied stricter archive preview scan caps to avoid worker timeouts and eliminate non-JSON 1101 failures on wide archive ranges.' },
   { version: '1.1.23', note: 'Improved quick-date targeting reliability by tracking Start/End picker interaction across focus/click/change/pointer events.' },
   { version: '1.1.22', note: 'Quick-date shortcuts now target the selected date input directly (Start/End), removing the separate apply-target buttons.' },
   { version: '1.1.21', note: 'Hardened archive previews by avoiding heavy HTML-content fetches and tightening preview scan bounds to prevent 1101 non-JSON failures.' },
@@ -154,6 +155,8 @@ async function handlePreview(request, env, corsHeaders) {
   const requestedMaxPages = parseInt(url.searchParams.get('maxPages') || '', 10);
   const previewMaxPages = Number.isFinite(requestedMaxPages) ? Math.max(1, Math.min(200, requestedMaxPages)) : 20;
   const includeHtmlContent = location !== 'archive';
+  const effectivePreviewLimit = location === 'archive' ? Math.min(previewLimit, 50) : previewLimit;
+  const effectivePreviewMaxPages = location === 'archive' ? Math.min(previewMaxPages, 5) : previewMaxPages;
 
   if (!beforeDate && !toDate && !fromDate) {
     return new Response(JSON.stringify({ error: 'Missing date range' }), {
@@ -166,8 +169,8 @@ async function handlePreview(request, env, corsHeaders) {
     withHtmlContent: includeHtmlContent,
     fromDate,
     toDate,
-    limit: previewLimit,
-    maxPages: previewMaxPages,
+    limit: effectivePreviewLimit,
+    maxPages: effectivePreviewMaxPages,
   });
   const preview = articles.map(a => ({
     id: a.id,

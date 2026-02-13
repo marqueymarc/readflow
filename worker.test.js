@@ -303,7 +303,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('1.1.23');
+      expect(data.version).toBe('1.1.24');
     });
   });
 
@@ -420,7 +420,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v1.1.23');
+    expect(html).toContain('v1.1.24');
     expect(html).toContain('Version History');
   });
 });
