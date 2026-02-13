@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '1.1.24';
+const APP_VERSION = '1.1.25';
 const VERSION_HISTORY = [
+  { version: '1.1.25', note: 'Added Added/Published sort toggle to Deleted History and preserved publication metadata in deleted-item records.' },
   { version: '1.1.24', note: 'Applied stricter archive preview scan caps to avoid worker timeouts and eliminate non-JSON 1101 failures on wide archive ranges.' },
   { version: '1.1.23', note: 'Improved quick-date targeting reliability by tracking Start/End picker interaction across focus/click/change/pointer events.' },
   { version: '1.1.22', note: 'Quick-date shortcuts now target the selected date input directly (Start/End), removing the separate apply-target buttons.' },
@@ -264,6 +265,7 @@ async function handleCleanup(request, env, corsHeaders) {
         author: (article && article.author) || (item && item.author) || 'Unknown',
         url: (article && (article.source_url || article.url)) || (item && item.url) || '',
         savedAt: (article && article.saved_at) || (item && item.savedAt) || timestamp,
+        publishedAt: (article && (article.published_date || article.published_at)) || (item && item.publishedAt) || null,
         deletedAt: timestamp,
         site: extractDomain((article && (article.source_url || article.url)) || (item && item.url) || ''),
         thumbnail: (article && getArticleThumbnail(article)) || (item && item.thumbnail) || null
@@ -1391,6 +1393,10 @@ const HTML_APP = `<!DOCTYPE html>
           <div class="preview-search-wrap">
             <input class="preview-search" type="text" id="deleted-search" placeholder="Search deleted history (title, author, site, URL)">
             <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
+            <div class="sort-toggle" aria-label="Sort deleted history by date">
+              <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
+              <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
+            </div>
           </div>
         </div>
         <div id="deleted-list"><div class="loading">Loading...</div></div>
@@ -1473,6 +1479,7 @@ const HTML_APP = `<!DOCTYPE html>
     var deletedItems = [];
     var selectedDeletedIds = new Set();
     var deletedSearch = '';
+    var deletedSortMode = 'added';
     var lastQuery = null;
     var settings = {
       defaultLocation: 'new',
@@ -1511,6 +1518,8 @@ const HTML_APP = `<!DOCTYPE html>
     var selectAllDeleted = document.getElementById('select-all-deleted');
     var deletedSearchInput = document.getElementById('deleted-search');
     var deletedSearchClearBtn = document.getElementById('deleted-search-clear');
+    var deletedSortAddedBtn = document.getElementById('deleted-sort-added');
+    var deletedSortPublishedBtn = document.getElementById('deleted-sort-published');
     var deletedCountBadge = document.getElementById('deleted-count');
     var saveSettingsBtn = document.getElementById('save-settings-btn');
 
@@ -2017,6 +2026,7 @@ const HTML_APP = `<!DOCTYPE html>
               author: item.author || '',
               url: item.url || '',
               savedAt: item.savedAt || '',
+              publishedAt: item.publishedAt || null,
               thumbnail: item.thumbnail || null
             };
           });
@@ -2193,6 +2203,17 @@ const HTML_APP = `<!DOCTYPE html>
       });
     }
 
+    function getDeletedSortTimestamp(item) {
+      var rawDate = deletedSortMode === 'published' ? item.publishedAt : item.savedAt;
+      var ts = Date.parse(rawDate || '');
+      return Number.isFinite(ts) ? ts : 0;
+    }
+
+    function updateDeletedSortButtons() {
+      deletedSortAddedBtn.classList.toggle('active', deletedSortMode === 'added');
+      deletedSortPublishedBtn.classList.toggle('active', deletedSortMode === 'published');
+    }
+
     on(selectAllDeleted, 'change', function() {
       var filtered = getFilteredDeletedItems();
       if (filtered.length === 0) {
@@ -2222,6 +2243,19 @@ const HTML_APP = `<!DOCTYPE html>
       renderDeletedItems();
       deletedSearchInput.focus();
     });
+
+    on(deletedSortAddedBtn, 'click', function() {
+      deletedSortMode = 'added';
+      updateDeletedSortButtons();
+      renderDeletedItems();
+    });
+
+    on(deletedSortPublishedBtn, 'click', function() {
+      deletedSortMode = 'published';
+      updateDeletedSortButtons();
+      renderDeletedItems();
+    });
+    updateDeletedSortButtons();
 
     async function loadDeletedItems() {
       deletedList.innerHTML = '<div class="loading"><span class="spinner"></span> Loading...</div>';
@@ -2268,9 +2302,7 @@ const HTML_APP = `<!DOCTYPE html>
         return;
       }
       var sorted = filtered.slice().sort(function(a, b) {
-        var aTs = Date.parse(a.deletedAt || '') || 0;
-        var bTs = Date.parse(b.deletedAt || '') || 0;
-        return bTs - aTs;
+        return getDeletedSortTimestamp(b) - getDeletedSortTimestamp(a);
       });
 
       var html = '<div class="article-list">';
