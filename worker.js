@@ -1,8 +1,9 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.1.2';
 const VERSION_HISTORY = [
+  { version: '2.1.2', note: 'Added configurable max-open-tabs setting and preview Play controls that open and run audio in a dedicated Player tab.' },
   { version: '2.1.1', note: 'Added extracted-text visibility in preview items so TTS input can be inspected before playback.' },
   { version: '2.1.0', note: 'Added audio TTS API with KV caching, mock-audio mode for low-cost testing, and settings hooks for OpenAI key plus playback skip controls.' },
   { version: '2.0.2', note: 'Refined control rail sizing, moved preview filter/sort/actions to right results header, and hide Open Selected when 5 or more items are selected.' },
@@ -45,6 +46,7 @@ const DEFAULT_SETTINGS = {
   mockTts: true,
   audioBackSeconds: 15,
   audioForwardSeconds: 30,
+  maxOpenTabs: 5,
 };
 const MOCK_TTS_WAV_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
@@ -730,6 +732,7 @@ function sanitizeSettings(input) {
     : DEFAULT_SETTINGS.mockTts;
   const audioBackSeconds = normalizeInt(source.audioBackSeconds, DEFAULT_SETTINGS.audioBackSeconds, 5, 120);
   const audioForwardSeconds = normalizeInt(source.audioForwardSeconds, DEFAULT_SETTINGS.audioForwardSeconds, 5, 180);
+  const maxOpenTabs = normalizeInt(source.maxOpenTabs, DEFAULT_SETTINGS.maxOpenTabs, 1, 50);
 
   return {
     defaultLocation,
@@ -739,6 +742,7 @@ function sanitizeSettings(input) {
     mockTts,
     audioBackSeconds,
     audioForwardSeconds,
+    maxOpenTabs,
   };
 }
 
@@ -1804,6 +1808,7 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
         <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
+        <a class="tab" data-tab="player" href="/player" style="display:none" aria-hidden="true">Player</a>
         <div id="cleanup-controls" class="card" style="margin-top:0.8rem;">
           <h2>Cleanup</h2>
           <div class="form-group">
@@ -1893,6 +1898,7 @@ const HTML_APP = `<!DOCTYPE html>
             </div>
           </div>
           <div class="preview-actions">
+            <button class="btn btn-outline" id="play-selected-btn" disabled>Play Selected</button>
             <button class="btn btn-outline" id="open-selected-btn" disabled>Open Selected</button>
             <button class="btn btn-danger" id="delete-btn" disabled>Delete Selected</button>
             <button class="btn btn-primary" id="archive-btn" disabled>Archive Selected</button>
@@ -1960,6 +1966,10 @@ const HTML_APP = `<!DOCTYPE html>
           <label for="setting-audio-forward-seconds">Audio forward skip (seconds)</label>
           <input id="setting-audio-forward-seconds" type="number" min="5" max="180">
         </div>
+        <div class="form-group">
+          <label for="setting-max-open-tabs">Max tabs to open</label>
+          <input id="setting-max-open-tabs" type="number" min="1" max="50">
+        </div>
         <div class="btn-group">
           <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
         </div>
@@ -2018,6 +2028,34 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="history-list"></div>
       </div>
     </div>
+
+    <div id="player-tab" style="display:none">
+      <div class="card">
+        <h2>Audio Player</h2>
+        <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
+        <div id="player-current-title" style="font-weight:600; margin-bottom:0.5rem;"></div>
+        <div class="btn-group" style="margin-bottom:0.6rem;">
+          <button class="btn btn-outline" id="player-prev-btn">Prev</button>
+          <button class="btn btn-primary" id="player-playpause-btn">Play</button>
+          <button class="btn btn-outline" id="player-next-btn">Next</button>
+          <button class="btn btn-outline" id="player-back-btn">-15s</button>
+          <button class="btn btn-outline" id="player-forward-btn">+30s</button>
+        </div>
+        <div class="form-group" style="max-width: 200px;">
+          <label for="player-speed">Speed</label>
+          <select id="player-speed">
+            <option value="0.8">0.8x</option>
+            <option value="1" selected>1.0x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="1.75">1.75x</option>
+            <option value="2">2.0x</option>
+          </select>
+        </div>
+        <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
+        <div id="player-queue" class="history-list" style="margin-top:0.8rem;"></div>
+      </div>
+    </div>
         </div>
       </main>
     </div>
@@ -2049,8 +2087,11 @@ const HTML_APP = `<!DOCTYPE html>
       confirmActions: true,
       mockTts: true,
       audioBackSeconds: 15,
-      audioForwardSeconds: 30
+      audioForwardSeconds: 30,
+      maxOpenTabs: 5
     };
+    var playerQueue = [];
+    var playerIndex = 0;
 
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
@@ -2062,6 +2103,7 @@ const HTML_APP = `<!DOCTYPE html>
     var previewSearchClearBtn = document.getElementById('preview-search-clear');
     var previewSortAddedBtn = document.getElementById('preview-sort-added');
     var previewSortPublishedBtn = document.getElementById('preview-sort-published');
+    var playSelectedBtn = document.getElementById('play-selected-btn');
     var openSelectedBtn = document.getElementById('open-selected-btn');
     var deleteBtn = document.getElementById('delete-btn');
     var archiveBtn = document.getElementById('archive-btn');
@@ -2096,9 +2138,20 @@ const HTML_APP = `<!DOCTYPE html>
     var settingMockTts = document.getElementById('setting-mock-tts');
     var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
     var settingAudioForwardSeconds = document.getElementById('setting-audio-forward-seconds');
+    var settingMaxOpenTabs = document.getElementById('setting-max-open-tabs');
     var openAiKeyStatusEl = document.getElementById('openai-key-status');
     var saveOpenAiKeyBtn = document.getElementById('save-openai-key-btn');
     var settingsOpenAiKeyInput = document.getElementById('setting-openai-key');
+    var playerAudio = document.getElementById('player-audio');
+    var playerStatus = document.getElementById('player-status');
+    var playerCurrentTitle = document.getElementById('player-current-title');
+    var playerQueueEl = document.getElementById('player-queue');
+    var playerPrevBtn = document.getElementById('player-prev-btn');
+    var playerPlayPauseBtn = document.getElementById('player-playpause-btn');
+    var playerNextBtn = document.getElementById('player-next-btn');
+    var playerBackBtn = document.getElementById('player-back-btn');
+    var playerForwardBtn = document.getElementById('player-forward-btn');
+    var playerSpeedSelect = document.getElementById('player-speed');
 
     var settingsDefaultLocation = document.getElementById('setting-default-location');
     var settingsDefaultDays = document.getElementById('setting-default-days');
@@ -2109,12 +2162,14 @@ const HTML_APP = `<!DOCTYPE html>
       deleted: '/deleted',
       settings: '/settings',
       about: '/about',
+      player: '/player',
     };
     var ROUTE_TABS = {
       '/': 'cleanup',
       '/deleted': 'deleted',
       '/settings': 'settings',
       '/about': 'about',
+      '/player': 'player',
     };
 
     function formatInputDate(date) {
@@ -2162,6 +2217,9 @@ const HTML_APP = `<!DOCTYPE html>
       settingMockTts.checked = settings.mockTts;
       settingAudioBackSeconds.value = settings.audioBackSeconds;
       settingAudioForwardSeconds.value = settings.audioForwardSeconds;
+      settingMaxOpenTabs.value = settings.maxOpenTabs;
+      playerBackBtn.textContent = '-' + settings.audioBackSeconds + 's';
+      playerForwardBtn.textContent = '+' + settings.audioForwardSeconds + 's';
     }
 
     function buildLocationOptionLabel(location) {
@@ -2261,6 +2319,7 @@ const HTML_APP = `<!DOCTYPE html>
       document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
       document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
       document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
+      document.getElementById('player-tab').style.display = tabName === 'player' ? 'block' : 'none';
       cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
       deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
 
@@ -2412,6 +2471,7 @@ const HTML_APP = `<!DOCTYPE html>
         html += '</div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
         html += '<button type="button" class="text-preview-toggle" data-article-id="' + escapeHtml(articleId) + '">Text</button>';
+        html += '<button type="button" class="text-preview-toggle play-preview-btn" data-article-id="' + escapeHtml(articleId) + '">Play</button>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
         }
@@ -2427,6 +2487,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
       });
       previewList.querySelectorAll('.text-preview-toggle').forEach(function(btn) {
+        if (btn.classList.contains('play-preview-btn')) return;
         on(btn, 'click', function() {
           var articleId = btn.dataset.articleId;
           var previewEl = document.getElementById('tts-preview-' + articleId);
@@ -2434,6 +2495,14 @@ const HTML_APP = `<!DOCTYPE html>
           var shouldShow = previewEl.style.display === 'none';
           previewEl.style.display = shouldShow ? 'block' : 'none';
           btn.textContent = shouldShow ? 'Hide text' : 'Text';
+        });
+      });
+      previewList.querySelectorAll('.play-preview-btn').forEach(function(btn) {
+        on(btn, 'click', function() {
+          var articleId = String(btn.dataset.articleId || '');
+          var match = previewData.find(function(item) { return String(item.id) === articleId; });
+          if (!match) return;
+          startPlayerWithItems([match]);
         });
       });
       previewPageLabel.textContent = 'Page ' + previewPage + ' / ' + totalPages;
@@ -2453,6 +2522,7 @@ const HTML_APP = `<!DOCTYPE html>
         selectAllPreview.indeterminate = false;
         openSelectedBtn.disabled = true;
         openSelectedBtn.style.display = 'none';
+        playSelectedBtn.disabled = true;
         deleteBtn.disabled = true;
         archiveBtn.disabled = true;
         openSelectedBtn.textContent = 'Open Selected';
@@ -2466,9 +2536,12 @@ const HTML_APP = `<!DOCTYPE html>
       var displayCount = previewSearch ? filteredSelected : selectedCount;
       selectAllPreview.checked = filteredSelected > 0 && filteredSelected === filtered.length;
       selectAllPreview.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
-      var canOpenFew = displayCount > 0 && displayCount < 5;
+      var maxTabs = Number(settings.maxOpenTabs || 5);
+      var canOpenFew = displayCount > 0 && displayCount <= maxTabs;
       openSelectedBtn.style.display = canOpenFew ? 'inline-flex' : 'none';
       openSelectedBtn.disabled = !canOpenFew;
+      playSelectedBtn.disabled = displayCount === 0;
+      playSelectedBtn.textContent = displayCount > 0 ? 'Play Selected (' + displayCount + ')' : 'Play Selected';
       deleteBtn.disabled = displayCount === 0;
       archiveBtn.disabled = displayCount === 0;
       openSelectedBtn.textContent = displayCount > 0 ? 'Open Selected (' + displayCount + ')' : 'Open Selected';
@@ -2626,11 +2699,103 @@ const HTML_APP = `<!DOCTYPE html>
       var activeIds = new Set(getActiveSelectedIds());
       if (activeIds.size === 0) return;
       var selected = previewData.filter(function(item) { return activeIds.has(String(item.id)); });
-      selected.forEach(function(item) {
+      var maxTabs = Number(settings.maxOpenTabs || 5);
+      selected.slice(0, maxTabs).forEach(function(item) {
         if (item.url) {
           window.open(item.url, '_blank');
         }
       });
+      if (selected.length > maxTabs) {
+        showToast('Opened first ' + maxTabs + ' tabs (max tabs setting)', 'warning');
+      }
+    });
+
+    on(playSelectedBtn, 'click', function() {
+      var activeIds = new Set(getActiveSelectedIds());
+      if (activeIds.size === 0) return;
+      var selected = previewData.filter(function(item) { return activeIds.has(String(item.id)); });
+      startPlayerWithItems(selected);
+    });
+
+    function renderPlayerQueue() {
+      if (playerQueue.length === 0) {
+        playerQueueEl.innerHTML = '<div class="history-item">No queued items.</div>';
+        playerCurrentTitle.textContent = '';
+        playerStatus.textContent = 'Queue is empty.';
+        return;
+      }
+      playerStatus.textContent = 'Item ' + (playerIndex + 1) + ' of ' + playerQueue.length;
+      playerCurrentTitle.textContent = playerQueue[playerIndex].title || 'Untitled';
+      playerQueueEl.innerHTML = playerQueue.map(function(item, idx) {
+        var prefix = idx === playerIndex ? '▶ ' : '';
+        return '<div class="history-item">' + escapeHtml(prefix + (item.title || 'Untitled')) + '</div>';
+      }).join('');
+    }
+
+    async function loadPlayerIndex(idx) {
+      if (idx < 0 || idx >= playerQueue.length) return;
+      playerIndex = idx;
+      renderPlayerQueue();
+      var item = playerQueue[playerIndex];
+      try {
+        playerStatus.textContent = 'Loading audio...';
+        var res = await fetch('/api/audio/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            articleId: item.id,
+            text: item.ttsPreview || item.title || '',
+            speed: parseFloat(playerSpeedSelect.value || '1'),
+          }),
+        });
+        if (!res.ok) {
+          var text = await res.text();
+          throw new Error(text || ('Audio failed (' + res.status + ')'));
+        }
+        var blob = await res.blob();
+        var objectUrl = URL.createObjectURL(blob);
+        playerAudio.src = objectUrl;
+        playerAudio.playbackRate = parseFloat(playerSpeedSelect.value || '1');
+        await playerAudio.play();
+        renderPlayerQueue();
+      } catch (err) {
+        playerStatus.textContent = err.message || 'Audio load failed';
+      }
+    }
+
+    function startPlayerWithItems(items) {
+      if (!Array.isArray(items) || items.length === 0) return;
+      playerQueue = items.slice();
+      playerIndex = 0;
+      setActiveTab('player', { push: true });
+      loadPlayerIndex(0);
+    }
+
+    on(playerPrevBtn, 'click', function() {
+      if (playerIndex > 0) loadPlayerIndex(playerIndex - 1);
+    });
+    on(playerNextBtn, 'click', function() {
+      if (playerIndex < playerQueue.length - 1) loadPlayerIndex(playerIndex + 1);
+    });
+    on(playerPlayPauseBtn, 'click', function() {
+      if (!playerAudio.src) return;
+      if (playerAudio.paused) playerAudio.play();
+      else playerAudio.pause();
+    });
+    on(playerBackBtn, 'click', function() {
+      playerAudio.currentTime = Math.max(0, playerAudio.currentTime - settings.audioBackSeconds);
+    });
+    on(playerForwardBtn, 'click', function() {
+      playerAudio.currentTime = Math.min(playerAudio.duration || Infinity, playerAudio.currentTime + settings.audioForwardSeconds);
+    });
+    on(playerSpeedSelect, 'change', function() {
+      var speed = parseFloat(playerSpeedSelect.value || '1');
+      playerAudio.playbackRate = speed;
+    });
+    on(playerAudio, 'ended', function() {
+      if (playerIndex < playerQueue.length - 1) {
+        loadPlayerIndex(playerIndex + 1);
+      }
     });
 
     async function performCleanup(action, skipConfirm, forcedIds) {
@@ -3059,7 +3224,8 @@ const HTML_APP = `<!DOCTYPE html>
         confirmActions: !!settingsConfirmActions.checked,
         mockTts: !!settingMockTts.checked,
         audioBackSeconds: parseInt(settingAudioBackSeconds.value, 10),
-        audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10)
+        audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10),
+        maxOpenTabs: parseInt(settingMaxOpenTabs.value, 10)
       };
       try {
         var res = await fetch('/api/settings', {
