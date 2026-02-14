@@ -353,7 +353,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.0.1');
+      expect(data.version).toBe('3.0.2');
     });
   });
 
@@ -552,7 +552,7 @@ describe('PWA Serving', () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
-    expect(html).toContain('Preview Items');
+    expect(html).toContain('Find');
     expect(html).toContain('Delete Selected');
     expect(html).toContain('Archive Selected');
   });
@@ -601,7 +601,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.0.1');
+    expect(html).toContain('v3.0.2');
     expect(html).toContain('2026-02-13');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -832,7 +832,7 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain('chunkIndex: currentChunkIndex + 1');
     expect(script).toContain("APP_STATE_STORAGE_KEY = 'readwise_cleanup_app_state_v1'");
     expect(script).toContain('applyRestoredAppState(restoredState)');
-    expect(script).toContain("previewBtn.innerHTML = isOutOfDate ? 'Refresh Items' : 'Preview Items'");
+    expect(script).toContain("previewBtn.innerHTML = isOutOfDate ? 'Refresh Find' : 'Find'");
     expect(script).toContain('CLIENT_TTS_SYNTH_CHUNK_CHARS');
     expect(script).toContain('CLIENT_TTS_FIRST_CHUNK_CHARS');
     expect(script).toContain('CLIENT_TTS_SECOND_CHUNK_CHARS');

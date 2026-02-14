@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.0.1';
+const APP_VERSION = '3.0.2';
 const VERSION_HISTORY = [
+  { version: '3.0.2', completedAt: '2026-02-14', note: 'Renamed Cleanup workflow to Find, changed primary action label from Preview Items to Find, and reordered top nav tabs so History appears last.' },
   { version: '3.0.1', completedAt: '2026-02-14', note: 'Adaptive player rail compaction: narrowed left rail in player-docked mode and stacked transport controls for cleaner fit while preserving touch usability.' },
   { version: '3.0.0', completedAt: '2026-02-13', note: 'Upgraded to v3 with immediate auto-saved settings, live voice preview, larger player controls, denser header layout, faster first-audio chunking, and improved TTS narration cleanup/preface behavior.' },
   { version: '2.0.0', completedAt: '2026-02-13', note: 'Renamed app to Read Flow and finalized the v2 baseline branding/release line prior to planned v3 Gmail support.' },
@@ -2310,14 +2311,14 @@ const HTML_APP = `<!DOCTYPE html>
           <span>Read Flow</span>
         </div>
         <div class="rail-section">
-          <a class="rail-item tab active" data-tab="cleanup" href="/">Cleanup <span id="cleanup-selected-count" class="badge" style="display:none">0</span></a>
-          <a class="rail-item tab" data-tab="deleted" href="/deleted">History <span id="deleted-count" class="badge" style="display:none">0</span></a>
+          <a class="rail-item tab active" data-tab="cleanup" href="/">Find <span id="cleanup-selected-count" class="badge" style="display:none">0</span></a>
           <a class="rail-item tab" data-tab="player" href="/player">Player <span id="player-selected-count" class="badge" style="display:none">0</span></a>
+          <a class="rail-item tab" data-tab="deleted" href="/deleted">History <span id="deleted-count" class="badge" style="display:none">0</span></a>
         </div>
         <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
         <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
         <div id="cleanup-controls" class="card" style="margin-top:0.8rem;">
-          <h2>Cleanup</h2>
+          <h2>Find</h2>
           <div class="form-group">
             <label for="location">Source</label>
             <select id="location">
@@ -2351,7 +2352,7 @@ const HTML_APP = `<!DOCTYPE html>
             </div>
           </div>
           <div class="btn-group">
-            <button class="btn btn-primary" id="preview-btn">Preview Items</button>
+            <button class="btn btn-primary" id="preview-btn">Find</button>
           </div>
           <div class="stats" style="margin-top:0.8rem;">
             <div class="stat">
@@ -2887,7 +2888,7 @@ const HTML_APP = `<!DOCTYPE html>
       var hasStaleCache = hasCachedPreview && lastPreviewLoadedAt > 0
         && (Date.now() - lastPreviewLoadedAt) >= CLIENT_PREVIEW_CACHE_STALE_MS;
       var isOutOfDate = hasCachedPreview && (buildQueryKey() !== lastQuery || hasStaleCache);
-      previewBtn.innerHTML = isOutOfDate ? 'Refresh Items' : 'Preview Items';
+      previewBtn.innerHTML = isOutOfDate ? 'Refresh Find' : 'Find';
     }
 
     function on(el, eventName, handler) {
