@@ -1463,6 +1463,9 @@ const HTML_APP = `<!DOCTYPE html>
       grid-template-columns: 332px minmax(0, 1fr);
       min-height: 100vh;
     }
+    .player-rail-compact .app-shell {
+      grid-template-columns: 286px minmax(0, 1fr);
+    }
     .left-rail {
       border-right: 1px solid var(--border);
       background: #f3f6fb;
@@ -1811,6 +1814,20 @@ const HTML_APP = `<!DOCTYPE html>
     #player-controls-right-host .player-icon-btn {
       min-height: 52px;
       padding: 0.52rem 0.3rem;
+    }
+    #player-controls-left-host .player-controls-row {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.35rem;
+    }
+    #player-controls-left-host .player-icon-btn {
+      min-height: 44px;
+      padding: 0.34rem 0.2rem;
+    }
+    #player-controls-left-host .control-icon {
+      font-size: 1.55rem;
+    }
+    #player-controls-left-host .control-text {
+      font-size: 0.7rem;
     }
     .now-playing-badge {
       display: inline-block;
@@ -2932,6 +2949,9 @@ const HTML_APP = `<!DOCTYPE html>
       var showPlayer = currentTabName === 'player';
       playerControlsRightHost.style.display = showPlayer && dockRight ? 'block' : 'none';
       playerControlsLeftHost.style.display = showPlayer && !dockRight ? 'block' : 'none';
+      if (document && document.body && document.body.classList) {
+        document.body.classList.toggle('player-rail-compact', showPlayer && !dockRight);
+      }
     }
 
     function getTabFromPath(pathname) {
