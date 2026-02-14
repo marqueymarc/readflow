@@ -1,6 +1,6 @@
 {
   "name": "readwise-cleanup",
-  "version": "2.1.4",
+  "version": "2.0.0",
   "description": "Bulk delete/archive old Readwise Reader items with restoration support",
   "scripts": {
     "test:bootstrap": "node scripts/ensure-birpc-entry.mjs",

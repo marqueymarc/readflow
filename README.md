@@ -1,4 +1,4 @@
-# Readwise Cleanup
+# Read Flow
 
 Bulk delete or archive old Readwise Reader items with restoration support.
 

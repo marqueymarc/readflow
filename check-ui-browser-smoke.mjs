@@ -12,6 +12,20 @@ if (!scriptMatch) {
   process.exit(1);
 }
 const script = scriptMatch[1];
+const firstChunkMatch = script.match(/var CLIENT_TTS_FIRST_CHUNK_CHARS = (\d+);/);
+const secondChunkMatch = script.match(/var CLIENT_TTS_SECOND_CHUNK_CHARS = (\d+);/);
+const steadyChunkMatch = script.match(/var CLIENT_TTS_SYNTH_CHUNK_CHARS = (\d+);/);
+if (!firstChunkMatch || !secondChunkMatch || !steadyChunkMatch) {
+  console.error('Browser smoke failed: missing staged TTS chunk constants');
+  process.exit(1);
+}
+const firstChunk = Number(firstChunkMatch[1]);
+const secondChunk = Number(secondChunkMatch[1]);
+const steadyChunk = Number(steadyChunkMatch[1]);
+if (!(firstChunk > 0 && firstChunk < secondChunk && secondChunk <= steadyChunk)) {
+  console.error(`Browser smoke failed: expected first<second<=steady chunk sizes for fast-start audio, got ${firstChunk}/${secondChunk}/${steadyChunk}`);
+  process.exit(1);
+}
 
 function parseAttrs(tag) {
   const attrs = {};

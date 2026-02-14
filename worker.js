@@ -1,8 +1,36 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.1.4';
+import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
+
+const APP_VERSION = '2.0.0';
 const VERSION_HISTORY = [
+  { version: '2.0.0', completedAt: '2026-02-13', note: 'Renamed app to Read Flow and finalized the v2 baseline branding/release line prior to planned v3 Gmail support.' },
+  { version: '2.2.19', completedAt: '2026-02-13', note: 'Aligned UI action/button accent colors with the new Option C cyan brand palette across primary controls, focus states, and swipe accents.' },
+  { version: '2.2.18', completedAt: '2026-02-13', note: 'Applied new Option C branding icon and favicon, adding an audio-wave cue alongside the checkmark to signal read-aloud support.' },
+  { version: '2.2.17', completedAt: '2026-02-13', note: 'Restored low-latency startup via 3-stage chunk sizing (short/medium/long), persisted player speed, added approximate seekable playlist progress bars, voice selection in settings, and compact Player title-row controls.' },
+  { version: '2.2.16', completedAt: '2026-02-13', note: 'Switched player TTS to consistency-first chunking profile (larger equal chunk sizes, fixed voice request) to reduce voice drift between chunks.' },
+  { version: '2.2.15', completedAt: '2026-02-13', note: 'Improved TTS text cleanup by removing common newsletter boilerplate and de-duplicating repeated near-identical sentences from extraction artifacts.' },
+  { version: '2.2.14', completedAt: '2026-02-13', note: 'Player now stops immediately when the currently playing item is deleted/archived/restored, and play/pause button now has distinct paused-vs-playing visuals/icons.' },
+  { version: '2.2.13', completedAt: '2026-02-13', note: 'Improved Player UX/perf: reduced repeated headline/summary speech, added shorter-start + prefetch chunking to cut startup/gap lag, compact icon lozenge mobile controls, updated header metadata, and refined speed options.' },
+  { version: '2.2.12', completedAt: '2026-02-13', note: 'Preview/Refresh button now always fetches fresh data on click instead of short-circuiting to cached results for unchanged queries.' },
+  { version: '2.2.11', completedAt: '2026-02-13', note: 'Preview button now switches to Refresh Items when cached preview data is stale by age, even if filters are unchanged.' },
+  { version: '2.2.10', completedAt: '2026-02-13', note: 'Reduced per-request TTS synthesis chunk size in Player so long stories always stream across multiple OpenAI clips instead of stalling near short single-clip limits.' },
+  { version: '2.2.9', completedAt: '2026-02-13', note: 'Fixed TTS text assembly so full article text is no longer dropped as a duplicate when it contains the summary; this restores long-form playback beyond short summary-length clips.' },
+  { version: '2.2.8', completedAt: '2026-02-13', note: 'Persisted full UI session state (tab, filters, results, selections, player queue/progress context, and scroll positions) so app reload restores prior working state.' },
+  { version: '2.2.7', completedAt: '2026-02-13', note: 'Player now streams full-story TTS in sequential chunks, prioritizes full extracted text over preview text, and preserves live speed changes while continuing playback.' },
+  { version: '2.2.6', completedAt: '2026-02-13', note: 'Fixed player runtime error by defining client-side max TTS text constant used during audio request slicing.' },
+  { version: '2.2.5', completedAt: '2026-02-13', note: 'When source is Archive, secondary cleanup action now restores items (to known original location or Feed fallback), including matching button and swipe labeling.' },
+  { version: '2.2.4', completedAt: '2026-02-13', note: 'Player text view now uses full extracted story text while keeping TTS request payload bounded.' },
+  { version: '2.2.3', completedAt: '2026-02-13', note: 'Fixed real-vs-mock TTS selection by honoring explicit request mode, and added clear Player mode/error feedback when OpenAI TTS is unavailable.' },
+  { version: '2.2.2', completedAt: '2026-02-13', note: 'Moved Deleted History All/search/sort controls to the results header for consistent top-of-list filtering and sorting.' },
+  { version: '2.2.1', note: 'Fixed per-item playhead persistence, live player progress-bar updates, swipe-release click suppression, and preview Play forcing immediate insert-and-play behavior.' },
+  { version: '2.2.0', note: 'Added Player automation settings (auto-next and auto archive/delete), richer swipeable player rows, and stronger per-item playhead restore behavior.' },
+  { version: '2.1.9', note: 'Added visible Player tab, auto-load from checked preview items, persisted current playback item/position, and fixed rail search-field overflow sizing.' },
+  { version: '2.1.8', note: 'Player queue is now scrollable and supports search plus filtered All-toggle selection, matching preview/deleted list workflows.' },
+  { version: '2.1.7', note: 'Player now pauses/saves position when leaving the tab and resumes per-item progress; text extraction keeps longer, cleaner preview text with reduced duplication.' },
+  { version: '2.1.6', note: 'Fixed preview Play shortcut click handling, switched it to an icon button, and moved text preview controls into the Player tab.' },
+  { version: '2.1.5', note: 'Mock TTS now uses a recorded 20-second WAV clip for realistic player validation without live API calls.' },
   { version: '2.1.4', note: 'Made player queue rows fully clickable so selecting the current-arrow title reliably jumps to that item.' },
   { version: '2.1.3', note: 'Mock TTS now returns a testable ~20s clip, and Player queue now supports selectable items with an Auto play next toggle.' },
   { version: '2.1.2', note: 'Added configurable max-open-tabs setting and preview Play controls that open and run audio in a dedicated Player tab.' },
@@ -46,11 +74,19 @@ const DEFAULT_SETTINGS = {
   previewLimit: 100,
   confirmActions: true,
   mockTts: true,
+  ttsVoice: 'nova',
   audioBackSeconds: 15,
   audioForwardSeconds: 30,
   maxOpenTabs: 5,
+  playerAutoNext: true,
+  playerAutoAction: 'none',
 };
 const MOCK_TTS_SECONDS = 20;
+const MAX_TTS_PREVIEW_CHARS = 12000;
+const TTS_SYNTH_CHUNK_CHARS = 3200;
+const TTS_FIRST_CHUNK_CHARS = 800;
+const TTS_SECOND_CHUNK_CHARS = 1800;
+const PREVIEW_CACHE_STALE_MS = 15 * 60 * 1000;
 let MOCK_TTS_BYTES = null;
 
 export default {
@@ -253,18 +289,23 @@ async function handlePreview(request, env, corsHeaders) {
     limit: effectivePreviewLimit,
     maxPages: effectivePreviewMaxPages,
   });
-  const preview = articles.map(a => ({
-    id: a.id,
-    title: a.title || 'Untitled',
-    author: a.author || 'Unknown',
-    url: deriveOpenUrl(a),
-    savedAt: a.saved_at,
-    publishedAt: a.published_date || a.published_at || null,
-    site: extractDomain(a.source_url || a.url),
-    thumbnail: getArticleThumbnail(a),
-    searchable: buildSearchableText(a),
-    ttsPreview: buildTtsText(a).slice(0, 2000)
-  }));
+  const preview = articles.map(a => {
+    const ttsFullText = buildTtsText(a);
+    return {
+      id: a.id,
+      title: a.title || 'Untitled',
+      author: a.author || 'Unknown',
+      url: deriveOpenUrl(a),
+      savedAt: a.saved_at,
+      publishedAt: a.published_date || a.published_at || null,
+      site: extractDomain(a.source_url || a.url),
+      thumbnail: getArticleThumbnail(a),
+      originalLocation: a.original_location || a.previous_location || null,
+      searchable: buildSearchableText(a),
+      ttsFullText,
+      ttsPreview: ttsFullText.slice(0, MAX_TTS_PREVIEW_CHARS),
+    };
+  });
 
   return new Response(JSON.stringify({
     total: articles.length,
@@ -288,8 +329,8 @@ async function handleCleanup(request, env, corsHeaders) {
     });
   }
 
-  if (!['delete', 'archive'].includes(action)) {
-    return new Response(JSON.stringify({ error: 'Action must be delete or archive' }), {
+  if (!['delete', 'archive', 'restore'].includes(action)) {
+    return new Response(JSON.stringify({ error: 'Action must be delete, archive, or restore' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
@@ -365,6 +406,11 @@ async function handleCleanup(request, env, corsHeaders) {
     try {
       if (action === 'delete') {
         await deleteArticle(env, id);
+      } else if (action === 'restore') {
+        const article = articles.find((a) => String(a.id) === String(id));
+        const item = Array.isArray(items) ? items.find((it) => String(it && it.id) === String(id)) : null;
+        const targetLocation = resolveRestoreLocation(item, article);
+        await moveArticleToLocation(env, id, targetLocation);
       } else {
         await archiveArticle(env, id);
       }
@@ -605,7 +651,8 @@ async function handleAudioTts(request, env, corsHeaders) {
   }
 
   const settings = await getSettings(env);
-  const useMockTts = body.mock === true || settings.mockTts === true;
+  const explicitMock = typeof body.mock === 'boolean' ? body.mock : null;
+  const useMockTts = explicitMock !== null ? explicitMock : settings.mockTts === true;
   const cacheKey = await getTtsCacheKey({
     articleId: articleId || 'none',
     text,
@@ -640,7 +687,10 @@ async function handleAudioTts(request, env, corsHeaders) {
   let contentType;
   if (useMockTts) {
     if (!MOCK_TTS_BYTES) {
-      MOCK_TTS_BYTES = createMockWavClip(MOCK_TTS_SECONDS);
+      MOCK_TTS_BYTES = base64ToUint8Array(MOCK_TTS_WAV_BASE64 || '');
+      if (!MOCK_TTS_BYTES || MOCK_TTS_BYTES.length < 44) {
+        MOCK_TTS_BYTES = createMockWavClip(MOCK_TTS_SECONDS);
+      }
     }
     audioBytes = MOCK_TTS_BYTES;
     contentType = 'audio/wav';
@@ -699,11 +749,22 @@ function handleGetVersion(corsHeaders) {
 
 function handleFavicon() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"/>
-<path d="M20 40c8-1 14-7 15-15" stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none"/>
-<path d="M31 26h15" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
-<circle cx="40" cy="42" r="8" fill="#fff"/>
-<path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<defs>
+  <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#0ea5e9"/>
+    <stop offset="1" stop-color="#0284c7"/>
+  </linearGradient>
+</defs>
+<rect x="7" y="6" width="50" height="52" rx="12" fill="url(#g2)"/>
+<path d="M18 17h28" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<path d="M18 24h28" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<path d="M18 31h22" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<path d="M18 38h17" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<circle cx="44" cy="44" r="10" fill="#f8fafc"/>
+<path d="M39.6 44.2l2.5 2.5 6.1-6.1" stroke="#0284c7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<path d="M14 44l4-3v6z" fill="#e0f2fe"/>
+<path d="M19.5 42.2c1 .9 1 2.7 0 3.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"/>
+<path d="M22.3 40.8c1.9 1.8 1.9 4.8 0 6.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"/>
 </svg>`;
   return new Response(svg, {
     headers: {
@@ -736,9 +797,19 @@ function sanitizeSettings(input) {
   const mockTts = typeof source.mockTts === 'boolean'
     ? source.mockTts
     : DEFAULT_SETTINGS.mockTts;
+  const allowedVoices = ['onyx', 'echo', 'nova', 'shimmer'];
+  const ttsVoice = typeof source.ttsVoice === 'string' && allowedVoices.includes(source.ttsVoice)
+    ? source.ttsVoice
+    : DEFAULT_SETTINGS.ttsVoice;
   const audioBackSeconds = normalizeInt(source.audioBackSeconds, DEFAULT_SETTINGS.audioBackSeconds, 5, 120);
   const audioForwardSeconds = normalizeInt(source.audioForwardSeconds, DEFAULT_SETTINGS.audioForwardSeconds, 5, 180);
   const maxOpenTabs = normalizeInt(source.maxOpenTabs, DEFAULT_SETTINGS.maxOpenTabs, 1, 50);
+  const playerAutoNext = typeof source.playerAutoNext === 'boolean'
+    ? source.playerAutoNext
+    : DEFAULT_SETTINGS.playerAutoNext;
+  const playerAutoAction = source.playerAutoAction === 'archive' || source.playerAutoAction === 'delete'
+    ? source.playerAutoAction
+    : DEFAULT_SETTINGS.playerAutoAction;
 
   return {
     defaultLocation,
@@ -746,9 +817,12 @@ function sanitizeSettings(input) {
     previewLimit,
     confirmActions,
     mockTts,
+    ttsVoice,
     audioBackSeconds,
     audioForwardSeconds,
     maxOpenTabs,
+    playerAutoNext,
+    playerAutoAction,
   };
 }
 
@@ -862,8 +936,31 @@ async function deleteArticle(env, articleId) {
 
 // Helper: Archive article in Readwise
 async function archiveArticle(env, articleId) {
+  await moveArticleToLocation(env, articleId, 'archive');
+}
+
+function resolveRestoreLocation(item, article) {
+  const candidates = [
+    item && item.originalLocation,
+    item && item.previousLocation,
+    article && article.original_location,
+    article && article.previous_location,
+    article && article.restored_location,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim() && candidate.trim() !== 'archive') {
+      return candidate.trim();
+    }
+  }
+  return 'feed';
+}
+
+async function moveArticleToLocation(env, articleId, targetLocation) {
   const token = await getReadwiseToken(env);
   if (!token) throw new Error('Readwise token is not configured');
+  const safeTarget = typeof targetLocation === 'string' && targetLocation.trim()
+    ? targetLocation.trim()
+    : 'feed';
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const response = await fetch(
@@ -874,7 +971,7 @@ async function archiveArticle(env, articleId) {
           Authorization: `Token ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ location: 'archive' }),
+        body: JSON.stringify({ location: safeTarget }),
       }
     );
 
@@ -883,7 +980,7 @@ async function archiveArticle(env, articleId) {
       await sleep(200 * attempt);
       continue;
     }
-    throw new Error(`Archive failed: ${response.status}`);
+    throw new Error(`Move to "${safeTarget}" failed: ${response.status}`);
   }
 }
 
@@ -1177,25 +1274,81 @@ function buildSearchableText(article) {
 }
 
 function buildTtsText(article) {
-  const chunks = [
-    article.title,
-    article.author ? `By ${article.author}` : '',
-    article.summary,
-    article.content,
-    article.notes,
-  ].filter(Boolean);
+  const chunks = [];
+  const pushUnique = (value) => {
+    const cleaned = normalizeTtsText(value);
+    if (!cleaned) return;
+    const normalized = cleaned.toLowerCase();
+    let replaceIndex = -1;
+    for (let i = 0; i < chunks.length; i++) {
+      const existing = chunks[i];
+      const n = existing.toLowerCase();
+      if (n === normalized) return;
+      // If a short fragment is already contained in a longer chunk, skip it.
+      if (normalized.length <= 320 && n.includes(normalized)) return;
+      // If a new longer chunk contains an existing short fragment, replace the short one.
+      if (n.length <= 320 && normalized.includes(n)) replaceIndex = i;
+    }
+    if (replaceIndex >= 0) chunks.splice(replaceIndex, 1);
+    chunks.push(cleaned);
+  };
+
+  pushUnique(article.title);
+  pushUnique(article.author ? `By ${article.author}` : '');
+  pushUnique(article.summary);
+  pushUnique(article.content);
+  pushUnique(article.notes);
 
   if (typeof article.html_content === 'string' && article.html_content.length > 0) {
-    const plain = article.html_content
+    const plain = normalizeTtsText(article.html_content
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
       .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (plain) chunks.push(plain);
+      .replace(/\s+/g, ' '));
+    // Keep full readable body text whenever available so TTS can cover the complete story.
+    if (plain) pushUnique(plain);
   }
 
-  return chunks.join('\n\n').trim();
+  return cleanupTtsText(chunks.join('\n\n').trim());
+}
+
+function normalizeTtsText(value) {
+  if (!value || typeof value !== 'string') return '';
+  return decodeHtmlEntities(value)
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanupTtsText(text) {
+  let cleaned = normalizeTtsText(text);
+  if (!cleaned) return '';
+  cleaned = cleaned
+    .replace(/\bView in browser\b[:\s-]*/gi, ' ')
+    .replace(/\bOpen in browser\b[:\s-]*/gi, ' ')
+    .replace(/\bRead online\b[:\s-]*/gi, ' ')
+    .replace(/\bProgramming note\b[:\s-]*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const parts = cleaned.split(/(?<=[.!?])\s+/);
+  const seen = new Set();
+  const deduped = [];
+  for (const part of parts) {
+    const sentence = normalizeTtsText(part);
+    if (!sentence) continue;
+    const key = sentence
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!key) continue;
+    // Drop repeated short/medium sentences (common extraction artifact).
+    if (key.length <= 220 && seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(sentence);
+  }
+  return deduped.join(' ').trim();
 }
 
 function startOfDay(dateValue) {
@@ -1216,14 +1369,14 @@ const HTML_APP = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#4f46e5">
-  <title>Readwise Cleanup</title>
+  <meta name="theme-color" content="#0284c7">
+  <title>Read Flow</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --primary: #4f46e5;
-      --primary-hover: #4338ca;
+      --primary: #0284c7;
+      --primary-hover: #0369a1;
       --danger: #dc2626;
       --danger-hover: #b91c1c;
       --success: #16a34a;
@@ -1357,7 +1510,7 @@ const HTML_APP = `<!DOCTYPE html>
     select:focus, input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+      box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.18);
     }
     .btn {
       display: inline-flex;
@@ -1488,6 +1641,12 @@ const HTML_APP = `<!DOCTYPE html>
       background: var(--bg);
       color: var(--text);
     }
+    .icon-btn {
+      min-width: 2rem;
+      padding: 0.08rem 0.45rem;
+      font-size: 0.9rem;
+      line-height: 1.1;
+    }
     .tts-preview {
       margin-top: 0.45rem;
       border: 1px solid var(--border);
@@ -1499,6 +1658,100 @@ const HTML_APP = `<!DOCTYPE html>
       max-height: 160px;
       overflow-y: auto;
       white-space: pre-wrap;
+    }
+    .player-queue-scroll {
+      max-height: 42vh;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.25rem;
+      background: #fff;
+    }
+    .player-row-progress {
+      margin-top: 0.35rem;
+      height: 4px;
+      background: var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .player-row-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--primary);
+    }
+    .player-queue-row.current {
+      background: #e0f2fe;
+      border-left: 3px solid var(--primary);
+    }
+    .player-current-header {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin-bottom: 0.55rem;
+    }
+    .player-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .player-title-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .player-current-meta {
+      min-width: 0;
+      flex: 1;
+    }
+    #player-current-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .player-controls-row {
+      flex-wrap: nowrap;
+      width: 100%;
+      gap: 0.45rem;
+    }
+    .player-icon-btn {
+      border-radius: 999px;
+      min-width: 0;
+      flex: 1 1 0;
+      padding: 0.6rem 0.4rem;
+      white-space: nowrap;
+    }
+    #player-playpause-btn {
+      background: #fff;
+      color: var(--primary);
+      border: 1px solid var(--primary);
+    }
+    #player-playpause-btn.is-playing {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    .control-icon {
+      font-size: 1.05rem;
+      line-height: 1;
+    }
+    .control-text {
+      font-size: 0.78rem;
+      line-height: 1;
+    }
+    .now-playing-badge {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 600;
+      vertical-align: middle;
     }
     .article-site {
       display: inline-block;
@@ -1629,10 +1882,20 @@ const HTML_APP = `<!DOCTYPE html>
       margin-bottom: 0.75rem;
       flex-wrap: wrap;
     }
+    .preview-top-controls > * {
+      min-width: 0;
+    }
     .preview-actions {
       display: inline-flex;
       gap: 0.5rem;
       flex-wrap: wrap;
+      flex: 1 1 420px;
+      min-width: 0;
+      justify-content: flex-end;
+    }
+    .preview-actions .btn {
+      flex: 1 1 180px;
+      min-width: 0;
     }
     .preview-search {
       min-width: 220px;
@@ -1646,6 +1909,22 @@ const HTML_APP = `<!DOCTYPE html>
       flex: 1;
       min-width: 240px;
       max-width: 480px;
+    }
+    .left-rail .preview-search-wrap {
+      min-width: 0;
+      max-width: 100%;
+      width: 100%;
+    }
+    .left-rail .preview-search {
+      min-width: 0;
+      max-width: none;
+      width: 100%;
+    }
+    .left-rail .preview-actions {
+      justify-content: stretch;
+    }
+    .left-rail .preview-actions .btn {
+      flex: 1 1 100%;
     }
     .sort-toggle {
       display: inline-flex;
@@ -1729,7 +2008,7 @@ const HTML_APP = `<!DOCTYPE html>
       right: 0;
       justify-content: flex-end;
       padding-right: 0.8rem;
-      background: #2563eb;
+      background: #0284c7;
     }
     .swipe-content {
       position: relative;
@@ -1793,6 +2072,31 @@ const HTML_APP = `<!DOCTYPE html>
       .btn-group { flex-direction: column; }
       .btn { width: 100%; }
       .inline-controls { flex-direction: column; align-items: flex-start; }
+      .player-controls-row {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 0.35rem;
+      }
+      .player-title-row {
+        align-items: flex-start;
+      }
+      .player-title-controls {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .player-controls-row .btn {
+        width: auto;
+      }
+      .player-icon-btn {
+        border-radius: 999px;
+        padding: 0.6rem 0.25rem;
+      }
+      .player-icon-btn .control-icon {
+        font-size: 1.2rem;
+      }
+      .player-icon-btn .control-text {
+        display: none;
+      }
     }
     @media (max-width: 1024px) {
       .app-shell {
@@ -1845,21 +2149,32 @@ const HTML_APP = `<!DOCTYPE html>
       <aside class="left-rail">
         <div class="rail-brand">
           <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-            <rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"></rect>
-            <path d="M20 40c8-1 14-7 15-15" stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none"></path>
-            <path d="M31 26h15" stroke="#ffffff" stroke-width="4" stroke-linecap="round"></path>
-            <circle cx="40" cy="42" r="8" fill="#ffffff"></circle>
-            <path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+            <defs>
+              <linearGradient id="logoG2" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#0ea5e9"></stop>
+                <stop offset="1" stop-color="#0284c7"></stop>
+              </linearGradient>
+            </defs>
+            <rect x="7" y="6" width="50" height="52" rx="12" fill="url(#logoG2)"></rect>
+            <path d="M18 17h28" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"></path>
+            <path d="M18 24h28" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"></path>
+            <path d="M18 31h22" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"></path>
+            <path d="M18 38h17" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"></path>
+            <circle cx="44" cy="44" r="10" fill="#f8fafc"></circle>
+            <path d="M39.6 44.2l2.5 2.5 6.1-6.1" stroke="#0284c7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+            <path d="M14 44l4-3v6z" fill="#e0f2fe"></path>
+            <path d="M19.5 42.2c1 .9 1 2.7 0 3.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"></path>
+            <path d="M22.3 40.8c1.9 1.8 1.9 4.8 0 6.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"></path>
           </svg>
-          <span>Readwise</span>
+          <span>Read Flow</span>
         </div>
         <div class="rail-section">
-          <a class="rail-item tab active" data-tab="cleanup" href="/">Cleanup</a>
+          <a class="rail-item tab active" data-tab="cleanup" href="/">Cleanup <span id="cleanup-selected-count" class="badge" style="display:none">0</span></a>
           <a class="rail-item tab" data-tab="deleted" href="/deleted">History <span id="deleted-count" class="badge" style="display:none">0</span></a>
+          <a class="rail-item tab" data-tab="player" href="/player">Player <span id="player-selected-count" class="badge" style="display:none">0</span></a>
         </div>
         <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
         <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
-        <a class="tab" data-tab="player" href="/player" style="display:none" aria-hidden="true">Player</a>
         <div id="cleanup-controls" class="card" style="margin-top:0.8rem;">
           <h2>Cleanup</h2>
           <div class="form-group">
@@ -1913,18 +2228,6 @@ const HTML_APP = `<!DOCTYPE html>
           <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
             Restore selected items to Reader or remove them from local history.
           </p>
-          <div class="inline-controls">
-            <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
-            <div class="preview-search-wrap">
-              <input class="preview-search" type="text" id="deleted-search" placeholder="Search history (title, author, site, URL)">
-              <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
-              <div class="sort-toggle" aria-label="Sort deleted history by date">
-                <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
-                <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
-                <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
-              </div>
-            </div>
-          </div>
           <div class="btn-group" style="margin-top: 1rem">
             <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
             <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
@@ -1933,7 +2236,7 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
       </aside>
-      <main class="main-pane">
+      <main class="main-pane" id="main-pane">
         <div class="main-inner">
     <div id="cleanup-tab">
       <div class="card" id="results-card">
@@ -1972,6 +2275,18 @@ const HTML_APP = `<!DOCTYPE html>
     <div id="deleted-tab" style="display:none">
       <div class="card">
         <h2>Deleted Items History</h2>
+        <div class="preview-top-controls" id="deleted-top-controls">
+          <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
+          <div class="preview-search-wrap">
+            <input class="preview-search" type="text" id="deleted-search" placeholder="Search history (title, author, site, URL)">
+            <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
+            <div class="sort-toggle" aria-label="Sort deleted history by date">
+              <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
+              <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
+              <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
+            </div>
+          </div>
+        </div>
         <div id="deleted-list"><div class="loading">Loading...</div></div>
       </div>
     </div>
@@ -2010,6 +2325,15 @@ const HTML_APP = `<!DOCTYPE html>
           </label>
         </div>
         <div class="form-group">
+          <label for="setting-tts-voice">TTS voice</label>
+          <select id="setting-tts-voice">
+            <option value="onyx">Onyx (male)</option>
+            <option value="echo">Echo (male)</option>
+            <option value="nova" selected>Nova (female)</option>
+            <option value="shimmer">Shimmer (female)</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label for="setting-audio-back-seconds">Audio back skip (seconds)</label>
           <input id="setting-audio-back-seconds" type="number" min="5" max="120">
         </div>
@@ -2020,6 +2344,20 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="form-group">
           <label for="setting-max-open-tabs">Max tabs to open</label>
           <input id="setting-max-open-tabs" type="number" min="1" max="50">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input id="setting-player-auto-next" type="checkbox">
+            Player auto play next
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="setting-player-auto-action">After finishing a story</label>
+          <select id="setting-player-auto-action">
+            <option value="none">Do nothing</option>
+            <option value="archive">Auto archive</option>
+            <option value="delete">Auto delete</option>
+          </select>
         </div>
         <div class="btn-group">
           <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
@@ -2082,34 +2420,55 @@ const HTML_APP = `<!DOCTYPE html>
 
     <div id="player-tab" style="display:none">
       <div class="card">
-        <h2>Audio Player</h2>
+        <div class="player-title-row">
+          <h2 style="margin-bottom:0;">Audio Player</h2>
+          <div class="player-title-controls">
+            <label class="checkbox-label" style="font-size:0.85rem;">
+              <input id="player-auto-next" type="checkbox" checked>
+              Auto next
+            </label>
+            <label for="player-speed" style="margin:0; font-size:0.82rem;">Speed</label>
+            <select id="player-speed" style="width:auto; min-width: 84px; padding: 0.4rem 0.5rem;">
+              <option value="0.8">0.8x</option>
+              <option value="1" selected>1.0x</option>
+              <option value="1.1">1.1x</option>
+              <option value="1.2">1.2x</option>
+              <option value="1.3">1.3x</option>
+              <option value="1.5">1.5x</option>
+              <option value="1.7">1.7x</option>
+            </select>
+          </div>
+        </div>
         <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
-        <div id="player-current-title" style="font-weight:600; margin-bottom:0.5rem;"></div>
-        <div class="btn-group" style="margin-bottom:0.6rem;">
-          <button class="btn btn-outline" id="player-prev-btn" title="Previous" aria-label="Previous">⏮</button>
-          <button class="btn btn-primary" id="player-playpause-btn" title="Play or pause" aria-label="Play or pause">⏯</button>
-          <button class="btn btn-outline" id="player-next-btn" title="Next" aria-label="Next">⏭</button>
-          <button class="btn btn-outline" id="player-back-btn" title="Back" aria-label="Back">⏪ 15s</button>
-          <button class="btn btn-outline" id="player-forward-btn" title="Forward" aria-label="Forward">30s ⏩</button>
+        <p id="player-tts-mode" style="display:none; color: var(--text-muted); margin-bottom: 0.4rem; font-size: 0.82rem;">TTS mode: mock clip</p>
+        <div id="player-current-header" class="player-current-header" style="display:none;">
+          <img id="player-current-thumb" class="preview-thumb" alt="" loading="lazy" referrerpolicy="no-referrer" style="display:none;">
+          <span id="player-current-thumb-fallback" class="preview-thumb-fallback" style="display:none;">No image</span>
+          <div class="player-current-meta">
+            <div id="player-current-title" style="font-weight:600;"></div>
+            <div id="player-current-author" class="article-meta"></div>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input id="player-auto-next" type="checkbox" checked>
-            Auto play next
-          </label>
-        </div>
-        <div class="form-group" style="max-width: 200px;">
-          <label for="player-speed">Speed</label>
-          <select id="player-speed">
-            <option value="0.8">0.8x</option>
-            <option value="1" selected>1.0x</option>
-            <option value="1.25">1.25x</option>
-            <option value="1.5">1.5x</option>
-            <option value="1.75">1.75x</option>
-            <option value="2">2.0x</option>
-          </select>
+        <button type="button" id="player-text-toggle" class="text-preview-toggle" style="margin-bottom:0.5rem;">Text</button>
+        <div id="player-current-text" class="tts-preview" style="display:none; margin-top:0; margin-bottom:0.7rem;"></div>
+        <div class="btn-group player-controls-row" style="margin-bottom:0.6rem;">
+          <button class="btn btn-outline player-icon-btn" id="player-prev-btn" title="Previous" aria-label="Previous"><span class="control-icon">⏮</span></button>
+          <button class="btn btn-outline player-icon-btn" id="player-back-btn" title="Back" aria-label="Back"><span class="control-icon">⏪</span><span class="control-text">15s</span></button>
+          <button class="btn player-icon-btn" id="player-playpause-btn" title="Play" aria-label="Play"><span class="control-icon">▶</span></button>
+          <button class="btn btn-outline player-icon-btn" id="player-forward-btn" title="Forward" aria-label="Forward"><span class="control-icon">⏩</span><span class="control-text">30s</span></button>
+          <button class="btn btn-outline player-icon-btn" id="player-next-btn" title="Next" aria-label="Next"><span class="control-icon">⏭</span></button>
         </div>
         <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
+        <div class="preview-top-controls" style="margin-top:0.7rem;">
+          <label class="checkbox-label" style="font-size:0.85rem; margin:0;">
+            <input id="player-select-all" type="checkbox">
+            All
+          </label>
+          <div class="preview-search-wrap" style="max-width:none;">
+            <input type="text" id="player-search" class="preview-search" placeholder="Search player queue...">
+            <button type="button" id="player-search-clear" class="search-clear-btn" title="Clear player search" aria-label="Clear player search">×</button>
+          </div>
+        </div>
         <div id="player-queue" class="history-list" style="margin-top:0.8rem;"></div>
       </div>
     </div>
@@ -2120,6 +2479,11 @@ const HTML_APP = `<!DOCTYPE html>
 
   <script>
     var APP_VERSION = '${APP_VERSION}';
+    var CLIENT_MAX_TTS_PREVIEW_CHARS = ${MAX_TTS_PREVIEW_CHARS};
+    var CLIENT_TTS_SYNTH_CHUNK_CHARS = ${TTS_SYNTH_CHUNK_CHARS};
+    var CLIENT_TTS_FIRST_CHUNK_CHARS = ${TTS_FIRST_CHUNK_CHARS};
+    var CLIENT_TTS_SECOND_CHUNK_CHARS = ${TTS_SECOND_CHUNK_CHARS};
+    var CLIENT_PREVIEW_CACHE_STALE_MS = ${PREVIEW_CACHE_STALE_MS};
     var VERSION_HISTORY = ${JSON.stringify(VERSION_HISTORY)};
     var currentCount = 0;
     var previewData = [];
@@ -2130,6 +2494,7 @@ const HTML_APP = `<!DOCTYPE html>
     var previewSortMode = 'added';
     var activeDateShortcutTarget = 'to';
     var swipeStateById = {};
+    var playerSwipeStateByQueueId = {};
     var cleanupInFlight = false;
     var cleanupBatchSize = 20;
     var deletedItems = [];
@@ -2137,19 +2502,40 @@ const HTML_APP = `<!DOCTYPE html>
     var deletedSearch = '';
     var deletedSortMode = 'deleted';
     var lastQuery = null;
+    var lastPreviewLoadedAt = 0;
     var settings = {
       defaultLocation: 'new',
       defaultDays: 30,
       previewLimit: 100,
       confirmActions: true,
       mockTts: true,
+      ttsVoice: 'nova',
       audioBackSeconds: 15,
       audioForwardSeconds: 30,
-      maxOpenTabs: 5
+      maxOpenTabs: 5,
+      playerAutoNext: true,
+      playerAutoAction: 'none'
     };
     var playerQueue = [];
     var playerIndex = 0;
     var playerEnabledIds = new Set();
+    var playerProgressByItemId = {};
+    var playerDurationByItemId = {};
+    var playerChunkDurationsByItemId = {};
+    var playerChunkStateByItemId = {};
+    var playerLastItemId = '';
+    var playerLoadedItemId = '';
+    var playerLoadedChunkIndex = 0;
+    var playerSearch = '';
+    var currentTabName = 'cleanup';
+    var playerStatePersistTimer = null;
+    var playerAudioObjectUrl = '';
+    var playerLoadToken = 0;
+    var playerChunkFetchByKey = {};
+    var playerChunkBlobByKey = {};
+    var PLAYER_STATE_STORAGE_KEY = 'readwise_cleanup_player_state_v1';
+    var APP_STATE_STORAGE_KEY = 'readwise_cleanup_app_state_v1';
+    var appStatePersistTimer = null;
 
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
@@ -2165,6 +2551,7 @@ const HTML_APP = `<!DOCTYPE html>
     var openSelectedBtn = document.getElementById('open-selected-btn');
     var deleteBtn = document.getElementById('delete-btn');
     var archiveBtn = document.getElementById('archive-btn');
+    var mainPane = document.getElementById('main-pane');
     var resultsCard = document.getElementById('results-card');
     var itemCountEl = document.getElementById('item-count');
     var locationDisplay = document.getElementById('location-display');
@@ -2186,6 +2573,8 @@ const HTML_APP = `<!DOCTYPE html>
     var deletedSortPublishedBtn = document.getElementById('deleted-sort-published');
     var deletedSortDeletedBtn = document.getElementById('deleted-sort-deleted');
     var deletedCountBadge = document.getElementById('deleted-count');
+    var cleanupSelectedCountBadge = document.getElementById('cleanup-selected-count');
+    var playerSelectedCountBadge = document.getElementById('player-selected-count');
     var saveSettingsBtn = document.getElementById('save-settings-btn');
     var cleanupControlsCard = document.getElementById('cleanup-controls');
     var deletedControlsCard = document.getElementById('deleted-controls');
@@ -2194,16 +2583,29 @@ const HTML_APP = `<!DOCTYPE html>
     var tokenStatusEl = document.getElementById('token-status');
     var settingsTokenInput = document.getElementById('setting-readwise-token');
     var settingMockTts = document.getElementById('setting-mock-tts');
+    var settingTtsVoice = document.getElementById('setting-tts-voice');
     var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
     var settingAudioForwardSeconds = document.getElementById('setting-audio-forward-seconds');
     var settingMaxOpenTabs = document.getElementById('setting-max-open-tabs');
+    var settingPlayerAutoNext = document.getElementById('setting-player-auto-next');
+    var settingPlayerAutoAction = document.getElementById('setting-player-auto-action');
     var openAiKeyStatusEl = document.getElementById('openai-key-status');
     var saveOpenAiKeyBtn = document.getElementById('save-openai-key-btn');
     var settingsOpenAiKeyInput = document.getElementById('setting-openai-key');
     var playerAudio = document.getElementById('player-audio');
     var playerStatus = document.getElementById('player-status');
+    var playerTtsModeEl = document.getElementById('player-tts-mode');
+    var playerCurrentHeader = document.getElementById('player-current-header');
+    var playerCurrentThumb = document.getElementById('player-current-thumb');
+    var playerCurrentThumbFallback = document.getElementById('player-current-thumb-fallback');
     var playerCurrentTitle = document.getElementById('player-current-title');
+    var playerCurrentAuthor = document.getElementById('player-current-author');
+    var playerTextToggleBtn = document.getElementById('player-text-toggle');
+    var playerCurrentText = document.getElementById('player-current-text');
     var playerQueueEl = document.getElementById('player-queue');
+    var playerSelectAll = document.getElementById('player-select-all');
+    var playerSearchInput = document.getElementById('player-search');
+    var playerSearchClearBtn = document.getElementById('player-search-clear');
     var playerPrevBtn = document.getElementById('player-prev-btn');
     var playerPlayPauseBtn = document.getElementById('player-playpause-btn');
     var playerNextBtn = document.getElementById('player-next-btn');
@@ -2211,6 +2613,7 @@ const HTML_APP = `<!DOCTYPE html>
     var playerForwardBtn = document.getElementById('player-forward-btn');
     var playerSpeedSelect = document.getElementById('player-speed');
     var playerAutoNextCheckbox = document.getElementById('player-auto-next');
+    var playerShowText = false;
 
     var settingsDefaultLocation = document.getElementById('setting-default-location');
     var settingsDefaultDays = document.getElementById('setting-default-days');
@@ -2274,11 +2677,17 @@ const HTML_APP = `<!DOCTYPE html>
       settingsPreviewLimit.value = settings.previewLimit;
       settingsConfirmActions.checked = settings.confirmActions;
       settingMockTts.checked = settings.mockTts;
+      if (settingTtsVoice) settingTtsVoice.value = settings.ttsVoice || 'nova';
       settingAudioBackSeconds.value = settings.audioBackSeconds;
       settingAudioForwardSeconds.value = settings.audioForwardSeconds;
       settingMaxOpenTabs.value = settings.maxOpenTabs;
-      playerBackBtn.textContent = '-' + settings.audioBackSeconds + 's';
-      playerForwardBtn.textContent = '+' + settings.audioForwardSeconds + 's';
+      settingPlayerAutoNext.checked = !!settings.playerAutoNext;
+      settingPlayerAutoAction.value = settings.playerAutoAction || 'none';
+      playerAutoNextCheckbox.checked = !!settings.playerAutoNext;
+      var backTextEl = playerBackBtn && playerBackBtn.querySelector ? playerBackBtn.querySelector('.control-text') : null;
+      var fwdTextEl = playerForwardBtn && playerForwardBtn.querySelector ? playerForwardBtn.querySelector('.control-text') : null;
+      if (backTextEl) backTextEl.textContent = settings.audioBackSeconds + 's';
+      if (fwdTextEl) fwdTextEl.textContent = settings.audioForwardSeconds + 's';
     }
 
     function buildLocationOptionLabel(location) {
@@ -2308,6 +2717,7 @@ const HTML_APP = `<!DOCTYPE html>
       } catch (err) {
         setLocations([]);
       }
+      updatePreviewButtonLabel();
     }
 
     function buildQueryKey() {
@@ -2317,6 +2727,14 @@ const HTML_APP = `<!DOCTYPE html>
         toDateInput.value || '',
         settings.previewLimit
       ].join('|');
+    }
+
+    function updatePreviewButtonLabel() {
+      var hasCachedPreview = previewData.length > 0 && !!lastQuery;
+      var hasStaleCache = hasCachedPreview && lastPreviewLoadedAt > 0
+        && (Date.now() - lastPreviewLoadedAt) >= CLIENT_PREVIEW_CACHE_STALE_MS;
+      var isOutOfDate = hasCachedPreview && (buildQueryKey() !== lastQuery || hasStaleCache);
+      previewBtn.innerHTML = isOutOfDate ? 'Refresh Items' : 'Preview Items';
     }
 
     function on(el, eventName, handler) {
@@ -2369,6 +2787,11 @@ const HTML_APP = `<!DOCTYPE html>
     function setActiveTab(tabName, options) {
       var opts = options || {};
       var shouldPush = opts.push !== false;
+      var syncPlayerFromSelection = opts.syncPlayerFromSelection !== false;
+      if (currentTabName === 'player' && tabName !== 'player') {
+        saveCurrentPlayerProgress();
+        if (playerAudio && !playerAudio.paused) playerAudio.pause();
+      }
       document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
       document.querySelectorAll('.tab[data-tab="' + tabName + '"]').forEach(function(activeTabEl) {
         activeTabEl.classList.add('active');
@@ -2381,15 +2804,21 @@ const HTML_APP = `<!DOCTYPE html>
       document.getElementById('player-tab').style.display = tabName === 'player' ? 'block' : 'none';
       cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
       deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
+      mainPane.style.overflowY = (tabName === 'cleanup' || tabName === 'deleted') ? 'hidden' : 'auto';
 
       if (tabName === 'deleted') {
         loadDeletedItems();
+      }
+      if (tabName === 'player' && syncPlayerFromSelection) {
+        refreshPlayerQueueFromPreviewSelection({ autoplay: true });
       }
 
       var targetPath = TAB_ROUTES[tabName] || '/';
       if (shouldPush && normalizePath(window.location.pathname) !== targetPath) {
         history.pushState({ tab: tabName }, '', targetPath);
       }
+      currentTabName = tabName;
+      schedulePersistAppState();
     }
 
     document.querySelectorAll('.tab').forEach(function(tab) {
@@ -2414,12 +2843,6 @@ const HTML_APP = `<!DOCTYPE html>
       if (!toDate) toDate = formatInputDate(new Date());
 
       var queryKey = buildQueryKey();
-      if (lastQuery === queryKey && previewData.length > 0) {
-        syncPreviewSelectionUI();
-        renderPreview();
-        showToast('Using cached preview', 'success');
-        return;
-      }
 
       previewBtn.disabled = true;
       previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
@@ -2440,8 +2863,10 @@ const HTML_APP = `<!DOCTYPE html>
         selectedPreviewIds = new Set(previewData.map(function(item) { return String(item.id); }));
         previewPage = 1;
         lastQuery = queryKey;
+        lastPreviewLoadedAt = Date.now();
         syncPreviewSelectionUI();
         renderPreview();
+        updatePreviewButtonLabel();
 
         itemCountEl.textContent = currentCount;
         locationDisplay.textContent = locationSelect.value;
@@ -2452,7 +2877,7 @@ const HTML_APP = `<!DOCTYPE html>
         showToast(err.message, 'error');
       } finally {
         previewBtn.disabled = false;
-        previewBtn.innerHTML = 'Preview Items';
+        updatePreviewButtonLabel();
       }
     });
 
@@ -2488,6 +2913,49 @@ const HTML_APP = `<!DOCTYPE html>
       return Array.from(selectedPreviewIds).filter(function(id) { return filteredIds.has(id); });
     }
 
+    function updateRailSelectionBadges() {
+      var cleanupCount = getActiveSelectedIds().length;
+      if (cleanupSelectedCountBadge) {
+        if (cleanupCount > 0) {
+          cleanupSelectedCountBadge.textContent = String(cleanupCount);
+          cleanupSelectedCountBadge.style.display = 'inline-block';
+        } else {
+          cleanupSelectedCountBadge.style.display = 'none';
+        }
+      }
+
+      var playerCount = 0;
+      if (playerQueue.length > 0 && playerEnabledIds && typeof playerEnabledIds.size === 'number') {
+        playerCount = playerEnabledIds.size;
+      }
+      if (playerSelectedCountBadge) {
+        if (playerCount > 0) {
+          playerSelectedCountBadge.textContent = String(playerCount);
+          playerSelectedCountBadge.style.display = 'inline-block';
+        } else {
+          playerSelectedCountBadge.style.display = 'none';
+        }
+      }
+    }
+
+    function isArchiveSourceSelected() {
+      return String(locationSelect.value || '') === 'archive';
+    }
+
+    function getSecondaryCleanupAction() {
+      return isArchiveSourceSelected() ? 'restore' : 'archive';
+    }
+
+    function getSecondaryActionLabel() {
+      return getSecondaryCleanupAction() === 'restore' ? 'Restore Selected' : 'Archive Selected';
+    }
+
+    function getActionPastTense(action) {
+      if (action === 'delete') return 'Deleted';
+      if (action === 'restore') return 'Restored';
+      return 'Archived';
+    }
+
     function renderPreview() {
       var filtered = getSortedFilteredPreviewItems();
       if (filtered.length === 0) {
@@ -2509,7 +2977,7 @@ const HTML_APP = `<!DOCTYPE html>
         var checked = selectedPreviewIds.has(articleId) ? ' checked' : '';
         html += '<div class="swipe-item" data-article-id="' + escapeHtml(articleId) + '">';
         html += '<div class="swipe-bg right">Delete</div>';
-        html += '<div class="swipe-bg left">Archive</div>';
+        html += '<div class="swipe-bg left">' + (isArchiveSourceSelected() ? 'Restore' : 'Archive') + '</div>';
         html += '<div class="article-item swipe-content"';
         html += ' onpointerdown="handlePreviewPointerDown(event,this)"';
         html += ' onpointermove="handlePreviewPointerMove(event,this)"';
@@ -2529,13 +2997,11 @@ const HTML_APP = `<!DOCTYPE html>
         html += '<span class="article-date-right">' + escapeHtml(activeDateLabel) + ' ' + escapeHtml(formatDate(activeDateValue || article.savedAt)) + '</span>';
         html += '</div>';
         html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
-        html += '<button type="button" class="text-preview-toggle" data-article-id="' + escapeHtml(articleId) + '">Text</button>';
-        html += '<button type="button" class="text-preview-toggle play-preview-btn" data-article-id="' + escapeHtml(articleId) + '">Play</button>';
+        html += '<button type="button" class="text-preview-toggle icon-btn play-preview-btn" data-article-id="' + escapeHtml(articleId) + '" title="Play in Player" aria-label="Play in Player">▶</button>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
         }
         html += ' · ' + formatDate(article.savedAt) + '</div></div></div></div>';
-        html += '<div id="tts-preview-' + escapeHtml(articleId) + '" class="tts-preview" style="display:none">' + escapeHtml(article.ttsPreview || 'No extracted text available.') + '</div>';
       });
       html += '</div>';
 
@@ -2545,23 +3011,12 @@ const HTML_APP = `<!DOCTYPE html>
           openPreviewUrl(evt, link.dataset.openUrl || link.getAttribute('href') || '');
         });
       });
-      previewList.querySelectorAll('.text-preview-toggle').forEach(function(btn) {
-        if (btn.classList.contains('play-preview-btn')) return;
-        on(btn, 'click', function() {
-          var articleId = btn.dataset.articleId;
-          var previewEl = document.getElementById('tts-preview-' + articleId);
-          if (!previewEl) return;
-          var shouldShow = previewEl.style.display === 'none';
-          previewEl.style.display = shouldShow ? 'block' : 'none';
-          btn.textContent = shouldShow ? 'Hide text' : 'Text';
-        });
-      });
       previewList.querySelectorAll('.play-preview-btn').forEach(function(btn) {
         on(btn, 'click', function() {
           var articleId = String(btn.dataset.articleId || '');
           var match = previewData.find(function(item) { return String(item.id) === articleId; });
           if (!match) return;
-          startPlayerWithItems([match]);
+          ensurePlayerItemAndPlay(match);
         });
       });
       previewPageLabel.textContent = 'Page ' + previewPage + ' / ' + totalPages;
@@ -2569,10 +3024,11 @@ const HTML_APP = `<!DOCTYPE html>
       previewNextBtn.disabled = previewPage >= totalPages;
       previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
       syncPreviewSelectionUI();
+      schedulePersistAppState();
     }
 
     on(deleteBtn, 'click', function() { performCleanup('delete'); });
-    on(archiveBtn, 'click', function() { performCleanup('archive'); });
+    on(archiveBtn, 'click', function() { performCleanup(getSecondaryCleanupAction()); });
 
     function syncPreviewSelectionUI() {
       var filtered = getFilteredPreviewItems();
@@ -2586,7 +3042,8 @@ const HTML_APP = `<!DOCTYPE html>
         archiveBtn.disabled = true;
         openSelectedBtn.textContent = 'Open Selected';
         deleteBtn.textContent = 'Delete Selected';
-        archiveBtn.textContent = 'Archive Selected';
+        archiveBtn.textContent = getSecondaryActionLabel();
+        updateRailSelectionBadges();
         return;
       }
       var selectedCount = selectedPreviewIds.size;
@@ -2605,7 +3062,9 @@ const HTML_APP = `<!DOCTYPE html>
       archiveBtn.disabled = displayCount === 0;
       openSelectedBtn.textContent = displayCount > 0 ? 'Open Selected (' + displayCount + ')' : 'Open Selected';
       deleteBtn.textContent = displayCount > 0 ? 'Delete Selected (' + displayCount + ')' : 'Delete Selected';
-      archiveBtn.textContent = displayCount > 0 ? 'Archive Selected (' + displayCount + ')' : 'Archive Selected';
+      var secondaryLabel = getSecondaryActionLabel();
+      archiveBtn.textContent = displayCount > 0 ? (secondaryLabel + ' (' + displayCount + ')') : secondaryLabel;
+      updateRailSelectionBadges();
     }
 
     function togglePreviewItem(checkbox) {
@@ -2613,6 +3072,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (checkbox.checked) selectedPreviewIds.add(articleId);
       else selectedPreviewIds.delete(articleId);
       syncPreviewSelectionUI();
+      schedulePersistAppState();
     }
     window.togglePreviewItem = togglePreviewItem;
 
@@ -2669,17 +3129,43 @@ const HTML_APP = `<!DOCTYPE html>
       renderPreview();
     });
     updatePreviewSortButtons();
+    on(locationSelect, 'change', function() {
+      syncPreviewSelectionUI();
+      if (previewData.length > 0) renderPreview();
+      updatePreviewButtonLabel();
+      schedulePersistAppState();
+    });
+    on(fromDateInput, 'change', function() {
+      updatePreviewButtonLabel();
+      schedulePersistAppState();
+    });
+    on(toDateInput, 'change', function() {
+      updatePreviewButtonLabel();
+      schedulePersistAppState();
+    });
 
     function runSwipeAction(articleId, action) {
       var id = String(articleId);
+      if (action === 'archive' && isArchiveSourceSelected()) {
+        performCleanup('restore', true, [id]);
+        return;
+      }
       performCleanup(action, true, [id]);
+    }
+
+    async function runPlayerSwipeAction(queueId, action) {
+      var idx = playerQueue.findIndex(function(item, qIdx) {
+        return getPlayerQueueId(item, qIdx) === queueId;
+      });
+      if (idx < 0) return;
+      await runPlayerItemAction(idx, action);
     }
 
     function handlePreviewPointerDown(evt, element) {
       if (
         evt.target &&
         evt.target.closest &&
-        (evt.target.closest('.preview-open-link') || evt.target.closest('input[type="checkbox"]'))
+        (evt.target.closest('.preview-open-link') || evt.target.closest('input[type="checkbox"]') || evt.target.closest('button'))
       ) {
         return;
       }
@@ -2733,6 +3219,64 @@ const HTML_APP = `<!DOCTYPE html>
     }
     window.handlePreviewPointerCancel = handlePreviewPointerCancel;
 
+    function handlePlayerPointerDown(evt, element) {
+      if (
+        evt.target &&
+        evt.target.closest &&
+        (evt.target.closest('.player-queue-jump') || evt.target.closest('.player-queue-check') || evt.target.closest('input[type="checkbox"]') || evt.target.closest('button'))
+      ) {
+        return;
+      }
+      var parent = element.parentElement;
+      var queueId = parent.dataset.queueId;
+      playerSwipeStateByQueueId[queueId] = { startX: evt.clientX, deltaX: 0, pointerId: evt.pointerId, moved: false };
+      element.style.transition = 'none';
+      if (element.setPointerCapture) {
+        element.setPointerCapture(evt.pointerId);
+      }
+    }
+    window.handlePlayerPointerDown = handlePlayerPointerDown;
+
+    function handlePlayerPointerMove(evt, element) {
+      var parent = element.parentElement;
+      var queueId = parent.dataset.queueId;
+      var state = playerSwipeStateByQueueId[queueId];
+      if (!state) return;
+      if (state.pointerId !== evt.pointerId) return;
+      state.deltaX = evt.clientX - state.startX;
+      if (Math.abs(state.deltaX) > 8) state.moved = true;
+      element.style.transform = 'translateX(' + Math.max(-120, Math.min(120, state.deltaX)) + 'px)';
+    }
+    window.handlePlayerPointerMove = handlePlayerPointerMove;
+
+    async function finishPlayerSwipe(evt, element) {
+      var parent = element.parentElement;
+      var queueId = parent.dataset.queueId;
+      var state = playerSwipeStateByQueueId[queueId];
+      if (!state || state.pointerId !== evt.pointerId) return;
+      element.style.transition = 'transform 0.15s ease';
+      if (state.moved) parent.dataset.suppressClick = '1';
+      if (state.deltaX <= -80) {
+        element.style.transform = 'translateX(-120px)';
+        setTimeout(function() { runPlayerSwipeAction(queueId, 'archive'); }, 120);
+      } else if (state.deltaX >= 80) {
+        element.style.transform = 'translateX(120px)';
+        setTimeout(function() { runPlayerSwipeAction(queueId, 'delete'); }, 120);
+      } else {
+        element.style.transform = 'translateX(0px)';
+      }
+      delete playerSwipeStateByQueueId[queueId];
+    }
+
+    function handlePlayerPointerUp(evt, element) {
+      finishPlayerSwipe(evt, element);
+    }
+    window.handlePlayerPointerUp = handlePlayerPointerUp;
+    function handlePlayerPointerCancel(evt, element) {
+      finishPlayerSwipe(evt, element);
+    }
+    window.handlePlayerPointerCancel = handlePlayerPointerCancel;
+
     function openPreviewUrl(evt, url) {
       evt.preventDefault();
       evt.stopPropagation();
@@ -2776,27 +3320,770 @@ const HTML_APP = `<!DOCTYPE html>
       startPlayerWithItems(selected);
     });
 
+    function ensurePlayerItemAndPlay(item) {
+      if (!item) return;
+      var itemId = String(item.id || '');
+      if (!itemId) return;
+      var selected = getSelectedPreviewItemsForPlayer().filter(function(qItem) {
+        return String(qItem && qItem.id || '') !== itemId;
+      });
+      playerQueue = [item].concat(selected);
+      playerEnabledIds = new Set(playerQueue.map(function(qItem, qIdx) { return getPlayerQueueId(qItem, qIdx); }));
+      playerIndex = 0;
+      playerSearch = '';
+      playerSearchInput.value = '';
+      setActiveTab('player', { push: true, syncPlayerFromSelection: false });
+      loadPlayerIndex(0);
+    }
+
+    function getSelectedPreviewItemsForPlayer() {
+      var activeIds = new Set(getActiveSelectedIds());
+      if (activeIds.size === 0) return [];
+      return previewData.filter(function(item) { return activeIds.has(String(item.id)); });
+    }
+
+    function refreshPlayerQueueFromPreviewSelection(opts) {
+      var options = opts || {};
+      var autoplay = options.autoplay !== false;
+      var selected = getSelectedPreviewItemsForPlayer();
+      if (!selected.length) return;
+      var selectedIds = selected.map(function(item) { return String(item.id || ''); });
+      var queueIds = playerQueue.map(function(item) { return String(item && item.id ? item.id : ''); });
+      if (selectedIds.join('|') === queueIds.join('|') && playerQueue.length > 0) return;
+
+      saveCurrentPlayerProgress();
+      playerQueue = selected.slice();
+      playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
+      playerSearch = '';
+      playerSearchInput.value = '';
+      var restoreId = playerLastItemId || '';
+      var restoreIdx = playerQueue.findIndex(function(item, idx) { return getPlayerItemId(item, idx) === restoreId; });
+      playerIndex = restoreIdx >= 0 ? restoreIdx : 0;
+      renderPlayerQueue();
+      renderPlayerText();
+      if (autoplay) loadPlayerIndex(playerIndex);
+    }
+
+    function getPlayerItemId(item, idx) {
+      return String(item && item.id ? item.id : 'item-' + idx);
+    }
+
+    function getCurrentPlayerItemId() {
+      if (playerIndex < 0 || playerIndex >= playerQueue.length) return '';
+      return getPlayerItemId(playerQueue[playerIndex], playerIndex);
+    }
+
+    function getCurrentPlayerQueueId() {
+      if (playerIndex < 0 || playerIndex >= playerQueue.length) return '';
+      return getPlayerQueueId(playerQueue[playerIndex], playerIndex);
+    }
+
+    function getPlayerItemText(item) {
+      return String(
+        (item && item.ttsFullText) ||
+        (item && item.ttsPreview) ||
+        (item && item.title) ||
+        ''
+      ).trim();
+    }
+
+    function splitTtsTextIntoChunks(fullText, maxChars, firstChunkChars, secondChunkChars) {
+      var text = String(fullText || '').trim();
+      var limit = Number(maxChars) > 500 ? Number(maxChars) : 12000;
+      var firstLimit = Number(firstChunkChars) > 200 ? Math.min(limit, Number(firstChunkChars)) : limit;
+      var secondLimit = Number(secondChunkChars) > 200 ? Math.min(limit, Number(secondChunkChars)) : limit;
+      if (!text) return [''];
+      var chunks = [];
+      var pos = 0;
+      while (pos < text.length) {
+        var currentLimit = chunks.length === 0 ? firstLimit : (chunks.length === 1 ? secondLimit : limit);
+        var end = Math.min(text.length, pos + currentLimit);
+        if (end < text.length) {
+          var boundary = text.lastIndexOf('\\n\\n', end);
+          if (boundary <= pos + Math.floor(currentLimit * 0.6)) {
+            boundary = text.lastIndexOf('. ', end);
+          }
+          if (boundary <= pos + Math.floor(currentLimit * 0.6)) {
+            boundary = text.lastIndexOf(' ', end);
+          }
+          if (boundary > pos + 200) {
+            end = boundary + 1;
+          }
+        }
+        var chunk = text.slice(pos, end).trim();
+        if (chunk) chunks.push(chunk);
+        pos = end;
+      }
+      return chunks.length ? chunks : [''];
+    }
+
+    function getPlayerItemChunks(item) {
+      if (!item || typeof item !== 'object') return [''];
+      if (Array.isArray(item._ttsChunks) && item._ttsChunks.length > 0) {
+        return item._ttsChunks;
+      }
+      item._ttsChunks = splitTtsTextIntoChunks(
+        getPlayerItemText(item),
+        CLIENT_TTS_SYNTH_CHUNK_CHARS,
+        CLIENT_TTS_FIRST_CHUNK_CHARS,
+        CLIENT_TTS_SECOND_CHUNK_CHARS
+      );
+      return item._ttsChunks;
+    }
+
+    function getChunkDurationMap(itemId) {
+      if (!itemId) return {};
+      if (!playerChunkDurationsByItemId[itemId] || typeof playerChunkDurationsByItemId[itemId] !== 'object') {
+        playerChunkDurationsByItemId[itemId] = {};
+      }
+      return playerChunkDurationsByItemId[itemId];
+    }
+
+    function sumKnownChunkDurations(itemId) {
+      var durationMap = getChunkDurationMap(itemId);
+      return Object.keys(durationMap).reduce(function(sum, key) {
+        var val = Number(durationMap[key] || 0);
+        return sum + (Number.isFinite(val) && val > 0 ? val : 0);
+      }, 0);
+    }
+
+    function getChunkOffsetSeconds(itemId, chunkIndex) {
+      var durationMap = getChunkDurationMap(itemId);
+      var offset = 0;
+      for (var i = 0; i < chunkIndex; i++) {
+        var dur = Number(durationMap[i] || 0);
+        if (Number.isFinite(dur) && dur > 0) offset += dur;
+      }
+      return offset;
+    }
+
+    function resolvePlayerResumePoint(itemId, chunksLength) {
+      var state = playerChunkStateByItemId[itemId];
+      if (
+        state &&
+        Number.isFinite(state.chunkIndex) &&
+        state.chunkIndex >= 0 &&
+        state.chunkIndex < chunksLength
+      ) {
+        return {
+          chunkIndex: state.chunkIndex,
+          chunkTime: Number.isFinite(state.chunkTime) ? Math.max(0, state.chunkTime) : 0,
+        };
+      }
+      var absolute = Number(playerProgressByItemId[itemId] || 0);
+      if (!Number.isFinite(absolute) || absolute <= 0) {
+        return { chunkIndex: 0, chunkTime: 0 };
+      }
+      var durationMap = getChunkDurationMap(itemId);
+      var remaining = absolute;
+      var chunkIndex = 0;
+      while (chunkIndex < chunksLength - 1) {
+        var dur = Number(durationMap[chunkIndex] || 0);
+        if (!(Number.isFinite(dur) && dur > 0)) break;
+        if (remaining < dur) break;
+        remaining -= dur;
+        chunkIndex += 1;
+      }
+      return {
+        chunkIndex: chunkIndex,
+        chunkTime: Math.max(0, remaining),
+      };
+    }
+
+    function clearPlayerAudioSource() {
+      if (playerAudio) {
+        playerAudio.pause();
+        playerAudio.removeAttribute('src');
+        playerAudio.load();
+      }
+      if (playerAudioObjectUrl) {
+        URL.revokeObjectURL(playerAudioObjectUrl);
+        playerAudioObjectUrl = '';
+      }
+      setPlayerPlayPauseButtonState();
+    }
+
+    function setPlayerPlayPauseButtonState() {
+      if (!playerPlayPauseBtn) return;
+      var isPlaying = !!(playerAudio && playerAudio.src && !playerAudio.paused);
+      var iconEl = playerPlayPauseBtn.querySelector ? playerPlayPauseBtn.querySelector('.control-icon') : null;
+      if (iconEl) iconEl.textContent = isPlaying ? '⏸' : '▶';
+      playerPlayPauseBtn.classList.toggle('is-playing', isPlaying);
+      playerPlayPauseBtn.title = isPlaying ? 'Pause' : 'Play';
+      if (playerPlayPauseBtn.setAttribute) {
+        playerPlayPauseBtn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
+      }
+    }
+
+    function syncPlayerQueueAfterProcessedIds(processedIds, opts) {
+      if (!Array.isArray(processedIds) || processedIds.length === 0) return false;
+      var options = opts || {};
+      var removedSet = new Set(processedIds.map(function(id) { return String(id); }));
+      var currentPlayingId = String(playerLoadedItemId || getCurrentPlayerItemId() || '');
+      var removedCurrent = currentPlayingId && removedSet.has(currentPlayingId);
+      if (removedCurrent) {
+        clearPlayerAudioSource();
+        playerLoadedItemId = '';
+        playerLoadedChunkIndex = 0;
+        playerStatus.textContent = 'Playback stopped: current item was removed.';
+      }
+      if (!playerQueue.length) {
+        setPlayerPlayPauseButtonState();
+        return removedCurrent;
+      }
+      playerQueue = playerQueue.filter(function(item) {
+        return !removedSet.has(String(item && item.id ? item.id : ''));
+      });
+      playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
+      if (playerQueue.length === 0) {
+        playerIndex = 0;
+        renderPlayerQueue();
+        renderPlayerText();
+        schedulePersistAppState();
+        return removedCurrent;
+      }
+      if (playerIndex >= playerQueue.length) playerIndex = playerQueue.length - 1;
+      renderPlayerQueue();
+      renderPlayerText();
+      if (!removedCurrent && options.autoloadCurrent) {
+        loadPlayerIndex(playerIndex, { autoplay: false });
+      }
+      schedulePersistAppState();
+      return removedCurrent;
+    }
+
+    function getPlayerChunkCacheKey(itemId, chunkIndex) {
+      return String(itemId || '') + '|' + String(chunkIndex || 0) + '|' + (settings.mockTts ? 'mock' : 'real') + '|' + String(settings.ttsVoice || 'nova');
+    }
+
+    async function fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex) {
+      var key = getPlayerChunkCacheKey(itemId, chunkIndex);
+      if (playerChunkBlobByKey[key]) return playerChunkBlobByKey[key];
+      if (playerChunkFetchByKey[key]) return playerChunkFetchByKey[key];
+      playerChunkFetchByKey[key] = (async function() {
+        var res = await fetch('/api/audio/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            articleId: item.id,
+            text: chunkText,
+            voice: settings.ttsVoice || 'nova',
+            speed: 1,
+            chunkIndex: chunkIndex,
+            mock: !!settings.mockTts,
+          }),
+        });
+        var ttsMockHeader = res.headers.get('X-TTS-Mock');
+        if (!res.ok) {
+          var errMsg = 'Audio failed (' + res.status + ')';
+          try {
+            var errJson = await res.json();
+            if (errJson && errJson.error) errMsg = errJson.error;
+          } catch (e) {
+            try {
+              var errText = await res.text();
+              if (errText) errMsg = errText;
+            } catch (e2) {}
+          }
+          throw new Error(errMsg);
+        }
+        var blob = await res.blob();
+        var packet = {
+          blob: blob,
+          isMock: ttsMockHeader === '1',
+          isReal: ttsMockHeader === '0',
+          key: key,
+        };
+        playerChunkBlobByKey[key] = packet;
+        return packet;
+      })().finally(function() {
+        delete playerChunkFetchByKey[key];
+      });
+      return playerChunkFetchByKey[key];
+    }
+
+    function prefetchPlayerChunk(item, itemId, chunks, chunkIndex) {
+      if (!item || !chunks || chunkIndex < 0 || chunkIndex >= chunks.length) return;
+      var chunkText = chunks[chunkIndex] || '';
+      if (!chunkText.trim()) return;
+      fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex).catch(function() {});
+    }
+
+    function snapshotPreviewItemsForStorage(items) {
+      if (!Array.isArray(items)) return [];
+      return items.map(function(item) {
+        return {
+          id: item && item.id,
+          title: item && item.title ? String(item.title) : '',
+          author: item && item.author ? String(item.author) : '',
+          site: item && item.site ? String(item.site) : '',
+          url: item && item.url ? String(item.url) : '',
+          thumbnail: item && item.thumbnail ? String(item.thumbnail) : '',
+          savedAt: item && item.savedAt ? String(item.savedAt) : '',
+          publishedAt: item && item.publishedAt ? String(item.publishedAt) : '',
+          searchable: item && item.searchable ? String(item.searchable) : '',
+          ttsPreview: item && item.ttsPreview ? String(item.ttsPreview) : '',
+          ttsFullText: item && item.ttsFullText ? String(item.ttsFullText).slice(0, 48000) : '',
+        };
+      });
+    }
+
+    function snapshotDeletedItemsForStorage(items) {
+      if (!Array.isArray(items)) return [];
+      return items.map(function(item) {
+        return {
+          id: item && item.id,
+          title: item && item.title ? String(item.title) : '',
+          author: item && item.author ? String(item.author) : '',
+          site: item && item.site ? String(item.site) : '',
+          url: item && item.url ? String(item.url) : '',
+          thumbnail: item && item.thumbnail ? String(item.thumbnail) : '',
+          savedAt: item && item.savedAt ? String(item.savedAt) : '',
+          publishedAt: item && item.publishedAt ? String(item.publishedAt) : '',
+          deletedAt: item && item.deletedAt ? String(item.deletedAt) : '',
+        };
+      });
+    }
+
+    function getPlayerQueueScrollTop() {
+      var scroller = playerQueueEl ? playerQueueEl.querySelector('.player-queue-scroll') : null;
+      return scroller ? Math.max(0, Number(scroller.scrollTop || 0)) : 0;
+    }
+
+    function persistAppState() {
+      try {
+        var payload = {
+          tab: currentTabName || 'cleanup',
+          location: locationSelect.value || '',
+          fromDate: fromDateInput.value || '',
+          toDate: toDateInput.value || '',
+          activeDateShortcutTarget: activeDateShortcutTarget || 'to',
+          lastQuery: lastQuery || null,
+          lastPreviewLoadedAt: Number(lastPreviewLoadedAt || 0),
+          currentCount: Number(currentCount || 0),
+          previewData: snapshotPreviewItemsForStorage(previewData),
+          selectedPreviewIds: Array.from(selectedPreviewIds || []),
+          previewPage: Number(previewPage || 1),
+          previewSearch: previewSearch || '',
+          previewSortMode: previewSortMode || 'added',
+          deletedItems: snapshotDeletedItemsForStorage(deletedItems),
+          selectedDeletedIds: Array.from(selectedDeletedIds || []),
+          deletedSearch: deletedSearch || '',
+          deletedSortMode: deletedSortMode || 'deleted',
+          playerQueue: snapshotPreviewItemsForStorage(playerQueue),
+          playerIndex: Number(playerIndex || 0),
+          playerEnabledIds: Array.from(playerEnabledIds || []),
+          playerSearch: playerSearch || '',
+          playerShowText: !!playerShowText,
+          playerSpeed: Number(parseFloat(playerSpeedSelect && playerSpeedSelect.value || '1')),
+          scroll: {
+            mainPane: Number(mainPane && mainPane.scrollTop || 0),
+            previewList: Number(previewList && previewList.scrollTop || 0),
+            deletedList: Number(deletedList && deletedList.scrollTop || 0),
+            playerQueue: getPlayerQueueScrollTop(),
+          },
+        };
+        localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(payload));
+      } catch (err) {}
+    }
+
+    function schedulePersistAppState() {
+      if (appStatePersistTimer) return;
+      appStatePersistTimer = setTimeout(function() {
+        appStatePersistTimer = null;
+        persistAppState();
+      }, 250);
+    }
+
+    function restoreAppState() {
+      try {
+        var raw = localStorage.getItem(APP_STATE_STORAGE_KEY);
+        if (!raw) return null;
+        var parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function persistPlayerState() {
+      try {
+        var payload = {
+          progressByItemId: playerProgressByItemId,
+          durationByItemId: playerDurationByItemId,
+          chunkDurationsByItemId: playerChunkDurationsByItemId,
+          chunkStateByItemId: playerChunkStateByItemId,
+          lastItemId: playerLastItemId || getCurrentPlayerItemId() || '',
+        };
+        localStorage.setItem(PLAYER_STATE_STORAGE_KEY, JSON.stringify(payload));
+      } catch (err) {}
+    }
+
+    function schedulePersistPlayerState() {
+      if (playerStatePersistTimer) return;
+      playerStatePersistTimer = setTimeout(function() {
+        playerStatePersistTimer = null;
+        persistPlayerState();
+      }, 250);
+    }
+
+    function restorePlayerState() {
+      try {
+        var raw = localStorage.getItem(PLAYER_STATE_STORAGE_KEY);
+        if (!raw) return;
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.progressByItemId && typeof parsed.progressByItemId === 'object') {
+            playerProgressByItemId = parsed.progressByItemId;
+          }
+          if (parsed.durationByItemId && typeof parsed.durationByItemId === 'object') {
+            playerDurationByItemId = parsed.durationByItemId;
+          }
+          if (parsed.chunkDurationsByItemId && typeof parsed.chunkDurationsByItemId === 'object') {
+            playerChunkDurationsByItemId = parsed.chunkDurationsByItemId;
+          }
+          if (parsed.chunkStateByItemId && typeof parsed.chunkStateByItemId === 'object') {
+            playerChunkStateByItemId = parsed.chunkStateByItemId;
+          }
+          if (typeof parsed.lastItemId === 'string') {
+            playerLastItemId = parsed.lastItemId;
+          }
+        }
+      } catch (err) {}
+    }
+
+    function applyRestoredAppState(state) {
+      if (!state || typeof state !== 'object') return;
+      var hasLocation = Array.from(locationSelect.options || []).some(function(opt) {
+        return opt && opt.value === state.location;
+      });
+      if (hasLocation) locationSelect.value = state.location;
+      if (typeof state.fromDate === 'string') fromDateInput.value = state.fromDate;
+      if (typeof state.toDate === 'string') toDateInput.value = state.toDate;
+      if (state.activeDateShortcutTarget === 'from' || state.activeDateShortcutTarget === 'to') {
+        activeDateShortcutTarget = state.activeDateShortcutTarget;
+      }
+
+      if (Array.isArray(state.previewData)) previewData = snapshotPreviewItemsForStorage(state.previewData);
+      if (Array.isArray(state.selectedPreviewIds)) {
+        var validPreviewIds = new Set(previewData.map(function(item) { return String(item.id); }));
+        selectedPreviewIds = new Set(state.selectedPreviewIds.map(String).filter(function(id) { return validPreviewIds.has(id); }));
+      }
+      if (typeof state.previewPage === 'number' && state.previewPage > 0) previewPage = Math.floor(state.previewPage);
+      if (typeof state.previewSearch === 'string') {
+        previewSearch = state.previewSearch.toLowerCase();
+        previewSearchInput.value = state.previewSearch;
+      }
+      if (state.previewSortMode === 'added' || state.previewSortMode === 'published') {
+        previewSortMode = state.previewSortMode;
+      }
+      if (typeof state.currentCount === 'number') currentCount = Math.max(0, Math.floor(state.currentCount));
+      if (typeof state.lastQuery === 'string' && state.lastQuery) lastQuery = state.lastQuery;
+      if (typeof state.lastPreviewLoadedAt === 'number' && Number.isFinite(state.lastPreviewLoadedAt)) {
+        lastPreviewLoadedAt = Math.max(0, Math.floor(state.lastPreviewLoadedAt));
+      }
+
+      if (Array.isArray(state.deletedItems)) deletedItems = snapshotDeletedItemsForStorage(state.deletedItems);
+      if (Array.isArray(state.selectedDeletedIds)) {
+        var validDeletedIds = new Set(deletedItems.map(getDeletedItemKey));
+        selectedDeletedIds = new Set(state.selectedDeletedIds.map(String).filter(function(id) { return validDeletedIds.has(id); }));
+      }
+      if (typeof state.deletedSearch === 'string') {
+        deletedSearch = state.deletedSearch.toLowerCase();
+        deletedSearchInput.value = state.deletedSearch;
+      }
+      if (state.deletedSortMode === 'added' || state.deletedSortMode === 'published' || state.deletedSortMode === 'deleted') {
+        deletedSortMode = state.deletedSortMode;
+      }
+
+      if (Array.isArray(state.playerQueue) && state.playerQueue.length > 0) {
+        playerQueue = snapshotPreviewItemsForStorage(state.playerQueue);
+        playerEnabledIds = Array.isArray(state.playerEnabledIds)
+          ? new Set(state.playerEnabledIds.map(String))
+          : new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
+        if (typeof state.playerIndex === 'number') {
+          playerIndex = Math.max(0, Math.min(playerQueue.length - 1, Math.floor(state.playerIndex)));
+        } else {
+          playerIndex = 0;
+        }
+        if (typeof state.playerSearch === 'string') {
+          playerSearch = state.playerSearch.toLowerCase();
+          playerSearchInput.value = state.playerSearch;
+        }
+        playerShowText = !!state.playerShowText;
+      }
+      var restoredSpeed = Number(state.playerSpeed || 0);
+      if (restoredSpeed > 0 && playerSpeedSelect) {
+        var hasSpeed = Array.from(playerSpeedSelect.options || []).some(function(opt) {
+          return opt && Number(opt.value) === restoredSpeed;
+        });
+        if (hasSpeed) playerSpeedSelect.value = String(restoredSpeed);
+      }
+
+      itemCountEl.textContent = currentCount;
+      locationDisplay.textContent = locationSelect.value || '-';
+      previewTopControls.style.display = previewData.length > 0 ? 'flex' : 'none';
+      previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
+      renderPreview();
+      updateDeletedBadge();
+      renderDeletedItems();
+      renderPlayerQueue();
+      renderPlayerText();
+
+      var pathTab = getTabFromPath(window.location.pathname);
+      var restoredTab = typeof state.tab === 'string' ? state.tab : '';
+      var tabToUse = pathTab !== 'cleanup' ? pathTab : (TAB_ROUTES[restoredTab] ? restoredTab : 'cleanup');
+      setActiveTab(tabToUse, { push: false, syncPlayerFromSelection: false });
+
+      if (state.scroll && typeof state.scroll === 'object') {
+        setTimeout(function() {
+          if (mainPane) mainPane.scrollTop = Number(state.scroll.mainPane || 0);
+          if (previewList) previewList.scrollTop = Number(state.scroll.previewList || 0);
+          if (deletedList) deletedList.scrollTop = Number(state.scroll.deletedList || 0);
+          var scroller = playerQueueEl ? playerQueueEl.querySelector('.player-queue-scroll') : null;
+          if (scroller) scroller.scrollTop = Number(state.scroll.playerQueue || 0);
+        }, 0);
+      }
+      schedulePersistAppState();
+    }
+
+    function saveCurrentPlayerProgress() {
+      if (!playerAudio || !playerAudio.src) return;
+      var itemId = playerLoadedItemId || getCurrentPlayerItemId();
+      if (!itemId) return;
+      var current = Number(playerAudio.currentTime || 0);
+      if (Number.isFinite(current) && current >= 0) {
+        var chunkOffset = getChunkOffsetSeconds(itemId, playerLoadedChunkIndex || 0);
+        var absolute = chunkOffset + current;
+        playerProgressByItemId[itemId] = absolute;
+        playerChunkStateByItemId[itemId] = {
+          chunkIndex: playerLoadedChunkIndex || 0,
+          chunkTime: current,
+        };
+        playerDurationByItemId[itemId] = Math.max(
+          Number(playerDurationByItemId[itemId] || 0),
+          sumKnownChunkDurations(itemId),
+          absolute
+        );
+        playerLastItemId = itemId;
+        schedulePersistPlayerState();
+        updatePlayerRowProgressUI(itemId);
+        schedulePersistAppState();
+      }
+    }
+
+    function updatePlayerRowProgressUI(itemId) {
+      var item = itemId || (playerLoadedItemId || getCurrentPlayerItemId());
+      if (!item) return;
+      var queueIdx = playerQueue.findIndex(function(it, idx) { return getPlayerItemId(it, idx) === item; });
+      var queueItem = queueIdx >= 0 ? playerQueue[queueIdx] : null;
+      var progressSeconds = Number(playerProgressByItemId[item] || 0);
+      var durationSeconds = queueItem
+        ? getEstimatedTotalDurationSeconds(queueItem, item)
+        : Math.max(Number(playerDurationByItemId[item] || 0), sumKnownChunkDurations(item));
+      var progressPct = 0;
+      if (durationSeconds > 0) {
+        progressPct = Math.max(0, Math.min(100, (progressSeconds / durationSeconds) * 100));
+      } else if (progressSeconds > 0) {
+        progressPct = Math.max(0, Math.min(100, (progressSeconds / 60) * 100));
+      }
+      playerQueueEl.querySelectorAll('.player-row-progress-fill').forEach(function(el) {
+        if (String(el.dataset.itemId || '') === item) {
+          el.style.width = progressPct.toFixed(1) + '%';
+        }
+      });
+    }
+
+    function buildPlayerSearchText(item) {
+      return [
+        item && item.title ? item.title : '',
+        item && item.author ? item.author : '',
+        item && item.site ? item.site : '',
+        item && item.url ? item.url : '',
+      ].join(' ').toLowerCase();
+    }
+
+    function getFilteredPlayerIndices() {
+      var term = (playerSearch || '').trim().toLowerCase();
+      var indices = [];
+      for (var i = 0; i < playerQueue.length; i++) {
+        if (!term || buildPlayerSearchText(playerQueue[i]).includes(term)) {
+          indices.push(i);
+        }
+      }
+      return indices;
+    }
+
+    function estimateChunkDurationSeconds(item, itemId, chunkIndex, chunks) {
+      var durationMap = getChunkDurationMap(itemId);
+      var known = Number(durationMap[chunkIndex] || 0);
+      if (Number.isFinite(known) && known > 0) return known;
+      var knownChars = 0;
+      var knownSeconds = 0;
+      for (var i = 0; i < chunks.length; i++) {
+        var d = Number(durationMap[i] || 0);
+        if (Number.isFinite(d) && d > 0) {
+          knownSeconds += d;
+          knownChars += String(chunks[i] || '').length;
+        }
+      }
+      var charsPerSecond = knownSeconds > 0 && knownChars > 0 ? (knownChars / knownSeconds) : 16;
+      charsPerSecond = Math.max(10, Math.min(26, charsPerSecond));
+      var chunkChars = String(chunks[chunkIndex] || '').length;
+      if (chunkChars <= 0) return 1;
+      return Math.max(1, chunkChars / charsPerSecond);
+    }
+
+    function getEstimatedTotalDurationSeconds(item, itemId) {
+      var chunks = getPlayerItemChunks(item);
+      if (!chunks.length) return 0;
+      var total = 0;
+      for (var i = 0; i < chunks.length; i++) {
+        total += estimateChunkDurationSeconds(item, itemId, i, chunks);
+      }
+      return Math.max(total, Number(playerDurationByItemId[itemId] || 0), sumKnownChunkDurations(itemId));
+    }
+
+    function getEstimatedSeekPoint(item, itemId, targetSeconds) {
+      var chunks = getPlayerItemChunks(item);
+      if (!chunks.length) return { chunkIndex: 0, chunkTime: 0, total: 0 };
+      var remaining = Math.max(0, targetSeconds);
+      for (var i = 0; i < chunks.length; i++) {
+        var duration = estimateChunkDurationSeconds(item, itemId, i, chunks);
+        if (remaining <= duration || i === chunks.length - 1) {
+          return {
+            chunkIndex: i,
+            chunkTime: Math.max(0, Math.min(duration - 0.1, remaining)),
+            total: getEstimatedTotalDurationSeconds(item, itemId),
+          };
+        }
+        remaining -= duration;
+      }
+      return { chunkIndex: chunks.length - 1, chunkTime: 0, total: getEstimatedTotalDurationSeconds(item, itemId) };
+    }
+
+    function seekPlayerQueueRowProgress(queueIdx, ratio) {
+      var idx = Number(queueIdx);
+      if (!Number.isFinite(idx) || idx < 0 || idx >= playerQueue.length) return;
+      var item = playerQueue[idx];
+      var itemId = getPlayerItemId(item, idx);
+      var total = getEstimatedTotalDurationSeconds(item, itemId);
+      if (!(total > 0)) return;
+      var clampedRatio = Math.max(0, Math.min(1, Number(ratio || 0)));
+      var targetSeconds = total * clampedRatio;
+      var seekPoint = getEstimatedSeekPoint(item, itemId, targetSeconds);
+      playerProgressByItemId[itemId] = targetSeconds;
+      playerChunkStateByItemId[itemId] = {
+        chunkIndex: seekPoint.chunkIndex,
+        chunkTime: seekPoint.chunkTime,
+      };
+      schedulePersistPlayerState();
+      updatePlayerRowProgressUI(itemId);
+      if (idx === playerIndex) {
+        var shouldAutoplay = !!(playerAudio && playerAudio.src && !playerAudio.paused);
+        loadPlayerIndex(idx, { chunkIndex: seekPoint.chunkIndex, seekSeconds: seekPoint.chunkTime, autoplay: shouldAutoplay });
+      } else {
+        renderPlayerQueue();
+      }
+      schedulePersistAppState();
+    }
+
     function renderPlayerQueue() {
       if (playerQueue.length === 0) {
         playerQueueEl.innerHTML = '<div class="history-item">No queued items.</div>';
+        playerCurrentHeader.style.display = 'none';
         playerCurrentTitle.textContent = '';
+        playerCurrentAuthor.textContent = '';
         playerStatus.textContent = 'Queue is empty.';
+        playerTtsModeEl.style.display = settings.mockTts ? 'block' : 'none';
+        playerTtsModeEl.textContent = settings.mockTts ? 'TTS mode: mock clip' : '';
+        playerLoadedItemId = '';
+        playerCurrentText.style.display = 'none';
+        playerCurrentText.textContent = '';
+        playerTextToggleBtn.textContent = 'Text';
+        playerSelectAll.checked = false;
+        playerSelectAll.indeterminate = false;
+        playerSelectAll.disabled = true;
+        updateRailSelectionBadges();
+        schedulePersistAppState();
         return;
       }
-      playerStatus.textContent = 'Item ' + (playerIndex + 1) + ' of ' + playerQueue.length;
-      playerCurrentTitle.textContent = playerQueue[playerIndex].title || 'Untitled';
-      playerQueueEl.innerHTML = playerQueue.map(function(item, idx) {
-        var prefix = idx === playerIndex ? '▶ ' : '';
+      playerSelectAll.disabled = false;
+      playerStatus.textContent = '';
+      var currentItem = playerQueue[playerIndex] || {};
+      playerCurrentHeader.style.display = 'flex';
+      playerCurrentTitle.textContent = currentItem.title || 'Untitled';
+      playerCurrentAuthor.textContent = currentItem.author ? ('By ' + currentItem.author) : (currentItem.site || '');
+      if (currentItem.thumbnail) {
+        playerCurrentThumb.src = currentItem.thumbnail;
+        playerCurrentThumb.style.display = 'inline-flex';
+        playerCurrentThumbFallback.style.display = 'none';
+      } else {
+        playerCurrentThumb.removeAttribute('src');
+        playerCurrentThumb.style.display = 'none';
+        playerCurrentThumbFallback.style.display = 'inline-flex';
+      }
+      var filteredIndices = getFilteredPlayerIndices();
+      if (filteredIndices.length === 0) {
+        playerQueueEl.innerHTML = '<div class="history-item">No queued items match this filter.</div>';
+        playerSelectAll.checked = false;
+        playerSelectAll.indeterminate = false;
+        updateRailSelectionBadges();
+        schedulePersistAppState();
+        return;
+      }
+
+      var filteredSelected = filteredIndices.filter(function(idx) {
+        return playerEnabledIds.has(getPlayerQueueId(playerQueue[idx], idx));
+      }).length;
+      playerSelectAll.checked = filteredSelected > 0 && filteredSelected === filteredIndices.length;
+      playerSelectAll.indeterminate = filteredSelected > 0 && filteredSelected < filteredIndices.length;
+
+      playerQueueEl.innerHTML = '<div class="player-queue-scroll">' + filteredIndices.map(function(idx) {
+        var item = playerQueue[idx];
+        var isCurrent = idx === playerIndex;
+        var prefix = isCurrent ? '▶ ' : '';
         var queueId = getPlayerQueueId(item, idx);
+        var itemId = getPlayerItemId(item, idx);
         var checked = playerEnabledIds.has(queueId) ? ' checked' : '';
-        var itemClass = idx === playerIndex ? 'history-item current player-queue-row' : 'history-item player-queue-row';
-        return '<div class="' + itemClass + '">' +
+        var itemClass = isCurrent ? 'history-item current player-queue-row' : 'history-item player-queue-row';
+        var progressSeconds = Number(playerProgressByItemId[itemId] || 0);
+        var durationSeconds = getEstimatedTotalDurationSeconds(item, itemId);
+        var progressPct = 0;
+        if (durationSeconds > 0) {
+          progressPct = Math.max(0, Math.min(100, (progressSeconds / durationSeconds) * 100));
+        } else if (progressSeconds > 0) {
+          progressPct = Math.max(0, Math.min(100, (progressSeconds / 60) * 100));
+        }
+        return '<div class="swipe-item ' + itemClass + '" data-queue-id="' + escapeHtml(queueId) + '" data-queue-idx="' + idx + '">' +
+          '<div class="swipe-bg right">Delete</div>' +
+          '<div class="swipe-bg left">Archive</div>' +
+          '<div class="article-item swipe-content"' +
+          ' onpointerdown="handlePlayerPointerDown(event,this)"' +
+          ' onpointermove="handlePlayerPointerMove(event,this)"' +
+          ' onpointerup="handlePlayerPointerUp(event,this)"' +
+          ' onpointercancel="handlePlayerPointerCancel(event,this)">' +
           '<label class="checkbox-label" style="gap:0.35rem;">' +
           '<input type="checkbox" class="player-queue-check" data-queue-id="' + escapeHtml(queueId) + '"' + checked + '>' +
           '</label>' +
-          '<button type="button" class="text-preview-toggle player-queue-jump" data-queue-idx="' + idx + '" style="text-align:left;flex:1;">' + escapeHtml(prefix + (item.title || 'Untitled')) + '</button>' +
+          (item.thumbnail
+            ? '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
+            : '<span class="preview-thumb-fallback">No image</span>') +
+          '<div class="article-info">' +
+          '<div class="title-row">' +
+          '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span>' +
+          '<button type="button" class="text-preview-toggle player-queue-jump" data-queue-idx="' + idx + '" style="text-align:left; width:100%;">' + escapeHtml(prefix + (item.title || 'Untitled')) + (isCurrent ? '<span class="now-playing-badge">Now Playing</span>' : '') + '</button>' +
+          '</div>' +
+          '<span class="article-date-right">Added ' + escapeHtml(formatDate(item.savedAt || '')) + '</span>' +
+          '</div>' +
+          '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site || '') + '</span>' + (item.author ? ' by ' + escapeHtml(item.author) : '') + '</div>' +
+          '<div class="player-row-progress" data-queue-idx="' + idx + '" data-item-id="' + escapeHtml(itemId) + '" title="' + Math.round(progressSeconds) + 's listened / ~' + Math.round(durationSeconds) + 's">' +
+          '<div class="player-row-progress-fill" data-item-id="' + escapeHtml(itemId) + '" style="width:' + progressPct.toFixed(1) + '%;"></div>' +
+          '</div>' +
+          '</div>' +
+          '</div>' +
           '</div>';
-      }).join('');
+      }).join('') + '</div>';
       playerQueueEl.querySelectorAll('.player-queue-check').forEach(function(cb) {
         on(cb, 'change', function() {
           var queueId = String(cb.dataset.queueId || '');
@@ -2808,6 +4095,7 @@ const HTML_APP = `<!DOCTYPE html>
             playerEnabledIds.add(queueId);
             showToast('At least one item must remain selected', 'warning');
           }
+          renderPlayerQueue();
         });
       });
       playerQueueEl.querySelectorAll('.player-queue-jump').forEach(function(btn) {
@@ -2819,42 +4107,130 @@ const HTML_APP = `<!DOCTYPE html>
       playerQueueEl.querySelectorAll('.player-queue-row').forEach(function(row) {
         on(row, 'click', function(evt) {
           if (evt.target && evt.target.closest && evt.target.closest('.player-queue-check')) return;
+          if (row.dataset.suppressClick === '1') {
+            row.dataset.suppressClick = '';
+            return;
+          }
           var jumpBtn = row.querySelector('.player-queue-jump');
           if (!jumpBtn) return;
           var idx = parseInt(jumpBtn.dataset.queueIdx, 10);
           if (Number.isFinite(idx)) loadPlayerIndex(idx);
         });
       });
+      playerQueueEl.querySelectorAll('.player-row-progress').forEach(function(el) {
+        on(el, 'click', function(evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          if (!el.getBoundingClientRect) return;
+          var rect = el.getBoundingClientRect();
+          var rel = rect.width > 0 ? (evt.clientX - rect.left) / rect.width : 0;
+          var idx = parseInt(el.dataset.queueIdx, 10);
+          seekPlayerQueueRowProgress(idx, rel);
+        });
+      });
+      updateRailSelectionBadges();
+      schedulePersistAppState();
     }
 
-    async function loadPlayerIndex(idx) {
+    function renderPlayerText() {
+      if (playerQueue.length === 0) {
+        playerCurrentText.style.display = 'none';
+        playerCurrentText.textContent = '';
+        playerTextToggleBtn.textContent = 'Text';
+        schedulePersistAppState();
+        return;
+      }
+      var item = playerQueue[playerIndex] || {};
+      playerCurrentText.textContent = item.ttsFullText || item.ttsPreview || 'No extracted text available.';
+      playerCurrentText.style.display = playerShowText ? 'block' : 'none';
+      playerTextToggleBtn.textContent = playerShowText ? 'Hide text' : 'Text';
+      schedulePersistAppState();
+    }
+
+    async function loadPlayerIndex(idx, options) {
       if (idx < 0 || idx >= playerQueue.length) return;
+      var opts = options || {};
+      var loadToken = ++playerLoadToken;
+
+      saveCurrentPlayerProgress();
       playerIndex = idx;
       renderPlayerQueue();
+      renderPlayerText();
+
       var item = playerQueue[playerIndex];
+      var itemId = getPlayerItemId(item, playerIndex);
+      var chunks = getPlayerItemChunks(item);
+      var defaultResume = resolvePlayerResumePoint(itemId, chunks.length);
+      var chunkIndex = Number.isFinite(opts.chunkIndex) ? Math.max(0, Math.min(chunks.length - 1, parseInt(opts.chunkIndex, 10))) : defaultResume.chunkIndex;
+      var resumeAt = Number.isFinite(opts.seekSeconds) ? Math.max(0, Number(opts.seekSeconds)) : defaultResume.chunkTime;
+      var chunkText = chunks[chunkIndex] || '';
+      if (!chunkText.trim()) {
+        chunkText = (item && item.title) ? String(item.title) : 'Untitled';
+      }
+
+      playerLastItemId = itemId;
+      playerLoadedItemId = itemId;
+      playerLoadedChunkIndex = chunkIndex;
+      playerChunkStateByItemId[itemId] = {
+        chunkIndex: chunkIndex,
+        chunkTime: resumeAt,
+      };
+      schedulePersistPlayerState();
+      schedulePersistAppState();
+      setPlayerPlayPauseButtonState();
+
       try {
-        playerStatus.textContent = 'Loading audio...';
-        var res = await fetch('/api/audio/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            articleId: item.id,
-            text: item.ttsPreview || item.title || '',
-            speed: parseFloat(playerSpeedSelect.value || '1'),
-          }),
-        });
-        if (!res.ok) {
-          var text = await res.text();
-          throw new Error(text || ('Audio failed (' + res.status + ')'));
+        playerStatus.textContent = 'Loading audio chunk ' + (chunkIndex + 1) + ' of ' + chunks.length + '...';
+        clearPlayerAudioSource();
+        var packet = await fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex);
+        if (loadToken !== playerLoadToken) return;
+        if (packet.isMock) {
+          playerTtsModeEl.style.display = 'block';
+          playerTtsModeEl.textContent = 'TTS mode: mock clip';
+          if (!settings.mockTts) {
+            showToast('Server returned mock TTS while mock mode is off. Check settings/save state.', 'warning');
+          }
+        } else {
+          playerTtsModeEl.style.display = 'none';
+          playerTtsModeEl.textContent = '';
         }
-        var blob = await res.blob();
-        var objectUrl = URL.createObjectURL(blob);
-        playerAudio.src = objectUrl;
+        if (loadToken !== playerLoadToken) return;
+        playerAudioObjectUrl = URL.createObjectURL(packet.blob);
+        playerAudio.src = playerAudioObjectUrl;
         playerAudio.playbackRate = parseFloat(playerSpeedSelect.value || '1');
-        await playerAudio.play();
+        await new Promise(function(resolve) {
+          var applySeek = function() {
+            var duration = Number(playerAudio.duration || 0);
+            if (duration > 0) {
+              var durationMap = getChunkDurationMap(itemId);
+              durationMap[chunkIndex] = duration;
+              playerDurationByItemId[itemId] = Math.max(Number(playerDurationByItemId[itemId] || 0), sumKnownChunkDurations(itemId));
+            }
+            var target = duration > 0 ? Math.min(resumeAt, Math.max(0, duration - 0.1)) : resumeAt;
+            try { playerAudio.currentTime = Math.max(0, target); } catch (e) {}
+            resolve();
+          };
+          if (playerAudio.readyState >= 1) {
+            applySeek();
+          } else {
+            playerAudio.addEventListener('loadedmetadata', applySeek, { once: true });
+          }
+        });
+        if (loadToken !== playerLoadToken) return;
+        if (opts.autoplay !== false) {
+          await playerAudio.play();
+        } else {
+          setPlayerPlayPauseButtonState();
+        }
+        prefetchPlayerChunk(item, itemId, chunks, chunkIndex + 1);
         renderPlayerQueue();
       } catch (err) {
+        if (loadToken !== playerLoadToken) return;
         playerStatus.textContent = err.message || 'Audio load failed';
+        playerTtsModeEl.style.display = 'block';
+        playerTtsModeEl.textContent = 'TTS mode: error';
+        setPlayerPlayPauseButtonState();
+        showToast(playerStatus.textContent, 'error');
       }
     }
 
@@ -2862,9 +4238,14 @@ const HTML_APP = `<!DOCTYPE html>
       if (!Array.isArray(items) || items.length === 0) return;
       playerQueue = items.slice();
       playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
-      playerIndex = 0;
+      var restoreId = playerLastItemId || '';
+      var restoreIdx = playerQueue.findIndex(function(item, idx) { return getPlayerItemId(item, idx) === restoreId; });
+      playerIndex = restoreIdx >= 0 ? restoreIdx : 0;
+      playerShowText = false;
+      playerSearch = '';
+      playerSearchInput.value = '';
       setActiveTab('player', { push: true });
-      loadPlayerIndex(0);
+      loadPlayerIndex(playerIndex);
     }
 
     function getPlayerQueueId(item, idx) {
@@ -2883,6 +4264,32 @@ const HTML_APP = `<!DOCTYPE html>
         if (playerEnabledIds.has(getPlayerQueueId(playerQueue[i], i))) return i;
       }
       return -1;
+    }
+
+    function removePlayerQueueIndex(idx) {
+      if (idx < 0 || idx >= playerQueue.length) return;
+      playerQueue.splice(idx, 1);
+      playerEnabledIds = new Set(playerQueue.map(function(item, qIdx) { return getPlayerQueueId(item, qIdx); }));
+      if (playerQueue.length === 0) {
+        playerIndex = 0;
+        clearPlayerAudioSource();
+        playerLoadedItemId = '';
+        playerLoadedChunkIndex = 0;
+        renderPlayerQueue();
+        renderPlayerText();
+        return;
+      }
+      if (idx < playerIndex) playerIndex -= 1;
+      if (playerIndex >= playerQueue.length) playerIndex = playerQueue.length - 1;
+    }
+
+    async function runPlayerItemAction(idx, action) {
+      var item = playerQueue[idx];
+      if (!item || !item.id) return false;
+      var result = await performCleanup(action, true, [String(item.id)]);
+      if (!result || !result.ok) return false;
+      syncPlayerQueueAfterProcessedIds(result.processedIds || [String(item.id)]);
+      return true;
     }
 
     on(playerPrevBtn, 'click', function() {
@@ -2907,19 +4314,117 @@ const HTML_APP = `<!DOCTYPE html>
     on(playerSpeedSelect, 'change', function() {
       var speed = parseFloat(playerSpeedSelect.value || '1');
       playerAudio.playbackRate = speed;
+      schedulePersistAppState();
     });
-    on(playerAudio, 'ended', function() {
-      if (!playerAutoNextCheckbox.checked) return;
+    on(playerTextToggleBtn, 'click', function() {
+      playerShowText = !playerShowText;
+      renderPlayerText();
+    });
+    on(playerSelectAll, 'change', function() {
+      var filteredIndices = getFilteredPlayerIndices();
+      if (filteredIndices.length === 0) return;
+      var shouldSelectAll = filteredIndices.some(function(idx) {
+        return !playerEnabledIds.has(getPlayerQueueId(playerQueue[idx], idx));
+      });
+      filteredIndices.forEach(function(idx) {
+        var queueId = getPlayerQueueId(playerQueue[idx], idx);
+        if (shouldSelectAll) playerEnabledIds.add(queueId);
+        else playerEnabledIds.delete(queueId);
+      });
+      if (playerEnabledIds.size === 0) {
+        var currentQueueId = getCurrentPlayerQueueId();
+        if (currentQueueId) playerEnabledIds.add(currentQueueId);
+      }
+      renderPlayerQueue();
+    });
+    on(playerSearchInput, 'input', function() {
+      playerSearch = String(playerSearchInput.value || '').trim().toLowerCase();
+      renderPlayerQueue();
+    });
+    on(playerSearchClearBtn, 'click', function() {
+      playerSearch = '';
+      playerSearchInput.value = '';
+      renderPlayerQueue();
+      playerSearchInput.focus();
+    });
+    on(playerAudio, 'ended', async function() {
+      saveCurrentPlayerProgress();
+      setPlayerPlayPauseButtonState();
+      if (playerIndex >= 0 && playerIndex < playerQueue.length) {
+        var currentItem = playerQueue[playerIndex];
+        var currentItemId = getPlayerItemId(currentItem, playerIndex);
+        var chunks = getPlayerItemChunks(currentItem);
+        var currentChunkIndex = playerLoadedChunkIndex || 0;
+        if (currentChunkIndex + 1 < chunks.length) {
+          await loadPlayerIndex(playerIndex, { chunkIndex: currentChunkIndex + 1, seekSeconds: 0, autoplay: true });
+          return;
+        }
+        playerChunkStateByItemId[currentItemId] = { chunkIndex: chunks.length - 1, chunkTime: Number(playerAudio.duration || 0) };
+        playerProgressByItemId[currentItemId] = Math.max(
+          Number(playerProgressByItemId[currentItemId] || 0),
+          sumKnownChunkDurations(currentItemId)
+        );
+      }
+      var action = settings.playerAutoAction || 'none';
+      var currentIdx = playerIndex;
+      var removedCurrent = false;
+      if (action === 'archive' || action === 'delete') {
+        removedCurrent = await runPlayerItemAction(currentIdx, action);
+      }
+      if (!playerAutoNextCheckbox.checked && !settings.playerAutoNext) return;
+      if (playerQueue.length === 0) return;
+      if (removedCurrent && playerIndex < playerQueue.length) {
+        await loadPlayerIndex(playerIndex);
+        return;
+      }
       var nextIdx = findNextPlayableIndex(playerIndex);
       if (nextIdx >= 0) {
-        loadPlayerIndex(nextIdx);
+        await loadPlayerIndex(nextIdx);
       }
+    });
+    on(playerAudio, 'timeupdate', function() {
+      saveCurrentPlayerProgress();
+    });
+    on(playerAudio, 'play', function() {
+      setPlayerPlayPauseButtonState();
+    });
+    on(playerAudio, 'pause', function() {
+      setPlayerPlayPauseButtonState();
+    });
+    on(playerAudio, 'loadedmetadata', function() {
+      var itemId = playerLoadedItemId || getCurrentPlayerItemId();
+      if (!itemId) return;
+      var duration = Number(playerAudio.duration || 0);
+      if (duration > 0) {
+        var durationMap = getChunkDurationMap(itemId);
+        durationMap[playerLoadedChunkIndex || 0] = duration;
+        playerDurationByItemId[itemId] = Math.max(
+          Number(playerDurationByItemId[itemId] || 0),
+          sumKnownChunkDurations(itemId)
+        );
+        schedulePersistPlayerState();
+        updatePlayerRowProgressUI(itemId);
+      }
+      setPlayerPlayPauseButtonState();
+    });
+    on(window, 'beforeunload', function() {
+      saveCurrentPlayerProgress();
+      persistPlayerState();
+      persistAppState();
+    });
+    on(mainPane, 'scroll', function() { schedulePersistAppState(); });
+    on(previewList, 'scroll', function() { schedulePersistAppState(); });
+    on(deletedList, 'scroll', function() { schedulePersistAppState(); });
+    on(playerQueueEl, 'scroll', function() { schedulePersistAppState(); });
+    on(playerAutoNextCheckbox, 'change', function() {
+      settings.playerAutoNext = !!playerAutoNextCheckbox.checked;
+      schedulePersistAppState();
     });
 
     async function performCleanup(action, skipConfirm, forcedIds) {
       if (cleanupInFlight) {
         showToast('Please wait for the current action to finish', 'warning');
-        return;
+        return { ok: false, reason: 'in_flight' };
       }
       var activeSelectedIds = Array.isArray(forcedIds) && forcedIds.length > 0
         ? Array.from(new Set(forcedIds.map(function(id) { return String(id); })))
@@ -2927,11 +4432,11 @@ const HTML_APP = `<!DOCTYPE html>
       var selectedCount = activeSelectedIds.length;
       if (selectedCount === 0) {
         showToast('Select at least one item first', 'warning');
-        return;
+        return { ok: false, reason: 'none_selected' };
       }
       if (settings.confirmActions && !skipConfirm) {
         var confirmed = window.confirm('Confirm ' + action + ' for ' + selectedCount + ' selected items?');
-        if (!confirmed) return;
+        if (!confirmed) return { ok: false, reason: 'cancelled' };
       }
 
       deleteBtn.disabled = true;
@@ -2954,7 +4459,8 @@ const HTML_APP = `<!DOCTYPE html>
               url: item.url || '',
               savedAt: item.savedAt || '',
               publishedAt: item.publishedAt || null,
-              thumbnail: item.thumbnail || null
+              thumbnail: item.thumbnail || null,
+              originalLocation: item.originalLocation || null
             };
           });
 
@@ -3000,13 +4506,11 @@ const HTML_APP = `<!DOCTYPE html>
         };
 
         document.getElementById('progress-bar').style.width = '100%';
+        var actionPrefix = getActionPastTense(action) + ' ';
         if (data.processed < selectedCount) {
-          showToast(
-            (action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' of ' + selectedCount + ' items',
-            'warning'
-          );
+          showToast(actionPrefix + data.processed + ' of ' + selectedCount + ' items', 'warning');
         } else {
-          showToast((action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' items', 'success');
+          showToast(actionPrefix + data.processed + ' items', 'success');
         }
 
         var successfulIds = new Set(
@@ -3023,11 +4527,15 @@ const HTML_APP = `<!DOCTYPE html>
         }
 
         if (successfulIds.size > 0) {
+          var removedFromPlayer = syncPlayerQueueAfterProcessedIds(Array.from(successfulIds));
           previewData = previewData.filter(function(item) {
             return !successfulIds.has(String(item.id));
           });
           successfulIds.forEach(function(id) { selectedPreviewIds.delete(String(id)); });
           currentCount = Math.max(0, currentCount - successfulIds.size);
+          if (removedFromPlayer) {
+            showToast('Stopped playback because current item was ' + action + 'd', 'warning');
+          }
         }
 
         if (previewData.length === 0) {
@@ -3050,8 +4558,10 @@ const HTML_APP = `<!DOCTYPE html>
         document.getElementById('progress').style.display = 'none';
         document.getElementById('progress-bar').style.width = '0%';
         loadDeletedCount();
+        return { ok: true, processedIds: Array.from(successfulIds) };
       } catch (err) {
         showToast(err.message, 'error');
+        return { ok: false, reason: 'error', error: err };
       } finally {
         cleanupInFlight = false;
         deleteBtn.disabled = false;
@@ -3087,6 +4597,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (checkbox.checked) selectedDeletedIds.add(itemId);
       else selectedDeletedIds.delete(itemId);
       updateSelectedButtons();
+      schedulePersistAppState();
     }
     window.toggleRestoreItem = toggleRestoreItem;
 
@@ -3230,12 +4741,14 @@ const HTML_APP = `<!DOCTYPE html>
       if (deletedItems.length === 0) {
         deletedList.innerHTML = '<div class="empty">No deleted items in history</div>';
         updateSelectedButtons();
+        schedulePersistAppState();
         return;
       }
       var filtered = getFilteredDeletedItems();
       if (filtered.length === 0) {
         deletedList.innerHTML = '<div class="empty">No deleted items match this filter</div>';
         updateSelectedButtons();
+        schedulePersistAppState();
         return;
       }
       var sorted = filtered.slice().sort(function(a, b) {
@@ -3272,6 +4785,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
       });
       updateSelectedButtons();
+      schedulePersistAppState();
     }
 
     on(restoreBtn, 'click', async function() {
@@ -3341,9 +4855,12 @@ const HTML_APP = `<!DOCTYPE html>
         previewLimit: parseInt(settingsPreviewLimit.value, 10),
         confirmActions: !!settingsConfirmActions.checked,
         mockTts: !!settingMockTts.checked,
+        ttsVoice: (settingTtsVoice && settingTtsVoice.value) || 'nova',
         audioBackSeconds: parseInt(settingAudioBackSeconds.value, 10),
         audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10),
-        maxOpenTabs: parseInt(settingMaxOpenTabs.value, 10)
+        maxOpenTabs: parseInt(settingMaxOpenTabs.value, 10),
+        playerAutoNext: !!settingPlayerAutoNext.checked,
+        playerAutoAction: settingPlayerAutoAction.value
       };
       try {
         var res = await fetch('/api/settings', {
@@ -3356,6 +4873,8 @@ const HTML_APP = `<!DOCTYPE html>
         settings = data.settings;
         applySettingsToUI();
         lastQuery = null;
+        updatePreviewButtonLabel();
+        schedulePersistAppState();
         showToast('Settings saved', 'success');
       } catch (err) {
         showToast(err.message, 'error');
@@ -3369,6 +4888,7 @@ const HTML_APP = `<!DOCTYPE html>
         if (data.settings) settings = data.settings;
       } catch (err) {}
       applySettingsToUI();
+      updatePreviewButtonLabel();
     }
 
     async function loadTokenStatus() {
@@ -3513,22 +5033,36 @@ const HTML_APP = `<!DOCTYPE html>
       var historyEl = document.getElementById('version-history');
       if (!historyEl) return;
       var lines = VERSION_HISTORY.map(function(item) {
-        return '<div class="history-item"><strong>v' + escapeHtml(item.version) + '</strong> - ' + escapeHtml(item.note) + '</div>';
+        var stamp = item.completedAt ? ' <span style="color:var(--text-muted);font-size:0.78rem;">(' + escapeHtml(item.completedAt) + ')</span>' : '';
+        return '<div class="history-item"><strong>v' + escapeHtml(item.version) + '</strong>' + stamp + ' - ' + escapeHtml(item.note) + '</div>';
       });
       historyEl.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem;color:var(--text)">Version History</div>' + lines.join('');
     }
 
-    setActiveTab(getTabFromPath(window.location.pathname), { push: false });
-    loadSettings();
-    loadLocations();
-    loadTokenStatus();
-    loadOpenAiKeyStatus();
-    renderVersionHistory();
-    loadDeletedCount();
-    renderPreview();
+    async function initializeApp() {
+      restorePlayerState();
+      var restoredState = restoreAppState();
+      await loadSettings();
+      await loadLocations();
+      if (restoredState) {
+        applyRestoredAppState(restoredState);
+      } else {
+        setActiveTab(getTabFromPath(window.location.pathname), { push: false });
+        renderPreview();
+      }
+      updatePreviewButtonLabel();
+      loadTokenStatus();
+      loadOpenAiKeyStatus();
+      renderVersionHistory();
+      loadDeletedCount();
+      setPlayerPlayPauseButtonState();
+      updateRailSelectionBadges();
+    }
+
+    initializeApp();
   </script>
 </body>
 </html>`;
 
 // Export helpers for testing
-export { fetchArticlesOlderThan, extractDomain, getDeletedItems };
+export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText };

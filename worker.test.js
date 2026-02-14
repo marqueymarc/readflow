@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-import { extractDomain } from './worker.js';
+import { extractDomain, buildTtsText } from './worker.js';
 
 describe('extractDomain', () => {
   it('extracts domain from valid URL', () => {
@@ -36,6 +36,41 @@ describe('extractDomain', () => {
   });
 });
 
+describe('buildTtsText', () => {
+  it('keeps full HTML body text even when it contains the summary', () => {
+    const article = {
+      title: 'Example Story',
+      summary: 'This is a short summary sentence.',
+      content: 'This is a short summary sentence.',
+      html_content: '<p>This is a short summary sentence. This is the longer full body that should remain for TTS playback.</p>',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('This is the longer full body that should remain for TTS playback.');
+  });
+
+  it('drops short duplicate summary when a longer body already contains it', () => {
+    const article = {
+      summary: 'Shared intro sentence.',
+      content: 'Shared intro sentence. Then a much longer section of unique content that should be spoken once.',
+    };
+    const text = buildTtsText(article);
+    const matches = text.match(/Shared intro sentence\./g) || [];
+    expect(matches.length).toBe(1);
+  });
+
+  it('removes repeated extracted lead sentence and boilerplate browser text', () => {
+    const article = {
+      title: 'Money Stuff: Insider Trading on War',
+      author: 'Matt Levine',
+      content: 'View in browser Insider trading, I often say around here, is not about fairness; it is about theft. Insider trading, I often say around here , is not about fairness; it is about theft. The problem with insider trading is not that you have information.',
+    };
+    const text = buildTtsText(article);
+    expect(text).not.toMatch(/View in browser/i);
+    const matches = text.match(/Insider trading, I often say around here,? is not about fairness; it is about theft\./gi) || [];
+    expect(matches.length).toBe(1);
+  });
+});
+
 describe('API Endpoints', () => {
   beforeEach(async () => {
     // Clear KV
@@ -48,6 +83,8 @@ describe('API Endpoints', () => {
       mockTts: true,
       audioBackSeconds: 15,
       audioForwardSeconds: 30,
+      playerAutoNext: true,
+      playerAutoAction: 'none',
     }));
     await env.KV.delete('custom_readwise_token');
     await env.KV.delete('custom_openai_key');
@@ -119,7 +156,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(400);
-      expect(data.error).toBe('Action must be delete or archive');
+      expect(data.error).toBe('Action must be delete, archive, or restore');
     });
 
     it('returns 400 with empty ids array', async () => {
@@ -305,6 +342,8 @@ describe('API Endpoints', () => {
       expect(data.settings.audioBackSeconds).toBe(5);
       expect(data.settings.audioForwardSeconds).toBe(180);
       expect(data.settings.maxOpenTabs).toBe(5);
+      expect(data.settings.playerAutoNext).toBe(true);
+      expect(data.settings.playerAutoAction).toBe('none');
     });
   });
 
@@ -314,7 +353,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('2.1.4');
+      expect(data.version).toBe('2.0.0');
     });
   });
 
@@ -424,6 +463,30 @@ describe('API Endpoints', () => {
         fetchSpy.mockRestore();
       }
     });
+
+    it('honors explicit mock=false and returns key-required error when unavailable', async () => {
+      await env.KV.put('settings', JSON.stringify({
+        defaultLocation: 'new',
+        defaultDays: 30,
+        previewLimit: 100,
+        confirmActions: true,
+        mockTts: true,
+      }));
+      await env.KV.delete('custom_openai_key');
+
+      const res = await SELF.fetch('https://example.com/api/audio/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          articleId: 'override-real-mode',
+          text: 'This should require a key in real mode.',
+          mock: false,
+        }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(400);
+      expect(data.error).toContain('OpenAI key is not configured');
+    });
   });
 
   describe('GET /favicon.ico', () => {
@@ -450,7 +513,7 @@ describe('PWA Serving', () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
-    expect(html).toContain('Readwise Cleanup');
+    expect(html).toContain('Read Flow');
   });
 
   it('contains cleanup tab', async () => {
@@ -538,12 +601,16 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v2.1.4');
+    expect(html).toContain('v2.0.0');
+    expect(html).toContain('2026-02-13');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
     expect(html).toContain('setting-max-open-tabs');
     expect(html).toContain('Audio Player');
     expect(html).toContain('player-auto-next');
+    expect(html).toContain('player-tts-mode');
+    expect(html).toContain('setting-player-auto-next');
+    expect(html).toContain('setting-player-auto-action');
     expect(html).toContain('Version History');
     expect(html).toContain('Readwise API Key');
     expect(html).toContain('Save API Key');
@@ -699,6 +766,102 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain("querySelectorAll('.player-queue-row')");
     expect(script).toContain("querySelectorAll('.player-queue-jump')");
     expect(script).toContain('loadPlayerIndex(idx)');
+  });
+
+  it('preview play shortcut is wired to open player without swipe capture', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(script).toContain('play-preview-btn');
+    expect(script).toContain("evt.target.closest('button')");
+    expect(script).toContain('ensurePlayerItemAndPlay(match)');
+  });
+
+  it('player rows support swipe actions and auto-finish settings hooks', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(script).toContain('runPlayerSwipeAction(queueId, action)');
+    expect(script).toContain('handlePlayerPointerDown(event,this)');
+    expect(script).toContain('settings.playerAutoAction');
+    expect(script).toContain('runPlayerItemAction(currentIdx, action)');
+  });
+
+  it('preview play forces insert-and-play in player without queue overwrite', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(script).toContain("setActiveTab('player', { push: true, syncPlayerFromSelection: false })");
+    expect(script).toContain('playerQueue = [item].concat(selected)');
+    expect(script).toContain('playerLoadedItemId');
+    expect(script).toContain('updatePlayerRowProgressUI(itemId)');
+  });
+
+  it('archive source maps secondary cleanup action to restore', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(script).toContain("return isArchiveSourceSelected() ? 'restore' : 'archive'");
+    expect(script).toContain('Restore Selected');
+  });
+
+  it('player queue supports search, filtered all-toggle, and resume progress hooks', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(html).toContain('id="player-search"');
+    expect(html).toContain('id="player-select-all"');
+    expect(script).toContain('saveCurrentPlayerProgress()');
+    expect(script).toContain('getFilteredPlayerIndices()');
+    expect(script).toContain('getPlayerItemChunks(currentItem)');
+    expect(script).toContain('chunkIndex: currentChunkIndex + 1');
+    expect(script).toContain("APP_STATE_STORAGE_KEY = 'readwise_cleanup_app_state_v1'");
+    expect(script).toContain('applyRestoredAppState(restoredState)');
+    expect(script).toContain("previewBtn.innerHTML = isOutOfDate ? 'Refresh Items' : 'Preview Items'");
+    expect(script).toContain('CLIENT_TTS_SYNTH_CHUNK_CHARS');
+    expect(script).toContain('CLIENT_TTS_FIRST_CHUNK_CHARS');
+    expect(script).toContain('CLIENT_TTS_SECOND_CHUNK_CHARS');
+    expect(script).toContain('CLIENT_PREVIEW_CACHE_STALE_MS');
+    expect(script).toContain('lastPreviewLoadedAt = Date.now()');
+    expect(script).toContain('prefetchPlayerChunk(item, itemId, chunks, chunkIndex + 1)');
+    expect(html).toContain('id="player-current-header"');
+    expect(html).toContain('id="setting-tts-voice"');
+    expect(html).toContain('id="cleanup-selected-count"');
+    expect(html).toContain('id="player-selected-count"');
+    expect(html).toContain('<option value="1.1">1.1x</option>');
+    expect(html).toContain('<option value="1.7">1.7x</option>');
+    expect(script).toContain('syncPlayerQueueAfterProcessedIds');
+    expect(script).toContain("iconEl.textContent = isPlaying ? '⏸' : '▶'");
+    expect(script).toContain('voice: settings.ttsVoice || ');
+    expect(script).toContain('playerSpeed: Number(parseFloat(playerSpeedSelect');
+    expect(script).toContain('splitTtsTextIntoChunks(fullText, maxChars, firstChunkChars, secondChunkChars)');
+  });
+
+  it('includes visible player tab and tab-based main pane scrolling', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(html).toContain('class="rail-item tab" data-tab="player"');
+    expect(html).toContain('id="main-pane"');
+    expect(script).toContain("mainPane.style.overflowY = (tabName === 'cleanup' || tabName === 'deleted') ? 'hidden' : 'auto'");
   });
 
   it('HTML does not contain escaped backticks', async () => {
