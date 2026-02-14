@@ -179,6 +179,11 @@ export default {
       if (url.pathname === '/favicon.ico') {
         return handleFavicon();
       }
+      if (url.pathname === '/mockup-v3') {
+        return new Response(HTML_MOCKUP_V3, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
 
       // Serve PWA
       return new Response(HTML_APP, {
@@ -1426,6 +1431,171 @@ function endOfDay(dateValue) {
   d.setHours(23, 59, 59, 999);
   return d;
 }
+
+const HTML_MOCKUP_V3 = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Read Flow - v3 Mockup</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --card: #ffffff;
+      --line: #d7e0ec;
+      --text: #1f2a44;
+      --muted: #61708a;
+      --blue: #1574d4;
+      --blue-soft: #e9f2ff;
+      --danger: #cf2b2b;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .app { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 100vh; gap: 0; }
+    .rail { border-right: 1px solid var(--line); background: #eef3fa; padding: 1rem 0.8rem; display: flex; flex-direction: column; gap: 0.8rem; }
+    .brand { font-size: 1.35rem; font-weight: 700; padding: 0.1rem 0.4rem 0.6rem; }
+    .tabs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 0.35rem; }
+    .tab { text-align: center; padding: 0.5rem 0.3rem; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-weight: 600; font-size: 0.9rem; }
+    .tab.active { border-color: #b8d6fb; background: var(--blue-soft); color: #0f4f9e; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 0.95rem; box-shadow: 0 1px 3px rgba(23, 32, 52, 0.08); }
+    .card h3 { margin: 0 0 0.6rem; font-size: 1rem; }
+    .muted { color: var(--muted); font-size: 0.84rem; }
+    .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .pill { border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.62rem; font-size: 0.82rem; background: #fff; }
+    .transport { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 0.35rem; margin-top: 0.55rem; }
+    .btn-transport { border: 1px solid #c1d2e8; border-radius: 999px; min-height: 46px; background: #fff; font-size: 1.3rem; display: flex; align-items: center; justify-content: center; }
+    .btn-transport.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .mini-player { margin-top: auto; background: #0f203a; color: #f5f9ff; border-radius: 999px; padding: 0.45rem 0.7rem; display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; }
+    .mini-dot { width: 8px; height: 8px; border-radius: 50%; background: #33d17a; }
+    .mini-actions { display: inline-flex; gap: 0.32rem; }
+    .mini-btn { border: 1px solid #3b4f73; background: #1a3156; color: #fff; border-radius: 8px; min-width: 30px; min-height: 28px; font-size: 0.78rem; }
+    .main { padding: 0.7rem 1rem 1rem; display: grid; grid-template-rows: auto auto 1fr; gap: 0.7rem; }
+    .main-top { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.7rem; }
+    .main-title { font-size: 1.1rem; font-weight: 700; }
+    .search { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 0.58rem 0.66rem; font-size: 0.9rem; background: #fff; }
+    .result-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 0.65rem 0.75rem; margin-bottom: 0.52rem; display: grid; grid-template-columns: auto 1fr auto; gap: 0.7rem; align-items: center; }
+    .thumb { width: 56px; height: 56px; border-radius: 10px; border: 1px solid var(--line); background: linear-gradient(135deg,#f7fbff,#e8f2ff); }
+    .item-title { font-weight: 600; line-height: 1.25; }
+    .meta { color: var(--muted); font-size: 0.82rem; }
+    .actions-inline { display: inline-flex; gap: 0.3rem; }
+    .chip { border: 1px solid var(--line); border-radius: 999px; padding: 0.2rem 0.52rem; font-size: 0.74rem; background: #fff; }
+    .chip.blue { background: var(--blue-soft); color: #0f4f9e; border-color: #b8d6fb; }
+    .chip.red { background: #ffefef; color: #9b1f1f; border-color: #ffc9c9; }
+    .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 0.6rem; }
+    .source-row { border: 1px solid var(--line); border-radius: 10px; padding: 0.58rem 0.6rem; background: #fff; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+    .toggle { width: 38px; height: 22px; border-radius: 999px; background: #c4d2e6; position: relative; }
+    .toggle::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 3px; left: 3px; }
+    .toggle.on { background: #6ab3ff; }
+    .toggle.on::after { left: 19px; }
+    .stack { display: grid; gap: 0.55rem; }
+    @media (max-width: 1024px) {
+      .app { grid-template-columns: 1fr; }
+      .rail { border-right: none; border-bottom: 1px solid var(--line); }
+      .transport { grid-template-columns: repeat(5, minmax(0,1fr)); }
+    }
+    @media (max-width: 600px) {
+      .tabs { grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .btn-transport { min-height: 56px; font-size: 1.55rem; }
+      .main-top { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">Read Flow</div>
+      <div class="tabs">
+        <div class="tab active">Find</div>
+        <div class="tab">Player</div>
+        <div class="tab">History</div>
+      </div>
+
+      <div class="card">
+        <h3>Find Controls</h3>
+        <div class="stack">
+          <div class="source-row"><span>Source: Inbox + Gmail/Newsletters</span><span class="chip blue">Hybrid</span></div>
+          <div class="controls-grid">
+            <div class="pill">From: Last 7 days</div>
+            <div class="pill">Sort: Added</div>
+          </div>
+          <div class="controls-grid">
+            <div class="pill">Actions: Archive</div>
+            <div class="pill">Mode: Multi-select</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Player Controls</h3>
+        <div class="controls-grid">
+          <div class="pill">Auto next: On</div>
+          <div class="pill">Speed: 1.2x</div>
+        </div>
+        <div style="margin-top:0.6rem;" class="muted">Now playing: The Search for Nancy G...</div>
+        <div class="transport">
+          <button class="btn-transport">⏮</button>
+          <button class="btn-transport">⏪</button>
+          <button class="btn-transport primary">⏸</button>
+          <button class="btn-transport">⏩</button>
+          <button class="btn-transport">⏭</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Settings Preview</h3>
+        <div class="settings-grid">
+          <div class="source-row"><span>Readwise Feed</span><span class="toggle on"></span></div>
+          <div class="source-row"><span>Readwise Archive</span><span class="toggle on"></span></div>
+          <div class="source-row"><span>Gmail: newsletters</span><span class="toggle on"></span></div>
+          <div class="source-row"><span>Gmail: longreads</span><span class="toggle"></span></div>
+        </div>
+        <div class="muted" style="margin-top:0.5rem;">Next step mock: Gmail OAuth + one/multi label input sources for Find.</div>
+      </div>
+
+      <div class="mini-player">
+        <div style="display:flex;align-items:center;gap:0.42rem;"><span class="mini-dot"></span><span style="font-size:0.77rem;">Playing while browsing</span></div>
+        <div class="mini-actions">
+          <button class="mini-btn">⏸</button>
+          <button class="mini-btn">⏭</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="main-top">
+        <div class="main-title">Find Results</div>
+        <div class="chip blue">All (filtered): 12</div>
+        <div class="chip">Player queue: 5</div>
+      </div>
+      <input class="search" placeholder="Search results, author, source, content..." />
+      <div>
+        <div class="result-card">
+          <div class="thumb"></div>
+          <div>
+            <div class="item-title">The Search for Nancy Grace Roman and Modern Sky Survey Systems</div>
+            <div class="meta">By Ten Tabs • Gmail/newsletters • Added Feb 14</div>
+          </div>
+          <div class="actions-inline">
+            <span class="chip blue">Add to Player</span>
+            <span class="chip">Open</span>
+          </div>
+        </div>
+        <div class="result-card">
+          <div class="thumb"></div>
+          <div>
+            <div class="item-title">A Better Way to Build News Digests from Label-Based Sources</div>
+            <div class="meta">By Platform Weekly • Feed • Published Feb 11</div>
+          </div>
+          <div class="actions-inline">
+            <span class="chip">Archive</span>
+            <span class="chip red">Delete</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>`;
 
 const HTML_APP = `<!DOCTYPE html>
 <html lang="en">
