@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.0.1';
 const VERSION_HISTORY = [
+  { version: '3.0.1', completedAt: '2026-02-14', note: 'Adaptive player rail compaction: narrowed left rail in player-docked mode and stacked transport controls for cleaner fit while preserving touch usability.' },
   { version: '3.0.0', completedAt: '2026-02-13', note: 'Upgraded to v3 with immediate auto-saved settings, live voice preview, larger player controls, denser header layout, faster first-audio chunking, and improved TTS narration cleanup/preface behavior.' },
   { version: '2.0.0', completedAt: '2026-02-13', note: 'Renamed app to Read Flow and finalized the v2 baseline branding/release line prior to planned v3 Gmail support.' },
   { version: '2.2.19', completedAt: '2026-02-13', note: 'Aligned UI action/button accent colors with the new Option C cyan brand palette across primary controls, focus states, and swipe accents.' },
