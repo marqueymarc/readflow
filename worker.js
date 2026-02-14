@@ -2203,6 +2203,58 @@ const HTML_APP = `<!DOCTYPE html>
         height: auto;
       }
     }
+    @media (max-width: 600px) {
+      .left-rail {
+        padding: 0.55rem 0.45rem 0.35rem;
+      }
+      .rail-brand {
+        font-size: 1rem;
+        gap: 0.4rem;
+        padding: 0.2rem 0.35rem 0.5rem;
+      }
+      .rail-brand .logo {
+        width: 24px;
+        height: 24px;
+      }
+      .rail-section {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.24rem;
+        flex-wrap: nowrap;
+        align-items: stretch;
+      }
+      .rail-item {
+        justify-content: center;
+        white-space: nowrap;
+        min-width: 0;
+        padding: 0.38rem 0.22rem;
+        font-size: 0.84rem;
+        gap: 0.26rem;
+        margin-bottom: 0;
+      }
+      .rail-item .badge {
+        font-size: 0.67rem;
+        padding: 0.08rem 0.35rem;
+      }
+      .version-badge {
+        margin-top: 0.45rem;
+        font-size: 0.72rem;
+        padding: 0.2rem 0.5rem;
+      }
+      .left-rail .card {
+        padding: 0.72rem;
+        margin-top: 0.42rem;
+      }
+      .main-pane {
+        padding: 0.12rem 0.55rem 1.2rem;
+      }
+      .main-inner .card {
+        padding: 0.88rem;
+      }
+      .card h2 {
+        margin-bottom: 0.62rem;
+      }
+    }
   </style>
 </head>
 <body>
