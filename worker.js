@@ -2348,6 +2348,47 @@ const HTML_APP = `<!DOCTYPE html>
             <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
           </div>
         </div>
+        <div id="player-controls" class="card" style="display:none;margin-top:0.8rem;">
+          <div class="player-title-row">
+            <h2 style="margin-bottom:0;">Audio Player</h2>
+            <div class="player-title-controls">
+              <label class="checkbox-label" style="font-size:0.85rem;">
+                <input id="player-auto-next" type="checkbox" checked>
+                Auto next
+              </label>
+              <label for="player-speed" style="margin:0; font-size:0.82rem;">Speed</label>
+              <select id="player-speed" style="width:auto; min-width: 84px; padding: 0.4rem 0.5rem;">
+                <option value="0.8">0.8x</option>
+                <option value="1" selected>1.0x</option>
+                <option value="1.1">1.1x</option>
+                <option value="1.2">1.2x</option>
+                <option value="1.3">1.3x</option>
+                <option value="1.5">1.5x</option>
+                <option value="1.7">1.7x</option>
+              </select>
+              <button type="button" id="player-text-toggle" class="text-preview-toggle" style="margin-left:0.2rem;">Text</button>
+            </div>
+          </div>
+          <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
+          <p id="player-tts-mode" style="display:none; color: var(--text-muted); margin-bottom: 0.4rem; font-size: 0.82rem;">TTS mode: mock clip</p>
+          <div id="player-current-header" class="player-current-header" style="display:none;">
+            <img id="player-current-thumb" class="preview-thumb" alt="" loading="lazy" referrerpolicy="no-referrer" style="display:none;">
+            <span id="player-current-thumb-fallback" class="preview-thumb-fallback" style="display:none;">No image</span>
+            <div class="player-current-meta">
+              <div id="player-current-title" style="font-weight:600;"></div>
+              <div id="player-current-author" class="article-meta"></div>
+            </div>
+          </div>
+          <div id="player-current-text" class="tts-preview" style="display:none; margin-top:0; margin-bottom:0.7rem;"></div>
+          <div class="btn-group player-controls-row" style="margin-bottom:0.6rem;">
+            <button class="btn btn-outline player-icon-btn" id="player-prev-btn" title="Previous" aria-label="Previous"><span class="control-icon">⏮</span></button>
+            <button class="btn btn-outline player-icon-btn" id="player-back-btn" title="Back" aria-label="Back"><span class="control-icon">⏪</span><span class="control-text">15s</span></button>
+            <button class="btn player-icon-btn" id="player-playpause-btn" title="Play" aria-label="Play"><span class="control-icon">▶</span></button>
+            <button class="btn btn-outline player-icon-btn" id="player-forward-btn" title="Forward" aria-label="Forward"><span class="control-icon">⏩</span><span class="control-text">30s</span></button>
+            <button class="btn btn-outline player-icon-btn" id="player-next-btn" title="Next" aria-label="Next"><span class="control-icon">⏭</span></button>
+          </div>
+          <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
+        </div>
         <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
       </aside>
       <main class="main-pane" id="main-pane">
@@ -2533,45 +2574,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     <div id="player-tab" style="display:none">
       <div class="card">
-        <div class="player-title-row">
-          <h2 style="margin-bottom:0;">Audio Player</h2>
-          <div class="player-title-controls">
-            <label class="checkbox-label" style="font-size:0.85rem;">
-              <input id="player-auto-next" type="checkbox" checked>
-              Auto next
-            </label>
-            <label for="player-speed" style="margin:0; font-size:0.82rem;">Speed</label>
-            <select id="player-speed" style="width:auto; min-width: 84px; padding: 0.4rem 0.5rem;">
-              <option value="0.8">0.8x</option>
-              <option value="1" selected>1.0x</option>
-              <option value="1.1">1.1x</option>
-              <option value="1.2">1.2x</option>
-              <option value="1.3">1.3x</option>
-              <option value="1.5">1.5x</option>
-              <option value="1.7">1.7x</option>
-            </select>
-            <button type="button" id="player-text-toggle" class="text-preview-toggle" style="margin-left:0.2rem;">Text</button>
-          </div>
-        </div>
-        <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
-        <p id="player-tts-mode" style="display:none; color: var(--text-muted); margin-bottom: 0.4rem; font-size: 0.82rem;">TTS mode: mock clip</p>
-        <div id="player-current-header" class="player-current-header" style="display:none;">
-          <img id="player-current-thumb" class="preview-thumb" alt="" loading="lazy" referrerpolicy="no-referrer" style="display:none;">
-          <span id="player-current-thumb-fallback" class="preview-thumb-fallback" style="display:none;">No image</span>
-          <div class="player-current-meta">
-            <div id="player-current-title" style="font-weight:600;"></div>
-            <div id="player-current-author" class="article-meta"></div>
-          </div>
-        </div>
-        <div id="player-current-text" class="tts-preview" style="display:none; margin-top:0; margin-bottom:0.7rem;"></div>
-        <div class="btn-group player-controls-row" style="margin-bottom:0.6rem;">
-          <button class="btn btn-outline player-icon-btn" id="player-prev-btn" title="Previous" aria-label="Previous"><span class="control-icon">⏮</span></button>
-          <button class="btn btn-outline player-icon-btn" id="player-back-btn" title="Back" aria-label="Back"><span class="control-icon">⏪</span><span class="control-text">15s</span></button>
-          <button class="btn player-icon-btn" id="player-playpause-btn" title="Play" aria-label="Play"><span class="control-icon">▶</span></button>
-          <button class="btn btn-outline player-icon-btn" id="player-forward-btn" title="Forward" aria-label="Forward"><span class="control-icon">⏩</span><span class="control-text">30s</span></button>
-          <button class="btn btn-outline player-icon-btn" id="player-next-btn" title="Next" aria-label="Next"><span class="control-icon">⏭</span></button>
-        </div>
-        <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
+        <h2>Playlist</h2>
         <div class="preview-top-controls" style="margin-top:0.7rem;">
           <label class="checkbox-label" style="font-size:0.85rem; margin:0;">
             <input id="player-select-all" type="checkbox">
@@ -2694,6 +2697,7 @@ const HTML_APP = `<!DOCTYPE html>
     var saveSettingsBtn = document.getElementById('save-settings-btn');
     var cleanupControlsCard = document.getElementById('cleanup-controls');
     var deletedControlsCard = document.getElementById('deleted-controls');
+    var playerControlsCard = document.getElementById('player-controls');
     var versionBadgeBtn = document.getElementById('version-badge');
     var saveTokenBtn = document.getElementById('save-token-btn');
     var tokenStatusEl = document.getElementById('token-status');
@@ -2920,6 +2924,7 @@ const HTML_APP = `<!DOCTYPE html>
       document.getElementById('player-tab').style.display = tabName === 'player' ? 'block' : 'none';
       cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
       deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
+      if (playerControlsCard) playerControlsCard.style.display = tabName === 'player' ? 'block' : 'none';
       mainPane.style.overflowY = tabName === 'cleanup' ? 'hidden' : 'auto';
 
       if (tabName === 'deleted') {
