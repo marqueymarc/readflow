@@ -2920,7 +2920,7 @@ const HTML_APP = `<!DOCTYPE html>
       document.getElementById('player-tab').style.display = tabName === 'player' ? 'block' : 'none';
       cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
       deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
-      mainPane.style.overflowY = (tabName === 'cleanup' || tabName === 'deleted') ? 'hidden' : 'auto';
+      mainPane.style.overflowY = tabName === 'cleanup' ? 'hidden' : 'auto';
 
       if (tabName === 'deleted') {
         loadDeletedItems();

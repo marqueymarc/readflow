@@ -861,7 +861,7 @@ describe('HTML/JavaScript validity', () => {
 
     expect(html).toContain('class="rail-item tab" data-tab="player"');
     expect(html).toContain('id="main-pane"');
-    expect(script).toContain("mainPane.style.overflowY = (tabName === 'cleanup' || tabName === 'deleted') ? 'hidden' : 'auto'");
+    expect(script).toContain("mainPane.style.overflowY = tabName === 'cleanup' ? 'hidden' : 'auto'");
   });
 
   it('HTML does not contain escaped backticks', async () => {
