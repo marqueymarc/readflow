@@ -1775,15 +1775,16 @@ const HTML_APP = `<!DOCTYPE html>
       text-overflow: ellipsis;
     }
     .player-controls-row {
-      flex-wrap: nowrap;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       width: 100%;
       gap: 0.45rem;
     }
     .player-icon-btn {
       border-radius: 999px;
       min-width: 0;
-      flex: 1 1 0;
-      padding: 0.6rem 0.4rem;
+      min-height: 46px;
+      padding: 0.42rem 0.25rem;
       white-space: nowrap;
     }
     #player-playpause-btn {
@@ -1797,12 +1798,19 @@ const HTML_APP = `<!DOCTYPE html>
       border-color: var(--primary);
     }
     .control-icon {
-      font-size: 2.6rem;
+      font-size: 1.8rem;
       line-height: 1;
     }
     .control-text {
-      font-size: 0.78rem;
+      font-size: 0.75rem;
       line-height: 1;
+    }
+    #player-controls-right-host .control-icon {
+      font-size: 2.15rem;
+    }
+    #player-controls-right-host .player-icon-btn {
+      min-height: 52px;
+      padding: 0.52rem 0.3rem;
     }
     .now-playing-badge {
       display: inline-block;
@@ -2151,10 +2159,11 @@ const HTML_APP = `<!DOCTYPE html>
       }
       .player-icon-btn {
         border-radius: 999px;
-        padding: 0.6rem 0.25rem;
+        min-height: 58px;
+        padding: 0.66rem 0.3rem;
       }
       .player-icon-btn .control-icon {
-        font-size: 2.8rem;
+        font-size: 2.55rem;
       }
       .player-icon-btn .control-text {
         display: none;
@@ -2348,6 +2357,7 @@ const HTML_APP = `<!DOCTYPE html>
             <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
           </div>
         </div>
+        <div id="player-controls-left-host" style="display:none">
         <div id="player-controls" class="card" style="display:none;margin-top:0.8rem;">
           <div class="player-title-row">
             <h2 style="margin-bottom:0;">Audio Player</h2>
@@ -2388,6 +2398,7 @@ const HTML_APP = `<!DOCTYPE html>
             <button class="btn btn-outline player-icon-btn" id="player-next-btn" title="Next" aria-label="Next"><span class="control-icon">⏭</span></button>
           </div>
           <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
+        </div>
         </div>
         <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
       </aside>
@@ -2573,6 +2584,7 @@ const HTML_APP = `<!DOCTYPE html>
     </div>
 
     <div id="player-tab" style="display:none">
+      <div id="player-controls-right-host" style="display:none"></div>
       <div class="card">
         <h2>Playlist</h2>
         <div class="preview-top-controls" style="margin-top:0.7rem;">
@@ -2698,6 +2710,9 @@ const HTML_APP = `<!DOCTYPE html>
     var cleanupControlsCard = document.getElementById('cleanup-controls');
     var deletedControlsCard = document.getElementById('deleted-controls');
     var playerControlsCard = document.getElementById('player-controls');
+    var playerControlsLeftHost = document.getElementById('player-controls-left-host');
+    var playerControlsRightHost = document.getElementById('player-controls-right-host');
+    var leftRailEl = document.querySelector('.left-rail');
     var versionBadgeBtn = document.getElementById('version-badge');
     var saveTokenBtn = document.getElementById('save-token-btn');
     var tokenStatusEl = document.getElementById('token-status');
@@ -2899,6 +2914,26 @@ const HTML_APP = `<!DOCTYPE html>
       return pathname;
     }
 
+    function shouldDockPlayerControlsRight() {
+      if (window.innerWidth <= 1024) return true;
+      if (!leftRailEl || !leftRailEl.getBoundingClientRect) return false;
+      var railWidth = leftRailEl.getBoundingClientRect().width || 0;
+      return railWidth > 0 && railWidth < 380;
+    }
+
+    function syncPlayerControlsDock() {
+      if (!playerControlsCard || !playerControlsLeftHost || !playerControlsRightHost) return;
+      if (typeof playerControlsLeftHost.appendChild !== 'function' || typeof playerControlsRightHost.appendChild !== 'function') return;
+      var dockRight = shouldDockPlayerControlsRight();
+      var targetHost = dockRight ? playerControlsRightHost : playerControlsLeftHost;
+      if (playerControlsCard.parentElement !== targetHost) {
+        targetHost.appendChild(playerControlsCard);
+      }
+      var showPlayer = currentTabName === 'player';
+      playerControlsRightHost.style.display = showPlayer && dockRight ? 'block' : 'none';
+      playerControlsLeftHost.style.display = showPlayer && !dockRight ? 'block' : 'none';
+    }
+
     function getTabFromPath(pathname) {
       var normalized = normalizePath(pathname);
       return ROUTE_TABS[normalized] || 'cleanup';
@@ -2939,6 +2974,7 @@ const HTML_APP = `<!DOCTYPE html>
         history.pushState({ tab: tabName }, '', targetPath);
       }
       currentTabName = tabName;
+      syncPlayerControlsDock();
       schedulePersistAppState();
     }
 
@@ -2951,6 +2987,9 @@ const HTML_APP = `<!DOCTYPE html>
 
     on(window, 'popstate', function() {
       setActiveTab(getTabFromPath(window.location.pathname), { push: false });
+    });
+    on(window, 'resize', function() {
+      syncPlayerControlsDock();
     });
 
     on(versionBadgeBtn, 'click', function() {
