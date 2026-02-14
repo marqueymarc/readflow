@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.0.0';
 const VERSION_HISTORY = [
+  { version: '3.0.0', completedAt: '2026-02-13', note: 'Upgraded to v3 with immediate auto-saved settings, live voice preview, larger player controls, denser header layout, faster first-audio chunking, and improved TTS narration cleanup/preface behavior.' },
   { version: '2.0.0', completedAt: '2026-02-13', note: 'Renamed app to Read Flow and finalized the v2 baseline branding/release line prior to planned v3 Gmail support.' },
   { version: '2.2.19', completedAt: '2026-02-13', note: 'Aligned UI action/button accent colors with the new Option C cyan brand palette across primary controls, focus states, and swipe accents.' },
   { version: '2.2.18', completedAt: '2026-02-13', note: 'Applied new Option C branding icon and favicon, adding an audio-wave cue alongside the checkmark to signal read-aloud support.' },
@@ -74,7 +75,7 @@ const DEFAULT_SETTINGS = {
   previewLimit: 100,
   confirmActions: true,
   mockTts: true,
-  ttsVoice: 'nova',
+  ttsVoice: 'alloy',
   audioBackSeconds: 15,
   audioForwardSeconds: 30,
   maxOpenTabs: 5,
@@ -84,8 +85,8 @@ const DEFAULT_SETTINGS = {
 const MOCK_TTS_SECONDS = 20;
 const MAX_TTS_PREVIEW_CHARS = 12000;
 const TTS_SYNTH_CHUNK_CHARS = 3200;
-const TTS_FIRST_CHUNK_CHARS = 800;
-const TTS_SECOND_CHUNK_CHARS = 1800;
+const TTS_FIRST_CHUNK_CHARS = 220;
+const TTS_SECOND_CHUNK_CHARS = 1000;
 const PREVIEW_CACHE_STALE_MS = 15 * 60 * 1000;
 let MOCK_TTS_BYTES = null;
 
@@ -797,7 +798,7 @@ function sanitizeSettings(input) {
   const mockTts = typeof source.mockTts === 'boolean'
     ? source.mockTts
     : DEFAULT_SETTINGS.mockTts;
-  const allowedVoices = ['onyx', 'echo', 'nova', 'shimmer'];
+  const allowedVoices = ['alloy', 'onyx', 'echo', 'nova', 'shimmer'];
   const ttsVoice = typeof source.ttsVoice === 'string' && allowedVoices.includes(source.ttsVoice)
     ? source.ttsVoice
     : DEFAULT_SETTINGS.ttsVoice;
@@ -1274,6 +1275,12 @@ function buildSearchableText(article) {
 }
 
 function buildTtsText(article) {
+  const sourceLabel = normalizeTtsText(article.site_name || extractDomain(article.source_url || article.url));
+  const dateLabel = article.published_date || article.published_at || article.saved_at || '';
+  const parsedDate = Date.parse(dateLabel || '');
+  const spokenDate = Number.isFinite(parsedDate)
+    ? new Date(parsedDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
   const chunks = [];
   const pushUnique = (value) => {
     const cleaned = normalizeTtsText(value);
@@ -1293,6 +1300,13 @@ function buildTtsText(article) {
     chunks.push(cleaned);
   };
 
+  const prefaceParts = [];
+  if (article.title) prefaceParts.push(article.title);
+  if (article.author) prefaceParts.push(`By ${article.author}`);
+  if (sourceLabel && sourceLabel !== 'Unknown') prefaceParts.push(`From ${sourceLabel}`);
+  if (spokenDate) prefaceParts.push(`Written on ${spokenDate}`);
+  pushUnique(prefaceParts.join('. ') + (prefaceParts.length ? '.' : ''));
+
   pushUnique(article.title);
   pushUnique(article.author ? `By ${article.author}` : '');
   pushUnique(article.summary);
@@ -1309,7 +1323,12 @@ function buildTtsText(article) {
     if (plain) pushUnique(plain);
   }
 
-  return cleanupTtsText(chunks.join('\n\n').trim());
+  return cleanupTtsText(chunks.join('\n\n').trim(), {
+    title: article.title,
+    author: article.author,
+    sourceLabel,
+    spokenDate,
+  });
 }
 
 function normalizeTtsText(value) {
@@ -1320,7 +1339,7 @@ function normalizeTtsText(value) {
     .trim();
 }
 
-function cleanupTtsText(text) {
+function cleanupTtsText(text, context = {}) {
   let cleaned = normalizeTtsText(text);
   if (!cleaned) return '';
   cleaned = cleaned
@@ -1328,6 +1347,8 @@ function cleanupTtsText(text) {
     .replace(/\bOpen in browser\b[:\s-]*/gi, ' ')
     .replace(/\bRead online\b[:\s-]*/gi, ' ')
     .replace(/\bProgramming note\b[:\s-]*/gi, ' ')
+    .replace(/\bSubscribe\b.*$/gi, ' ')
+    .replace(/\bUnsubscribe\b.*$/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -1348,7 +1369,48 @@ function cleanupTtsText(text) {
     seen.add(key);
     deduped.push(sentence);
   }
-  return deduped.join(' ').trim();
+  let result = deduped.join(' ').trim();
+
+  // Trim common trailing podcast/newsletter boilerplate sections.
+  const tailWindowStart = Math.max(0, result.length - 2600);
+  const tail = result.slice(tailWindowStart);
+  const boilerplateMarkers = [
+    /\b(credits|transcript|thanks to|special thanks|produced by|edited by|hosted by|co-hosts?)\b/i,
+    /\b(collaborators?|contributors?|panelists?)\b/i,
+    /\b(subscribe|unsubscribe|follow us|newsletter|support this podcast)\b/i,
+  ];
+  let cutAt = -1;
+  for (const marker of boilerplateMarkers) {
+    const match = tail.match(marker);
+    if (match && typeof match.index === 'number') {
+      const abs = tailWindowStart + match.index;
+      cutAt = cutAt < 0 ? abs : Math.min(cutAt, abs);
+    }
+  }
+  if (cutAt > 0) {
+    result = result.slice(0, cutAt).trim();
+  }
+
+  // Remove duplicate metadata if it appears again right after preface.
+  const metas = [
+    normalizeTtsText(context.title || ''),
+    normalizeTtsText(context.author ? `By ${context.author}` : ''),
+    normalizeTtsText(context.sourceLabel ? `From ${context.sourceLabel}` : ''),
+    normalizeTtsText(context.spokenDate ? `Written on ${context.spokenDate}` : ''),
+  ].filter(Boolean);
+  for (const meta of metas) {
+    const escaped = meta.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(\\b${escaped}\\b)`, 'ig');
+    let seenMeta = false;
+    result = result.replace(re, (m) => {
+      if (seenMeta) return '';
+      seenMeta = true;
+      return m;
+    });
+    result = result.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  return result;
 }
 
 function startOfDay(dateValue) {
@@ -1414,7 +1476,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
     .main-pane {
       min-width: 0;
-      padding: 0.75rem 1.1rem 2rem;
+      padding: 0.35rem 1.1rem 2rem;
       height: 100vh;
       overflow: hidden;
     }
@@ -1694,7 +1756,7 @@ const HTML_APP = `<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       gap: 0.75rem;
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.05rem;
       flex-wrap: wrap;
     }
     .player-title-controls {
@@ -1735,7 +1797,7 @@ const HTML_APP = `<!DOCTYPE html>
       border-color: var(--primary);
     }
     .control-icon {
-      font-size: 1.05rem;
+      font-size: 2.6rem;
       line-height: 1;
     }
     .control-text {
@@ -2092,7 +2154,7 @@ const HTML_APP = `<!DOCTYPE html>
         padding: 0.6rem 0.25rem;
       }
       .player-icon-btn .control-icon {
-        font-size: 1.2rem;
+        font-size: 2.8rem;
       }
       .player-icon-btn .control-text {
         display: none;
@@ -2327,9 +2389,10 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="form-group">
           <label for="setting-tts-voice">TTS voice</label>
           <select id="setting-tts-voice">
+            <option value="alloy" selected>Alloy (default)</option>
             <option value="onyx">Onyx (male)</option>
             <option value="echo">Echo (male)</option>
-            <option value="nova" selected>Nova (female)</option>
+            <option value="nova">Nova (female)</option>
             <option value="shimmer">Shimmer (female)</option>
           </select>
         </div>
@@ -2359,9 +2422,7 @@ const HTML_APP = `<!DOCTYPE html>
             <option value="delete">Auto delete</option>
           </select>
         </div>
-        <div class="btn-group">
-          <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
-        </div>
+        <p style="color:var(--text-muted);font-size:0.82rem;margin-top:0.2rem;">Settings auto-save immediately (API keys still require Save).</p>
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
         <h2 style="font-size:1rem;margin-bottom:0.65rem;">Readwise API Key</h2>
         <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.6rem;">
@@ -2437,6 +2498,7 @@ const HTML_APP = `<!DOCTYPE html>
               <option value="1.5">1.5x</option>
               <option value="1.7">1.7x</option>
             </select>
+            <button type="button" id="player-text-toggle" class="text-preview-toggle" style="margin-left:0.2rem;">Text</button>
           </div>
         </div>
         <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
@@ -2449,7 +2511,6 @@ const HTML_APP = `<!DOCTYPE html>
             <div id="player-current-author" class="article-meta"></div>
           </div>
         </div>
-        <button type="button" id="player-text-toggle" class="text-preview-toggle" style="margin-bottom:0.5rem;">Text</button>
         <div id="player-current-text" class="tts-preview" style="display:none; margin-top:0; margin-bottom:0.7rem;"></div>
         <div class="btn-group player-controls-row" style="margin-bottom:0.6rem;">
           <button class="btn btn-outline player-icon-btn" id="player-prev-btn" title="Previous" aria-label="Previous"><span class="control-icon">⏮</span></button>
@@ -2509,7 +2570,7 @@ const HTML_APP = `<!DOCTYPE html>
       previewLimit: 100,
       confirmActions: true,
       mockTts: true,
-      ttsVoice: 'nova',
+      ttsVoice: 'alloy',
       audioBackSeconds: 15,
       audioForwardSeconds: 30,
       maxOpenTabs: 5,
@@ -2536,6 +2597,9 @@ const HTML_APP = `<!DOCTYPE html>
     var PLAYER_STATE_STORAGE_KEY = 'readwise_cleanup_player_state_v1';
     var APP_STATE_STORAGE_KEY = 'readwise_cleanup_app_state_v1';
     var appStatePersistTimer = null;
+    var settingsSaveTimer = null;
+    var settingsSaveInFlight = false;
+    var voicePreviewAudio = null;
 
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
@@ -2677,7 +2741,7 @@ const HTML_APP = `<!DOCTYPE html>
       settingsPreviewLimit.value = settings.previewLimit;
       settingsConfirmActions.checked = settings.confirmActions;
       settingMockTts.checked = settings.mockTts;
-      if (settingTtsVoice) settingTtsVoice.value = settings.ttsVoice || 'nova';
+      if (settingTtsVoice) settingTtsVoice.value = settings.ttsVoice || 'alloy';
       settingAudioBackSeconds.value = settings.audioBackSeconds;
       settingAudioForwardSeconds.value = settings.audioForwardSeconds;
       settingMaxOpenTabs.value = settings.maxOpenTabs;
@@ -3553,7 +3617,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function getPlayerChunkCacheKey(itemId, chunkIndex) {
-      return String(itemId || '') + '|' + String(chunkIndex || 0) + '|' + (settings.mockTts ? 'mock' : 'real') + '|' + String(settings.ttsVoice || 'nova');
+      return String(itemId || '') + '|' + String(chunkIndex || 0) + '|' + (settings.mockTts ? 'mock' : 'real') + '|' + String(settings.ttsVoice || 'alloy');
     }
 
     async function fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex) {
@@ -3567,7 +3631,7 @@ const HTML_APP = `<!DOCTYPE html>
           body: JSON.stringify({
             articleId: item.id,
             text: chunkText,
-            voice: settings.ttsVoice || 'nova',
+            voice: settings.ttsVoice || 'alloy',
             speed: 1,
             chunkIndex: chunkIndex,
             mock: !!settings.mockTts,
@@ -4848,37 +4912,126 @@ const HTML_APP = `<!DOCTYPE html>
       }
     });
 
-    on(saveSettingsBtn, 'click', async function() {
-      var payload = {
+    function buildSettingsPayloadFromUI() {
+      return {
         defaultLocation: settingsDefaultLocation.value,
         defaultDays: parseInt(settingsDefaultDays.value, 10),
         previewLimit: parseInt(settingsPreviewLimit.value, 10),
         confirmActions: !!settingsConfirmActions.checked,
         mockTts: !!settingMockTts.checked,
-        ttsVoice: (settingTtsVoice && settingTtsVoice.value) || 'nova',
+        ttsVoice: (settingTtsVoice && settingTtsVoice.value) || 'alloy',
         audioBackSeconds: parseInt(settingAudioBackSeconds.value, 10),
         audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10),
         maxOpenTabs: parseInt(settingMaxOpenTabs.value, 10),
         playerAutoNext: !!settingPlayerAutoNext.checked,
         playerAutoAction: settingPlayerAutoAction.value
       };
+    }
+
+    async function saveSettingsImmediate(options) {
+      var opts = options || {};
+      if (settingsSaveInFlight) return;
+      settingsSaveInFlight = true;
       try {
+        var payload = buildSettingsPayloadFromUI();
         var res = await fetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        var data = await res.json();
+        var data = await parseApiJson(res);
         if (data.error) throw new Error(data.error);
         settings = data.settings;
         applySettingsToUI();
         lastQuery = null;
         updatePreviewButtonLabel();
         schedulePersistAppState();
-        showToast('Settings saved', 'success');
+        if (!opts.silent) showToast('Settings saved', 'success');
       } catch (err) {
         showToast(err.message, 'error');
+      } finally {
+        settingsSaveInFlight = false;
       }
+    }
+
+    function scheduleSaveSettingsImmediate() {
+      if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+      settingsSaveTimer = setTimeout(function() {
+        settingsSaveTimer = null;
+        saveSettingsImmediate({ silent: true });
+      }, 220);
+    }
+
+    function getVoiceLabel(voice) {
+      var normalized = String(voice || '').toLowerCase();
+      if (normalized === 'alloy') return 'Alloy';
+      if (normalized === 'onyx') return 'Onyx';
+      if (normalized === 'echo') return 'Echo';
+      if (normalized === 'nova') return 'Nova';
+      if (normalized === 'shimmer') return 'Shimmer';
+      return voice || 'Voice';
+    }
+
+    async function previewSelectedVoice() {
+      if (!settingTtsVoice) return;
+      var voice = settingTtsVoice.value || 'alloy';
+      try {
+        var res = await fetch('/api/audio/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            articleId: 'voice-preview',
+            text: 'I am ' + getVoiceLabel(voice) + '.',
+            voice: voice,
+            speed: 1,
+            chunkIndex: 0,
+            mock: false,
+          }),
+        });
+        if (!res.ok) {
+          var data = await parseApiJson(res);
+          throw new Error((data && data.error) || ('Voice preview failed (' + res.status + ')'));
+        }
+        var blob = await res.blob();
+        if (voicePreviewAudio && voicePreviewAudio.pause) {
+          try { voicePreviewAudio.pause(); } catch (e) {}
+        }
+        var url = URL.createObjectURL(blob);
+        voicePreviewAudio = new Audio(url);
+        voicePreviewAudio.play().catch(function() {});
+      } catch (err) {
+        showToast(err.message || 'Voice preview unavailable', 'warning');
+      }
+    }
+
+    on(saveSettingsBtn, 'click', async function() {
+      saveSettingsImmediate({ silent: false });
+    });
+
+    [
+      settingsDefaultLocation,
+      settingsDefaultDays,
+      settingsPreviewLimit,
+      settingsConfirmActions,
+      settingMockTts,
+      settingTtsVoice,
+      settingAudioBackSeconds,
+      settingAudioForwardSeconds,
+      settingMaxOpenTabs,
+      settingPlayerAutoNext,
+      settingPlayerAutoAction,
+    ].forEach(function(el) {
+      on(el, 'change', function() {
+        scheduleSaveSettingsImmediate();
+      });
+    });
+    on(settingsDefaultDays, 'input', scheduleSaveSettingsImmediate);
+    on(settingsPreviewLimit, 'input', scheduleSaveSettingsImmediate);
+    on(settingAudioBackSeconds, 'input', scheduleSaveSettingsImmediate);
+    on(settingAudioForwardSeconds, 'input', scheduleSaveSettingsImmediate);
+    on(settingMaxOpenTabs, 'input', scheduleSaveSettingsImmediate);
+    on(settingTtsVoice, 'change', function() {
+      previewSelectedVoice();
     });
 
     async function loadSettings() {
