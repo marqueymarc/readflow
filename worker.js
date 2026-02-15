@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.1.2';
+const APP_VERSION = '3.1.3';
 const VERSION_HISTORY = [
+  { version: '3.1.3', completedAt: '2026-02-15', note: 'Removed overly strict Readwise token prefix validation so standard public API tokens are accepted in Settings.' },
   { version: '3.1.2', completedAt: '2026-02-15', note: 'Improved Readwise auth error handling: upstream 401/403 now return clearer actionable messages and preserve HTTP status instead of generic server errors.' },
   { version: '3.1.1', completedAt: '2026-02-15', note: 'Fixed async route error handling by awaiting API handlers in dispatcher, preventing Cloudflare 1101 HTML failures and returning structured JSON errors instead.' },
   { version: '3.1.0', completedAt: '2026-02-14', note: 'Experimental redesign branch kickoff from high-fidelity mocks, focused on UI iteration only with one-of source selection in Settings (no new integrations yet).' },
@@ -588,13 +589,6 @@ async function handleSaveToken(request, env, corsHeaders) {
 
   if (!token) {
     return new Response(JSON.stringify({ error: 'Token is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-
-  if (!token.startsWith('rw_')) {
-    return new Response(JSON.stringify({ error: 'Token format looks invalid' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
@@ -2752,7 +2746,7 @@ const HTML_APP = `<!DOCTYPE html>
         <p id="token-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking token status…</p>
         <div class="form-group">
           <label for="setting-readwise-token">Set/replace API key</label>
-          <input id="setting-readwise-token" type="password" autocomplete="off" placeholder="rw_...">
+          <input id="setting-readwise-token" type="password" autocomplete="off" placeholder="Paste Readwise API token">
         </div>
         <div class="btn-group">
           <button class="btn btn-outline" id="save-token-btn">Save API Key</button>

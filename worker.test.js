@@ -353,7 +353,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.1.2');
+      expect(data.version).toBe('3.1.3');
     });
   });
 
@@ -371,6 +371,18 @@ describe('API Endpoints', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: 'rw_test_custom_123' }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.saved).toBe(true);
+      expect(data.overwritten).toBe(false);
+    });
+
+    it('accepts non-rw-prefixed public token format', async () => {
+      const res = await SELF.fetch('https://example.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'public_token_without_prefix_123' }),
       });
       const data = await res.json();
       expect(res.status).toBe(200);
@@ -601,7 +613,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.1.2');
+    expect(html).toContain('v3.1.3');
     expect(html).toContain('2026-02-13');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
