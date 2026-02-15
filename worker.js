@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.1.1';
+const APP_VERSION = '3.1.2';
 const VERSION_HISTORY = [
+  { version: '3.1.2', completedAt: '2026-02-15', note: 'Improved Readwise auth error handling: upstream 401/403 now return clearer actionable messages and preserve HTTP status instead of generic server errors.' },
   { version: '3.1.1', completedAt: '2026-02-15', note: 'Fixed async route error handling by awaiting API handlers in dispatcher, preventing Cloudflare 1101 HTML failures and returning structured JSON errors instead.' },
   { version: '3.1.0', completedAt: '2026-02-14', note: 'Experimental redesign branch kickoff from high-fidelity mocks, focused on UI iteration only with one-of source selection in Settings (no new integrations yet).' },
   { version: '3.0.2', completedAt: '2026-02-14', note: 'Renamed Cleanup workflow to Find, changed primary action label from Preview Items to Find, and reordered top nav tabs so History appears last.' },
@@ -192,13 +193,24 @@ export default {
         headers: { 'Content-Type': 'text/html', ...corsHeaders },
       });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 500,
+      const status = deriveHttpStatusFromError(error);
+      return new Response(JSON.stringify({ error: error && error.message ? error.message : 'Unknown server error' }), {
+        status,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
   },
 };
+
+function deriveHttpStatusFromError(error) {
+  const message = error && error.message ? String(error.message) : '';
+  const directMatch = message.match(/\b(\d{3})\b/);
+  if (directMatch) {
+    const code = parseInt(directMatch[1], 10);
+    if (Number.isFinite(code) && code >= 400 && code <= 599) return code;
+  }
+  return 500;
+}
 
 // Get available locations/feeds from Readwise
 async function handleGetLocations(env, corsHeaders) {
@@ -893,6 +905,9 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     );
 
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`Readwise API ${response.status}: Unauthorized. Open Settings and re-save your Readwise API key for this deployment.`);
+      }
       throw new Error(`Readwise API error: ${response.status}`);
     }
 
