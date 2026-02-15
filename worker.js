@@ -1,8 +1,73 @@
 // Readwise Cleanup - Cloudflare Worker with embedded PWA
 // Bulk delete/archive old Readwise Reader items with restoration support
 
-const APP_VERSION = '2.0.2';
+import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
+import { getUiHtml } from './ui.js';
+import { getSettings, sanitizeSettings } from './settings.js';
+import {
+  addToReadwise,
+  archiveArticle,
+  deleteArticle,
+  getOpenAIKey,
+  getReadwiseToken,
+  moveArticleToLocation,
+} from './api-interactions.js';
+
+const APP_VERSION = '3.2.14';
 const VERSION_HISTORY = [
+  { version: '3.2.14', completedAt: '2026-02-15', note: 'Improved player resilience and control fidelity: persisted/localized download progress across refresh/navigation, tightened filtered-selection action scoping, added mini-player back skip, stabilized queue buffer invalidation on resets/removals, improved thumbnail fallback handling, and hardened TTS text cleanup to exclude URLs/machine-style long numbers while preserving image captions.' },
+  { version: '3.2.13', completedAt: '2026-02-15', note: 'Moved red player error/loading feedback into a dedicated line below transport controls to keep the player layout stable during status updates while preserving high-visibility messaging.' },
+  { version: '3.2.12', completedAt: '2026-02-15', note: 'Refined local-audio workflow and queue UX: unified played/downloaded progress into one selectable bar (blue played over green downloaded), moved download controls to per-item queue buttons with pause/resume semantics, added queue-level download state in player header, enabled background/forced queue downloads using the same indicators, preserved playback while downloads continue, and tightened rail button contrast.' },
+  { version: '3.2.11', completedAt: '2026-02-15', note: 'Increased rail nav button contrast, added floating player red/green status dot, introduced queue-download workflow (selected queueing, sequential downloads, abort, per-item status/progress), enabled offline playback fallback for downloaded stories, surfaced current-story progress in player header, added open/download actions in queue rows, moved auto-next control to Settings-only defaults, and made loading-chunk status text red for visibility.' },
+  { version: '3.2.10', completedAt: '2026-02-15', note: 'Added red/green state dot to floating player hover, strengthened rail menu button styling, and refined playback control presentation while keeping speed control in custom player controls only.' },
+  { version: '3.2.9', completedAt: '2026-02-15', note: 'Improved queue-management UX: stabilized player queue indicator updates, refined Find date-range behavior, moved timestamped fix history back into Settings, and updated About copy for queue + TTS workflows.' },
+  { version: '3.2.8', completedAt: '2026-02-15', note: 'Aligned v3 layout to mock intent: player controls now dock to the rail on desktop, and History actions/filter/sort controls now live at the top of the History results card.' },
+  { version: '3.2.7', completedAt: '2026-02-15', note: 'Constrained docked rail control layouts to prevent overflow into the main pane and keep result lists visually anchored in the main content area.' },
+  { version: '3.2.6', completedAt: '2026-02-15', note: 'Fixed initialization-time control docking so Find/History controls reliably move into the left rail on desktop without requiring a manual resize.' },
+  { version: '3.2.5', completedAt: '2026-02-15', note: 'Expanded v3 rail docking so Find/History controls move into the left rail at standard desktop widths with rail-specific card/button sizing.' },
+  { version: '3.2.4', completedAt: '2026-02-15', note: 'Implemented mock-aligned responsive docking so Find and History control cards move into the left rail on wide screens while results stay in the main pane.' },
+  { version: '3.2.3', completedAt: '2026-02-15', note: 'Moved Find controls into the main pane as well, making the left rail navigation-only so result workflows stay in the main content area.' },
+  { version: '3.2.2', completedAt: '2026-02-15', note: 'Moved History action controls out of the rail into the main Deleted Items History panel so rail stays navigation-focused and results/actions stay together.' },
+  { version: '3.2.1', completedAt: '2026-02-15', note: 'Improved v3 layout ergonomics: Deleted History list now has a reliable dedicated scroll container, and Player playlist expands to full available pane height with internal scrolling.' },
+  { version: '3.2.0', completedAt: '2026-02-15', note: 'Established redesign branch baseline versioning at 3.2.x for continued UI iteration.' },
+  { version: '3.1.3', completedAt: '2026-02-15', note: 'Removed overly strict Readwise token prefix validation so standard public API tokens are accepted in Settings.' },
+  { version: '3.1.2', completedAt: '2026-02-15', note: 'Improved Readwise auth error handling: upstream 401/403 now return clearer actionable messages and preserve HTTP status instead of generic server errors.' },
+  { version: '3.1.1', completedAt: '2026-02-15', note: 'Fixed async route error handling by awaiting API handlers in dispatcher, preventing Cloudflare 1101 HTML failures and returning structured JSON errors instead.' },
+  { version: '3.1.0', completedAt: '2026-02-14', note: 'Experimental redesign branch kickoff from high-fidelity mocks, focused on UI iteration only with one-of source selection in Settings (no new integrations yet).' },
+  { version: '3.0.2', completedAt: '2026-02-14', note: 'Renamed Cleanup workflow to Find, changed primary action label from Preview Items to Find, and reordered top nav tabs so History appears last.' },
+  { version: '3.0.1', completedAt: '2026-02-14', note: 'Adaptive player rail compaction: narrowed left rail in player-docked mode and stacked transport controls for cleaner fit while preserving touch usability.' },
+  { version: '3.0.0', completedAt: '2026-02-13', note: 'Upgraded to v3 with immediate auto-saved settings, live voice preview, larger player controls, denser header layout, faster first-audio chunking, and improved TTS narration cleanup/preface behavior.' },
+  { version: '2.0.0', completedAt: '2026-02-13', note: 'Renamed app to Read Flow and finalized the v2 baseline branding/release line prior to planned v3 Gmail support.' },
+  { version: '2.2.19', completedAt: '2026-02-13', note: 'Aligned UI action/button accent colors with the new Option C cyan brand palette across primary controls, focus states, and swipe accents.' },
+  { version: '2.2.18', completedAt: '2026-02-13', note: 'Applied new Option C branding icon and favicon, adding an audio-wave cue alongside the checkmark to signal read-aloud support.' },
+  { version: '2.2.17', completedAt: '2026-02-13', note: 'Restored low-latency startup via 3-stage chunk sizing (short/medium/long), persisted player speed, added approximate seekable playlist progress bars, voice selection in settings, and compact Player title-row controls.' },
+  { version: '2.2.16', completedAt: '2026-02-13', note: 'Switched player TTS to consistency-first chunking profile (larger equal chunk sizes, fixed voice request) to reduce voice drift between chunks.' },
+  { version: '2.2.15', completedAt: '2026-02-13', note: 'Improved TTS text cleanup by removing common newsletter boilerplate and de-duplicating repeated near-identical sentences from extraction artifacts.' },
+  { version: '2.2.14', completedAt: '2026-02-13', note: 'Player now stops immediately when the currently playing item is deleted/archived/restored, and play/pause button now has distinct paused-vs-playing visuals/icons.' },
+  { version: '2.2.13', completedAt: '2026-02-13', note: 'Improved Player UX/perf: reduced repeated headline/summary speech, added shorter-start + prefetch chunking to cut startup/gap lag, compact icon lozenge mobile controls, updated header metadata, and refined speed options.' },
+  { version: '2.2.12', completedAt: '2026-02-13', note: 'Preview/Refresh button now always fetches fresh data on click instead of short-circuiting to cached results for unchanged queries.' },
+  { version: '2.2.11', completedAt: '2026-02-13', note: 'Preview button now switches to Refresh Items when cached preview data is stale by age, even if filters are unchanged.' },
+  { version: '2.2.10', completedAt: '2026-02-13', note: 'Reduced per-request TTS synthesis chunk size in Player so long stories always stream across multiple OpenAI clips instead of stalling near short single-clip limits.' },
+  { version: '2.2.9', completedAt: '2026-02-13', note: 'Fixed TTS text assembly so full article text is no longer dropped as a duplicate when it contains the summary; this restores long-form playback beyond short summary-length clips.' },
+  { version: '2.2.8', completedAt: '2026-02-13', note: 'Persisted full UI session state (tab, filters, results, selections, player queue/progress context, and scroll positions) so app reload restores prior working state.' },
+  { version: '2.2.7', completedAt: '2026-02-13', note: 'Player now streams full-story TTS in sequential chunks, prioritizes full extracted text over preview text, and preserves live speed changes while continuing playback.' },
+  { version: '2.2.6', completedAt: '2026-02-13', note: 'Fixed player runtime error by defining client-side max TTS text constant used during audio request slicing.' },
+  { version: '2.2.5', completedAt: '2026-02-13', note: 'When source is Archive, secondary cleanup action now restores items (to known original location or Feed fallback), including matching button and swipe labeling.' },
+  { version: '2.2.4', completedAt: '2026-02-13', note: 'Player text view now uses full extracted story text while keeping TTS request payload bounded.' },
+  { version: '2.2.3', completedAt: '2026-02-13', note: 'Fixed real-vs-mock TTS selection by honoring explicit request mode, and added clear Player mode/error feedback when OpenAI TTS is unavailable.' },
+  { version: '2.2.2', completedAt: '2026-02-13', note: 'Moved Deleted History All/search/sort controls to the results header for consistent top-of-list filtering and sorting.' },
+  { version: '2.2.1', note: 'Fixed per-item playhead persistence, live player progress-bar updates, swipe-release click suppression, and preview Play forcing immediate insert-and-play behavior.' },
+  { version: '2.2.0', note: 'Added Player automation settings (auto-next and auto archive/delete), richer swipeable player rows, and stronger per-item playhead restore behavior.' },
+  { version: '2.1.9', note: 'Added visible Player tab, auto-load from checked preview items, persisted current playback item/position, and fixed rail search-field overflow sizing.' },
+  { version: '2.1.8', note: 'Player queue is now scrollable and supports search plus filtered All-toggle selection, matching preview/deleted list workflows.' },
+  { version: '2.1.7', note: 'Player now pauses/saves position when leaving the tab and resumes per-item progress; text extraction keeps longer, cleaner preview text with reduced duplication.' },
+  { version: '2.1.6', note: 'Fixed preview Play shortcut click handling, switched it to an icon button, and moved text preview controls into the Player tab.' },
+  { version: '2.1.5', note: 'Mock TTS now uses a recorded 20-second WAV clip for realistic player validation without live API calls.' },
+  { version: '2.1.4', note: 'Made player queue rows fully clickable so selecting the current-arrow title reliably jumps to that item.' },
+  { version: '2.1.3', note: 'Mock TTS now returns a testable ~20s clip, and Player queue now supports selectable items with an Auto play next toggle.' },
+  { version: '2.1.2', note: 'Added configurable max-open-tabs setting and preview Play controls that open and run audio in a dedicated Player tab.' },
+  { version: '2.1.1', note: 'Added extracted-text visibility in preview items so TTS input can be inspected before playback.' },
+  { version: '2.1.0', note: 'Added audio TTS API with KV caching, mock-audio mode for low-cost testing, and settings hooks for OpenAI key plus playback skip controls.' },
   { version: '2.0.2', note: 'Refined control rail sizing, moved preview filter/sort/actions to right results header, and hide Open Selected when 5 or more items are selected.' },
   { version: '2.0.1', note: 'Reworked UI into a single control rail with compact mobile mode, dynamic Readwise locations, and settings-managed token override with overwrite confirmation.' },
   { version: '2.0.0', note: 'Introduced v2 layout shell with Readwise-style left rail and top route bar while preserving existing cleanup/deleted/settings/about affordances.' },
@@ -35,12 +100,22 @@ const VERSION_HISTORY = [
   { version: '1.1.1', note: 'URL cleanup, richer thumbnail extraction, favicon.' },
   { version: '1.1.0', note: 'Settings, about, selective actions, preview cache.' },
 ];
-const DEFAULT_SETTINGS = {
-  defaultLocation: 'new',
-  defaultDays: 7,
-  previewLimit: 100,
-  confirmActions: true,
-};
+const MOCK_TTS_SECONDS = 20;
+const MAX_TTS_PREVIEW_CHARS = 12000;
+const TTS_SYNTH_CHUNK_CHARS = 3200;
+const TTS_FIRST_CHUNK_CHARS = 220;
+const TTS_SECOND_CHUNK_CHARS = 1000;
+const PREVIEW_CACHE_STALE_MS = 15 * 60 * 1000;
+const { HTML_APP, HTML_MOCKUP_V3 } = getUiHtml({
+  appVersion: APP_VERSION,
+  versionHistory: VERSION_HISTORY,
+  maxTtsPreviewChars: MAX_TTS_PREVIEW_CHARS,
+  ttsSynthChunkChars: TTS_SYNTH_CHUNK_CHARS,
+  ttsFirstChunkChars: TTS_FIRST_CHUNK_CHARS,
+  ttsSecondChunkChars: TTS_SECOND_CHUNK_CHARS,
+  previewCacheStaleMs: PREVIEW_CACHE_STALE_MS,
+});
+let MOCK_TTS_BYTES = null;
 
 export default {
   async fetch(request, env) {
@@ -58,38 +133,59 @@ export default {
     try {
       // API Routes
       if (url.pathname === '/api/locations') {
-        return handleGetLocations(env, corsHeaders);
+        return await handleGetLocations(env, corsHeaders);
       }
       if (url.pathname === '/api/count') {
-        return handleGetCount(request, env, corsHeaders);
+        return await handleGetCount(request, env, corsHeaders);
       }
       if (url.pathname === '/api/preview') {
-        return handlePreview(request, env, corsHeaders);
+        return await handlePreview(request, env, corsHeaders);
       }
       if (url.pathname === '/api/cleanup') {
-        return handleCleanup(request, env, corsHeaders);
+        return await handleCleanup(request, env, corsHeaders);
       }
       if (url.pathname === '/api/deleted') {
-        return handleGetDeleted(env, corsHeaders);
+        return await handleGetDeleted(env, corsHeaders);
       }
       if (url.pathname === '/api/restore') {
-        return handleRestore(request, env, corsHeaders);
+        return await handleRestore(request, env, corsHeaders);
       }
       if (url.pathname === '/api/clear-deleted') {
-        return handleClearDeleted(request, env, corsHeaders);
+        return await handleClearDeleted(request, env, corsHeaders);
       }
       if (url.pathname === '/api/settings') {
         if (request.method === 'POST') {
-          return handleSaveSettings(request, env, corsHeaders);
+          return await handleSaveSettings(request, env, corsHeaders);
         }
-        return handleGetSettings(env, corsHeaders);
+        return await handleGetSettings(env, corsHeaders);
       }
       if (url.pathname === '/api/token-status') {
-        return handleTokenStatus(env, corsHeaders);
+        return await handleTokenStatus(env, corsHeaders);
       }
       if (url.pathname === '/api/token') {
         if (request.method === 'POST') {
-          return handleSaveToken(request, env, corsHeaders);
+          return await handleSaveToken(request, env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/api/openai-key-status') {
+        return await handleOpenAIKeyStatus(env, corsHeaders);
+      }
+      if (url.pathname === '/api/openai-key') {
+        if (request.method === 'POST') {
+          return await handleSaveOpenAIKey(request, env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/api/audio/tts') {
+        if (request.method === 'POST') {
+          return await handleAudioTts(request, env, corsHeaders);
         }
         return new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
@@ -108,19 +204,35 @@ export default {
       if (url.pathname === '/favicon.ico') {
         return handleFavicon();
       }
+      if (url.pathname === '/mockup-v3') {
+        return new Response(HTML_MOCKUP_V3, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
 
       // Serve PWA
       return new Response(HTML_APP, {
         headers: { 'Content-Type': 'text/html', ...corsHeaders },
       });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 500,
+      const status = deriveHttpStatusFromError(error);
+      return new Response(JSON.stringify({ error: error && error.message ? error.message : 'Unknown server error' }), {
+        status,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
   },
 };
+
+function deriveHttpStatusFromError(error) {
+  const message = error && error.message ? String(error.message) : '';
+  const directMatch = message.match(/\b(\d{3})\b/);
+  if (directMatch) {
+    const code = parseInt(directMatch[1], 10);
+    if (Number.isFinite(code) && code >= 400 && code <= 599) return code;
+  }
+  return 500;
+}
 
 // Get available locations/feeds from Readwise
 async function handleGetLocations(env, corsHeaders) {
@@ -214,24 +326,41 @@ async function handlePreview(request, env, corsHeaders) {
     });
   }
 
+  const token = await getReadwiseToken(env);
+  if (!token) {
+    return new Response(JSON.stringify({
+      error: 'Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.',
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
   const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+    token,
     withHtmlContent: includeHtmlContent,
     fromDate,
     toDate,
     limit: effectivePreviewLimit,
     maxPages: effectivePreviewMaxPages,
   });
-  const preview = articles.map(a => ({
-    id: a.id,
-    title: a.title || 'Untitled',
-    author: a.author || 'Unknown',
-    url: deriveOpenUrl(a),
-    savedAt: a.saved_at,
-    publishedAt: a.published_date || a.published_at || null,
-    site: extractDomain(a.source_url || a.url),
-    thumbnail: getArticleThumbnail(a),
-    searchable: buildSearchableText(a)
-  }));
+  const preview = articles.map(a => {
+    const ttsFullText = buildTtsText(a);
+    return {
+      id: a.id,
+      title: a.title || 'Untitled',
+      author: a.author || 'Unknown',
+      url: deriveOpenUrl(a),
+      savedAt: a.saved_at,
+      publishedAt: a.published_date || a.published_at || null,
+      site: extractDomain(a.source_url || a.url),
+      thumbnail: getArticleThumbnail(a),
+      originalLocation: a.original_location || a.previous_location || null,
+      searchable: buildSearchableText(a),
+      ttsFullText,
+      ttsPreview: ttsFullText.slice(0, MAX_TTS_PREVIEW_CHARS),
+    };
+  });
 
   return new Response(JSON.stringify({
     total: articles.length,
@@ -255,8 +384,8 @@ async function handleCleanup(request, env, corsHeaders) {
     });
   }
 
-  if (!['delete', 'archive'].includes(action)) {
-    return new Response(JSON.stringify({ error: 'Action must be delete or archive' }), {
+  if (!['delete', 'archive', 'restore'].includes(action)) {
+    return new Response(JSON.stringify({ error: 'Action must be delete, archive, or restore' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
@@ -332,6 +461,11 @@ async function handleCleanup(request, env, corsHeaders) {
     try {
       if (action === 'delete') {
         await deleteArticle(env, id);
+      } else if (action === 'restore') {
+        const article = articles.find((a) => String(a.id) === String(id));
+        const item = Array.isArray(items) ? items.find((it) => String(it && it.id) === String(id)) : null;
+        const targetLocation = resolveRestoreLocation(item, article);
+        await moveArticleToLocation(env, id, targetLocation);
       } else {
         await archiveArticle(env, id);
       }
@@ -481,13 +615,6 @@ async function handleSaveToken(request, env, corsHeaders) {
     });
   }
 
-  if (!token.startsWith('rw_')) {
-    return new Response(JSON.stringify({ error: 'Token format looks invalid' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-
   const existing = await env.KV.get('custom_readwise_token');
   const hasExisting = !!existing;
   if (hasExisting && !confirmOverwrite) {
@@ -506,6 +633,162 @@ async function handleSaveToken(request, env, corsHeaders) {
   });
 }
 
+async function handleOpenAIKeyStatus(env, corsHeaders) {
+  const hasCustomKey = !!(await env.KV.get('custom_openai_key'));
+  const hasEnvKey = typeof env.OPENAI_API_KEY === 'string' && env.OPENAI_API_KEY.length > 0;
+  const source = hasCustomKey ? 'custom' : (hasEnvKey ? 'env' : 'none');
+  return new Response(JSON.stringify({
+    hasKey: hasCustomKey || hasEnvKey,
+    hasCustomKey,
+    source,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleSaveOpenAIKey(request, env, corsHeaders) {
+  const body = await request.json();
+  const key = typeof body.key === 'string' ? body.key.trim() : '';
+  const confirmOverwrite = body.confirmOverwrite === true;
+
+  if (!key) {
+    return new Response(JSON.stringify({ error: 'OpenAI key is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  if (!key.startsWith('sk-')) {
+    return new Response(JSON.stringify({ error: 'OpenAI key format looks invalid' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const existing = await env.KV.get('custom_openai_key');
+  const hasExisting = !!existing;
+  if (hasExisting && !confirmOverwrite) {
+    return new Response(JSON.stringify({ error: 'OpenAI key already set; confirm overwrite' }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  await env.KV.put('custom_openai_key', key);
+  return new Response(JSON.stringify({
+    saved: true,
+    overwritten: hasExisting,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleAudioTts(request, env, corsHeaders) {
+  const body = await request.json();
+  const articleId = String(body.articleId || '');
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  const voice = typeof body.voice === 'string' && body.voice.trim() ? body.voice.trim() : 'alloy';
+  const speed = Number.isFinite(Number(body.speed)) ? Math.min(4, Math.max(0.5, Number(body.speed))) : 1;
+  const chunkIndex = Number.isFinite(Number(body.chunkIndex)) ? Math.max(0, parseInt(body.chunkIndex, 10)) : 0;
+
+  if (!text) {
+    return new Response(JSON.stringify({ error: 'Text is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const settings = await getSettings(env);
+  const explicitMock = typeof body.mock === 'boolean' ? body.mock : null;
+  const useMockTts = explicitMock !== null ? explicitMock : settings.mockTts === true;
+  const cacheKey = await getTtsCacheKey({
+    articleId: articleId || 'none',
+    text,
+    voice,
+    speed,
+    chunkIndex,
+    model: 'gpt-4o-mini-tts',
+    mock: useMockTts,
+  });
+  const cacheStoreKey = `tts_cache:${cacheKey}`;
+
+  const cached = await env.KV.get(cacheStoreKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      const bytes = base64ToUint8Array(parsed.audioBase64 || '');
+      return new Response(bytes, {
+        headers: {
+          'Content-Type': parsed.contentType || 'audio/mpeg',
+          'Cache-Control': 'private, max-age=3600',
+          'X-TTS-Cache': 'HIT',
+          'X-TTS-Mock': parsed.mock ? '1' : '0',
+          ...corsHeaders,
+        },
+      });
+    } catch {
+      // continue and regenerate below when cache is malformed
+    }
+  }
+
+  let audioBytes;
+  let contentType;
+  if (useMockTts) {
+    if (!MOCK_TTS_BYTES) {
+      MOCK_TTS_BYTES = base64ToUint8Array(MOCK_TTS_WAV_BASE64 || '');
+      if (!MOCK_TTS_BYTES || MOCK_TTS_BYTES.length < 44) {
+        MOCK_TTS_BYTES = createMockWavClip(MOCK_TTS_SECONDS);
+      }
+    }
+    audioBytes = MOCK_TTS_BYTES;
+    contentType = 'audio/wav';
+  } else {
+    const openaiKey = await getOpenAIKey(env);
+    if (!openaiKey) {
+      return new Response(JSON.stringify({ error: 'OpenAI key is not configured' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    const openaiRes = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini-tts',
+        voice,
+        input: text.slice(0, 12000),
+        format: 'mp3',
+        speed,
+      }),
+    });
+    if (!openaiRes.ok) {
+      throw new Error(`OpenAI TTS failed: ${openaiRes.status}`);
+    }
+    contentType = openaiRes.headers.get('content-type') || 'audio/mpeg';
+    audioBytes = new Uint8Array(await openaiRes.arrayBuffer());
+  }
+
+  await env.KV.put(cacheStoreKey, JSON.stringify({
+    audioBase64: uint8ToBase64(audioBytes),
+    contentType,
+    mock: useMockTts,
+  }), { expirationTtl: 60 * 60 * 24 * 14 });
+
+  return new Response(audioBytes, {
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'private, max-age=3600',
+      'X-TTS-Cache': 'MISS',
+      'X-TTS-Mock': useMockTts ? '1' : '0',
+      ...corsHeaders,
+    },
+  });
+}
+
 function handleGetVersion(corsHeaders) {
   return new Response(JSON.stringify({ version: APP_VERSION }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -514,11 +797,22 @@ function handleGetVersion(corsHeaders) {
 
 function handleFavicon() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"/>
-<path d="M20 40c8-1 14-7 15-15" stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none"/>
-<path d="M31 26h15" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
-<circle cx="40" cy="42" r="8" fill="#fff"/>
-<path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<defs>
+  <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#0ea5e9"/>
+    <stop offset="1" stop-color="#0284c7"/>
+  </linearGradient>
+</defs>
+<rect x="7" y="6" width="50" height="52" rx="12" fill="url(#g2)"/>
+<path d="M18 17h28" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<path d="M18 24h28" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<path d="M18 31h22" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<path d="M18 38h17" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+<circle cx="44" cy="44" r="10" fill="#f8fafc"/>
+<path d="M39.6 44.2l2.5 2.5 6.1-6.1" stroke="#0284c7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<path d="M14 44l4-3v6z" fill="#e0f2fe"/>
+<path d="M19.5 42.2c1 .9 1 2.7 0 3.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"/>
+<path d="M22.3 40.8c1.9 1.8 1.9 4.8 0 6.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"/>
 </svg>`;
   return new Response(svg, {
     headers: {
@@ -526,43 +820,6 @@ function handleFavicon() {
       'Cache-Control': 'public, max-age=86400',
     },
   });
-}
-
-async function getSettings(env) {
-  try {
-    const stored = await env.KV.get('settings');
-    if (!stored) return { ...DEFAULT_SETTINGS };
-    return sanitizeSettings(JSON.parse(stored));
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
-}
-
-function sanitizeSettings(input) {
-  const source = input && typeof input === 'object' ? input : {};
-  const defaultLocation = typeof source.defaultLocation === 'string' && source.defaultLocation.trim()
-    ? source.defaultLocation.trim()
-    : DEFAULT_SETTINGS.defaultLocation;
-  const defaultDays = normalizeInt(source.defaultDays, DEFAULT_SETTINGS.defaultDays, 1, 3650);
-  const previewLimit = normalizeInt(source.previewLimit, DEFAULT_SETTINGS.previewLimit, 1, 500);
-  const confirmActions = typeof source.confirmActions === 'boolean'
-    ? source.confirmActions
-    : DEFAULT_SETTINGS.confirmActions;
-
-  return {
-    defaultLocation,
-    defaultDays,
-    previewLimit,
-    confirmActions,
-  };
-}
-
-function normalizeInt(value, fallback, min, max) {
-  const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed)) return fallback;
-  if (parsed < min) return min;
-  if (parsed > max) return max;
-  return parsed;
 }
 
 // Helper: Fetch articles older than date from specific location
@@ -578,7 +835,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, options.maxPages) : Infinity;
   const token = options.token || await getReadwiseToken(env);
   if (!token) {
-    throw new Error('Readwise token is not configured');
+    throw new Error('Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.');
   }
 
   do {
@@ -603,6 +860,9 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     );
 
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`Readwise API ${response.status}: Unauthorized. Open Settings and re-save your Readwise API key for this deployment.`);
+      }
       throw new Error(`Readwise API error: ${response.status}`);
     }
 
@@ -633,88 +893,103 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
 }
 
 // Helper: Delete article from Readwise
-async function sleep(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isRetryableStatus(status) {
-  return status === 429 || status >= 500;
-}
-
-async function deleteArticle(env, articleId) {
-  const token = await getReadwiseToken(env);
-  if (!token) throw new Error('Readwise token is not configured');
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await fetch(
-      `https://readwise.io/api/v3/delete/${articleId}/`,
-      {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Token ${token}`,
-        },
-      }
-    );
-
-    if (response.ok || response.status === 204) return;
-    if (attempt < maxAttempts && isRetryableStatus(response.status)) {
-      await sleep(200 * attempt);
-      continue;
+function resolveRestoreLocation(item, article) {
+  const candidates = [
+    item && item.originalLocation,
+    item && item.previousLocation,
+    article && article.original_location,
+    article && article.previous_location,
+    article && article.restored_location,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim() && candidate.trim() !== 'archive') {
+      return candidate.trim();
     }
-    throw new Error(`Delete failed: ${response.status}`);
   }
+  return 'feed';
 }
 
-// Helper: Archive article in Readwise
-async function archiveArticle(env, articleId) {
-  const token = await getReadwiseToken(env);
-  if (!token) throw new Error('Readwise token is not configured');
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await fetch(
-      `https://readwise.io/api/v3/update/${articleId}/`,
-      {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Token ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ location: 'archive' }),
-      }
-    );
-
-    if (response.ok) return;
-    if (attempt < maxAttempts && isRetryableStatus(response.status)) {
-      await sleep(200 * attempt);
-      continue;
-    }
-    throw new Error(`Archive failed: ${response.status}`);
-  }
+async function getTtsCacheKey(parts) {
+  const textHash = await sha256Hex(parts.text || '');
+  return [
+    parts.articleId || 'none',
+    parts.model || 'gpt-4o-mini-tts',
+    parts.voice || 'alloy',
+    String(parts.speed || 1),
+    String(parts.chunkIndex || 0),
+    parts.mock ? 'mock' : 'real',
+    textHash.slice(0, 24),
+  ].join(':');
 }
 
-// Helper: Add URL back to Readwise
-async function addToReadwise(env, url) {
-  const token = await getReadwiseToken(env);
-  if (!token) throw new Error('Readwise token is not configured');
-  const response = await fetch('https://readwise.io/api/v3/save/', {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ url }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Add failed: ${response.status}`);
-  }
+async function sha256Hex(value) {
+  const data = new TextEncoder().encode(String(value || ''));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
-async function getReadwiseToken(env) {
-  const customToken = await env.KV.get('custom_readwise_token');
-  if (customToken && customToken.trim()) return customToken.trim();
-  if (typeof env.READWISE_TOKEN === 'string' && env.READWISE_TOKEN.trim()) return env.READWISE_TOKEN.trim();
-  return null;
+function uint8ToBase64(uint8) {
+  let binary = '';
+  for (let i = 0; i < uint8.length; i++) {
+    binary += String.fromCharCode(uint8[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(String(base64 || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function createMockWavClip(seconds) {
+  const sampleRate = 16000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const samples = Math.max(1, Math.floor(sampleRate * seconds));
+  const bytesPerSample = bitsPerSample / 8;
+  const dataSize = samples * channels * bytesPerSample;
+  const totalSize = 44 + dataSize;
+  const buffer = new ArrayBuffer(totalSize);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * bytesPerSample, true);
+  view.setUint16(32, channels * bytesPerSample, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const baseFreq = 220;
+  let offset = 44;
+  for (let i = 0; i < samples; i++) {
+    const t = i / sampleRate;
+    const envelope = 0.5 + 0.5 * Math.sin(2 * Math.PI * 0.25 * t);
+    const sample = Math.sin(2 * Math.PI * baseFreq * t) * 0.2 * envelope;
+    const intSample = Math.max(-1, Math.min(1, sample)) * 32767;
+    view.setInt16(offset, intSample, true);
+    offset += 2;
+  }
+
+  return new Uint8Array(buffer);
+}
+
+function writeAscii(view, offset, text) {
+  for (let i = 0; i < text.length; i++) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
 }
 
 // Helper: Get deleted items from KV
@@ -837,6 +1112,25 @@ function extractImageFromHtml(html) {
   return null;
 }
 
+function extractImageCaptionsFromHtml(html) {
+  if (!html || typeof html !== 'string') return [];
+  const out = [];
+  const figCaptions = html.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/gi) || [];
+  figCaptions.forEach((raw) => {
+    const plain = normalizeTtsText(raw.replace(/<[^>]+>/g, ' '));
+    if (plain) out.push(plain);
+  });
+  const imgTags = html.match(/<img[^>]*>/gi) || [];
+  imgTags.forEach((tag) => {
+    const altMatch = tag.match(/\salt=["']([^"']+)["']/i);
+    if (altMatch && altMatch[1]) {
+      const plain = normalizeTtsText(altMatch[1]);
+      if (plain) out.push(plain);
+    }
+  });
+  return Array.from(new Set(out)).slice(0, 20);
+}
+
 function extractFirstHttpUrlFromHtml(html) {
   if (!html || typeof html !== 'string') return null;
   const decodedHtml = decodeHtmlEntities(html);
@@ -891,6 +1185,151 @@ function buildSearchableText(article) {
   return chunks.filter(Boolean).join(' ').toLowerCase();
 }
 
+function buildTtsText(article) {
+  const sourceLabel = normalizeTtsText(article.site_name || extractDomain(article.source_url || article.url));
+  const dateLabel = article.published_date || article.published_at || article.saved_at || '';
+  const parsedDate = Date.parse(dateLabel || '');
+  const spokenDate = Number.isFinite(parsedDate)
+    ? new Date(parsedDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
+  const chunks = [];
+  const pushUnique = (value) => {
+    const cleaned = normalizeTtsText(value);
+    if (!cleaned) return;
+    const normalized = cleaned.toLowerCase();
+    let replaceIndex = -1;
+    for (let i = 0; i < chunks.length; i++) {
+      const existing = chunks[i];
+      const n = existing.toLowerCase();
+      if (n === normalized) return;
+      // If a short fragment is already contained in a longer chunk, skip it.
+      if (normalized.length <= 320 && n.includes(normalized)) return;
+      // If a new longer chunk contains an existing short fragment, replace the short one.
+      if (n.length <= 320 && normalized.includes(n)) replaceIndex = i;
+    }
+    if (replaceIndex >= 0) chunks.splice(replaceIndex, 1);
+    chunks.push(cleaned);
+  };
+
+  const prefaceParts = [];
+  if (article.title) prefaceParts.push(article.title);
+  if (article.author) prefaceParts.push(`By ${article.author}`);
+  if (sourceLabel && sourceLabel !== 'Unknown') prefaceParts.push(`From ${sourceLabel}`);
+  if (spokenDate) prefaceParts.push(`Written on ${spokenDate}`);
+  pushUnique(prefaceParts.join('. ') + (prefaceParts.length ? '.' : ''));
+
+  pushUnique(article.title);
+  pushUnique(article.author ? `By ${article.author}` : '');
+  pushUnique(article.summary);
+  pushUnique(article.content);
+  pushUnique(article.notes);
+
+  if (typeof article.html_content === 'string' && article.html_content.length > 0) {
+    const captions = extractImageCaptionsFromHtml(article.html_content);
+    captions.forEach((caption) => pushUnique(`Image caption: ${caption}`));
+    const plain = normalizeTtsText(article.html_content
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' '));
+    // Keep full readable body text whenever available so TTS can cover the complete story.
+    if (plain) pushUnique(plain);
+  }
+
+  return cleanupTtsText(chunks.join('\n\n').trim(), {
+    title: article.title,
+    author: article.author,
+    sourceLabel,
+    spokenDate,
+  });
+}
+
+function normalizeTtsText(value) {
+  if (!value || typeof value !== 'string') return '';
+  return decodeHtmlEntities(value)
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanupTtsText(text, context = {}) {
+  let cleaned = normalizeTtsText(text);
+  if (!cleaned) return '';
+  cleaned = cleaned
+    .replace(/\bhttps?:\/\/[^\s)]+/gi, ' ')
+    .replace(/\bwww\.[^\s)]+/gi, ' ')
+    .replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi, ' ')
+    .replace(/\b(?:\d[ -]?){7,}\d\b/g, ' ')
+    .replace(/\bView in browser\b[:\s-]*/gi, ' ')
+    .replace(/\bOpen in browser\b[:\s-]*/gi, ' ')
+    .replace(/\bRead online\b[:\s-]*/gi, ' ')
+    .replace(/\bProgramming note\b[:\s-]*/gi, ' ')
+    .replace(/\bSubscribe\b.*$/gi, ' ')
+    .replace(/\bUnsubscribe\b.*$/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const parts = cleaned.split(/(?<=[.!?])\s+/);
+  const seen = new Set();
+  const deduped = [];
+  for (const part of parts) {
+    const sentence = normalizeTtsText(part);
+    if (!sentence) continue;
+    const key = sentence
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!key) continue;
+    // Drop repeated short/medium sentences (common extraction artifact).
+    if (key.length <= 220 && seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(sentence);
+  }
+  let result = deduped.join(' ').trim();
+
+  // Trim common trailing podcast/newsletter boilerplate sections.
+  const tailWindowStart = Math.max(0, result.length - 2600);
+  const tail = result.slice(tailWindowStart);
+  const boilerplateMarkers = [
+    /\b(credits|transcript|thanks to|special thanks|produced by|edited by|hosted by|co-hosts?)\b/i,
+    /\b(collaborators?|contributors?|panelists?)\b/i,
+    /\b(subscribe|unsubscribe|follow us|newsletter|support this podcast)\b/i,
+  ];
+  let cutAt = -1;
+  for (const marker of boilerplateMarkers) {
+    const match = tail.match(marker);
+    if (match && typeof match.index === 'number') {
+      const abs = tailWindowStart + match.index;
+      cutAt = cutAt < 0 ? abs : Math.min(cutAt, abs);
+    }
+  }
+  if (cutAt > 0) {
+    result = result.slice(0, cutAt).trim();
+  }
+
+  // Remove duplicate metadata if it appears again right after preface.
+  const metas = [
+    normalizeTtsText(context.title || ''),
+    normalizeTtsText(context.author ? `By ${context.author}` : ''),
+    normalizeTtsText(context.sourceLabel ? `From ${context.sourceLabel}` : ''),
+    normalizeTtsText(context.spokenDate ? `Written on ${context.spokenDate}` : ''),
+  ].filter(Boolean);
+  for (const meta of metas) {
+    const escaped = meta.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(\\b${escaped}\\b)`, 'ig');
+    let seenMeta = false;
+    result = result.replace(re, (m) => {
+      if (seenMeta) return '';
+      seenMeta = true;
+      return m;
+    });
+    result = result.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  return result;
+}
+
 function startOfDay(dateValue) {
   const d = new Date(dateValue);
   d.setHours(0, 0, 0, 0);
@@ -903,1960 +1342,6 @@ function endOfDay(dateValue) {
   return d;
 }
 
-const HTML_APP = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#4f46e5">
-  <title>Readwise Cleanup</title>
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --primary: #4f46e5;
-      --primary-hover: #4338ca;
-      --danger: #dc2626;
-      --danger-hover: #b91c1c;
-      --success: #16a34a;
-      --warning: #f59e0b;
-      --bg: #f8fafc;
-      --card: #ffffff;
-      --text: #1e293b;
-      --text-muted: #64748b;
-      --border: #e2e8f0;
-      --shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      padding: 0;
-    }
-    .container { max-width: none; margin: 0; }
-    .app-shell {
-      display: grid;
-      grid-template-columns: 332px minmax(0, 1fr);
-      min-height: 100vh;
-    }
-    .left-rail {
-      border-right: 1px solid var(--border);
-      background: #f3f6fb;
-      padding: 1rem 0.75rem;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-    }
-    .main-pane {
-      min-width: 0;
-      padding: 0.75rem 1.1rem 2rem;
-      height: 100vh;
-      overflow: hidden;
-    }
-    .main-inner {
-      max-width: 1120px;
-      margin: 0 auto;
-      height: 100%;
-    }
-    #cleanup-tab { height: 100%; }
-    .rail-brand {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-weight: 700;
-      font-size: 1.2rem;
-      color: #1f2937;
-      padding: 0.35rem 0.5rem 1rem;
-    }
-    .rail-section {
-      margin-top: 0.75rem;
-      border-top: 1px solid var(--border);
-      padding-top: 0.65rem;
-    }
-    .rail-item {
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
-      padding: 0.5rem 0.6rem;
-      border-radius: 8px;
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 500;
-      font-size: 0.95rem;
-      margin-bottom: 0.2rem;
-    }
-    .rail-item.active {
-      background: #e9eef8;
-      color: #1d4ed8;
-    }
-    .rail-item:hover {
-      background: #e9eef8;
-    }
-    header {
-      padding: 0;
-      margin-bottom: 0;
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    .logo { width: 28px; height: 28px; }
-    h1 { font-size: 1.1rem; color: var(--text); }
-    .subtitle { display: none; }
-    .card {
-      background: var(--card);
-      border-radius: 12px;
-      padding: 1.25rem;
-      margin-bottom: 1rem;
-      box-shadow: var(--shadow);
-      border: 1px solid var(--border);
-    }
-    .card h2 {
-      font-size: 1.1rem;
-      margin-bottom: 0.9rem;
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
-    }
-    .form-group { margin-bottom: 0.95rem; }
-    label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 500;
-      margin-bottom: 0.45rem;
-      color: var(--text-muted);
-    }
-    .checkbox-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      margin-bottom: 0;
-      color: var(--text);
-    }
-    select, input[type="date"], input[type="number"] {
-      width: 100%;
-      padding: 0.75rem;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 1rem;
-      background: var(--card);
-      color: var(--text);
-    }
-    select:focus, input:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-    }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.45rem;
-      padding: 0.75rem 1.1rem;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .btn-primary { background: var(--primary); color: white; }
-    .btn-primary:hover { background: var(--primary-hover); }
-    .btn-danger { background: var(--danger); color: white; }
-    .btn-danger:hover { background: var(--danger-hover); }
-    .btn-outline {
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--text);
-    }
-    .btn-outline:hover { background: var(--bg); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 1rem;
-      margin-bottom: 1rem;
-    }
-    .stat {
-      text-align: center;
-      padding: 1rem;
-      background: var(--bg);
-      border-radius: 8px;
-    }
-    .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--primary); }
-    .stat-label {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .article-list {
-      max-height: none;
-      height: 100%;
-      overflow-y: auto;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-    }
-    .article-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--border);
-    }
-    .article-item:last-child { border-bottom: none; }
-    .article-item input[type="checkbox"] {
-      margin-top: 0.2rem;
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-    }
-    .article-info { flex: 1; min-width: 0; }
-    .preview-thumb {
-      width: 56px;
-      height: 56px;
-      object-fit: cover;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      flex: 0 0 56px;
-    }
-    .preview-thumb-fallback {
-      width: 56px;
-      height: 56px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text-muted);
-      font-size: 0.72rem;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 56px;
-    }
-    .article-title {
-      font-weight: 500;
-      margin-bottom: 0.2rem;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .article-link {
-      color: inherit;
-      text-decoration: none;
-      display: block;
-      min-width: 0;
-    }
-    .article-link:hover {
-      text-decoration: underline;
-    }
-    .title-row {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      min-width: 0;
-    }
-    .webpage-icon {
-      color: var(--text-muted);
-      font-size: 0.9rem;
-      flex: 0 0 auto;
-    }
-    .article-meta { font-size: 0.8rem; color: var(--text-muted); }
-    .article-site {
-      display: inline-block;
-      padding: 0.125rem 0.5rem;
-      background: var(--bg);
-      border-radius: 4px;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-    .tab {
-      display: inline-block;
-      padding: 0.75rem 0.95rem;
-      background: none;
-      border: none;
-      font-size: 0.9rem;
-      color: var(--text-muted);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      white-space: nowrap;
-      text-decoration: none;
-    }
-    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
-    .tab:hover:not(.active) { color: var(--text); }
-    .loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-      color: var(--text-muted);
-    }
-    .spinner {
-      width: 22px;
-      height: 22px;
-      border: 3px solid var(--border);
-      border-top-color: var(--primary);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-right: 0.5rem;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .toast {
-      position: fixed;
-      bottom: 1rem;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 0.75rem 1.4rem;
-      border-radius: 8px;
-      color: white;
-      font-weight: 500;
-      z-index: 1000;
-      animation: slideUp 0.3s ease;
-    }
-    .toast.success { background: var(--success); }
-    .toast.error { background: var(--danger); }
-    .toast.warning { background: var(--warning); }
-    @keyframes slideUp {
-      from { transform: translate(-50%, 100%); opacity: 0; }
-      to { transform: translate(-50%, 0); opacity: 1; }
-    }
-    .empty {
-      text-align: center;
-      padding: 1.5rem;
-      color: var(--text-muted);
-    }
-    .badge {
-      display: inline-block;
-      padding: 0.125rem 0.5rem;
-      background: var(--primary);
-      color: white;
-      border-radius: 10px;
-      font-size: 0.75rem;
-      margin-left: 0.5rem;
-    }
-    .quick-dates {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 0.5rem;
-      flex-wrap: wrap;
-    }
-    .date-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.75rem;
-      align-items: end;
-    }
-    .left-rail .date-row {
-      grid-template-columns: 1fr;
-      gap: 0.55rem;
-    }
-    .quick-date {
-      padding: 0.25rem 0.75rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      font-size: 0.8rem;
-      cursor: pointer;
-    }
-    .quick-date:hover {
-      background: var(--primary);
-      color: white;
-      border-color: var(--primary);
-    }
-    .progress {
-      height: 4px;
-      background: var(--border);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-top: 1rem;
-    }
-    .progress-bar {
-      height: 100%;
-      background: var(--primary);
-      transition: width 0.3s;
-    }
-    .inline-controls {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      margin-bottom: 0.75rem;
-    }
-    .preview-top-controls {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      margin-bottom: 0.75rem;
-      flex-wrap: wrap;
-    }
-    .preview-actions {
-      display: inline-flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-    .preview-search {
-      min-width: 220px;
-      flex: 1;
-      max-width: 420px;
-    }
-    .preview-search-wrap {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      flex: 1;
-      min-width: 240px;
-      max-width: 480px;
-    }
-    .sort-toggle {
-      display: inline-flex;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      overflow: hidden;
-      background: white;
-    }
-    .sort-toggle button {
-      border: none;
-      background: transparent;
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      padding: 0.25rem 0.6rem;
-      cursor: pointer;
-    }
-    .sort-toggle button.active {
-      background: var(--bg);
-      color: var(--text);
-      font-weight: 600;
-    }
-    .title-row {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      justify-content: space-between;
-    }
-    .title-left {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      min-width: 0;
-      flex: 1;
-    }
-    .article-date-right {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      white-space: nowrap;
-      margin-left: 0.6rem;
-      flex: 0 0 auto;
-    }
-    .search-clear-btn {
-      width: 2rem;
-      height: 2rem;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: white;
-      color: var(--text-muted);
-      font-size: 1rem;
-      line-height: 1;
-      cursor: pointer;
-    }
-    .search-clear-btn:hover {
-      background: var(--bg);
-      color: var(--text);
-    }
-    .swipe-item {
-      position: relative;
-      overflow: hidden;
-    }
-    .swipe-bg {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 50%;
-      display: flex;
-      align-items: center;
-      color: white;
-      font-weight: 600;
-      font-size: 0.85rem;
-      pointer-events: none;
-      z-index: 0;
-    }
-    .swipe-bg.right {
-      left: 0;
-      justify-content: flex-start;
-      padding-left: 0.8rem;
-      background: #dc2626;
-    }
-    .swipe-bg.left {
-      right: 0;
-      justify-content: flex-end;
-      padding-right: 0.8rem;
-      background: #2563eb;
-    }
-    .swipe-content {
-      position: relative;
-      background: var(--card);
-      transition: transform 0.15s ease;
-      cursor: grab;
-      touch-action: pan-y;
-    }
-    .pagination-controls {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
-    .preview-bottom-controls {
-      display: flex;
-      justify-content: center;
-      margin-top: 0.75rem;
-    }
-    .page-label {
-      font-size: 0.85rem;
-      color: var(--text-muted);
-      min-width: 70px;
-      text-align: center;
-    }
-    .about-list { margin-left: 1rem; color: var(--text-muted); }
-    .about-list li { margin-bottom: 0.35rem; }
-    .history-list {
-      margin-top: 0.5rem;
-      border-top: 1px solid var(--border);
-      padding-top: 0.6rem;
-      color: var(--text-muted);
-      font-size: 0.85rem;
-    }
-    .history-item {
-      margin-bottom: 0.35rem;
-    }
-    .version-badge {
-      margin-top: auto;
-      width: 100%;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      background: white;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 0.25rem 0.6rem;
-      box-shadow: var(--shadow);
-      cursor: pointer;
-    }
-    #results-card {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      margin-bottom: 0;
-    }
-    #preview-list {
-      flex: 1;
-      min-height: 0;
-    }
-    @media (max-width: 600px) {
-      .stats { grid-template-columns: repeat(2, 1fr); }
-      .btn-group { flex-direction: column; }
-      .btn { width: 100%; }
-      .inline-controls { flex-direction: column; align-items: flex-start; }
-    }
-    @media (max-width: 1024px) {
-      .app-shell {
-        grid-template-columns: 1fr;
-      }
-      .left-rail {
-        position: static;
-        height: auto;
-        border-right: none;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 0.5rem;
-      }
-      .main-pane {
-        padding-top: 0.4rem;
-        height: auto;
-        overflow: visible;
-      }
-      .rail-section {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.35rem;
-      }
-      .rail-item {
-        margin-bottom: 0;
-      }
-      .left-rail .card {
-        margin-bottom: 0.55rem;
-        padding: 0.85rem;
-      }
-      .date-row {
-        grid-template-columns: 1fr;
-      }
-      .quick-dates {
-        gap: 0.25rem;
-      }
-      .quick-date {
-        padding: 0.3rem 0.45rem;
-        font-size: 0.76rem;
-      }
-      #cleanup-tab,
-      .main-inner {
-        height: auto;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="app-shell">
-      <aside class="left-rail">
-        <div class="rail-brand">
-          <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-            <rect x="8" y="6" width="48" height="52" rx="10" fill="#4f46e5"></rect>
-            <path d="M20 40c8-1 14-7 15-15" stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none"></path>
-            <path d="M31 26h15" stroke="#ffffff" stroke-width="4" stroke-linecap="round"></path>
-            <circle cx="40" cy="42" r="8" fill="#ffffff"></circle>
-            <path d="M37 42l2 2 4-4" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
-          </svg>
-          <span>Readwise</span>
-        </div>
-        <div class="rail-section">
-          <a class="rail-item tab active" data-tab="cleanup" href="/">Cleanup</a>
-          <a class="rail-item tab" data-tab="deleted" href="/deleted">History <span id="deleted-count" class="badge" style="display:none">0</span></a>
-        </div>
-        <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
-        <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
-        <div id="cleanup-controls" class="card" style="margin-top:0.8rem;">
-          <h2>Cleanup</h2>
-          <div class="form-group">
-            <label for="location">Source</label>
-            <select id="location">
-              <option value="new">Inbox (New)</option>
-              <option value="later">Later</option>
-              <option value="shortlist">Shortlist</option>
-              <option value="feed">Feed</option>
-              <option value="archive">Archive</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="from-date">Date Range</label>
-            <div class="date-row">
-              <div id="to-date-wrap">
-                <label for="to-date">End</label>
-                <input type="date" id="to-date">
-              </div>
-              <div id="from-date-wrap">
-                <label for="from-date">Start (blank = all time)</label>
-                <input type="date" id="from-date">
-              </div>
-            </div>
-            <div class="quick-dates">
-              <button type="button" class="quick-date" data-action="today">Today</button>
-              <button type="button" class="quick-date" data-action="all-time">All Time</button>
-              <button type="button" class="quick-date" data-days="7">1 week ago</button>
-              <button type="button" class="quick-date" data-days="30">1 month ago</button>
-              <button type="button" class="quick-date" data-days="90">3 months ago</button>
-              <button type="button" class="quick-date" data-days="180">6 months ago</button>
-              <button type="button" class="quick-date" data-days="365">1 year ago</button>
-            </div>
-          </div>
-          <div class="btn-group">
-            <button class="btn btn-primary" id="preview-btn">Preview Items</button>
-          </div>
-          <div class="stats" style="margin-top:0.8rem;">
-            <div class="stat">
-              <div class="stat-value" id="item-count">0</div>
-              <div class="stat-label">Items Found</div>
-            </div>
-            <div class="stat">
-              <div class="stat-value" id="location-display">-</div>
-              <div class="stat-label">Origin</div>
-            </div>
-          </div>
-        </div>
-        <div id="deleted-controls" class="card" style="display:none;margin-top:0.8rem;">
-          <h2>History</h2>
-          <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
-            Restore selected items to Reader or remove them from local history.
-          </p>
-          <div class="inline-controls">
-            <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
-            <div class="preview-search-wrap">
-              <input class="preview-search" type="text" id="deleted-search" placeholder="Search history (title, author, site, URL)">
-              <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
-              <div class="sort-toggle" aria-label="Sort deleted history by date">
-                <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
-                <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
-                <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
-              </div>
-            </div>
-          </div>
-          <div class="btn-group" style="margin-top: 1rem">
-            <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
-            <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
-            <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
-          </div>
-        </div>
-        <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
-      </aside>
-      <main class="main-pane">
-        <div class="main-inner">
-    <div id="cleanup-tab">
-      <div class="card" id="results-card">
-        <h2>Preview Results</h2>
-        <div class="preview-top-controls" id="preview-top-controls" style="display:none">
-          <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All (filtered)</label>
-          <div class="preview-search-wrap">
-            <input class="preview-search" type="text" id="preview-search" placeholder="Search preview (title, author, content)">
-            <button type="button" class="search-clear-btn" id="preview-search-clear" title="Clear search">×</button>
-            <div class="sort-toggle" aria-label="Sort preview by date">
-              <button type="button" id="preview-sort-added" class="active" title="Sort by date added">Added</button>
-              <button type="button" id="preview-sort-published" title="Sort by publication date">Published</button>
-            </div>
-          </div>
-          <div class="preview-actions">
-            <button class="btn btn-outline" id="open-selected-btn" disabled>Open Selected</button>
-            <button class="btn btn-danger" id="delete-btn" disabled>Delete Selected</button>
-            <button class="btn btn-primary" id="archive-btn" disabled>Archive Selected</button>
-          </div>
-        </div>
-        <div id="preview-list"></div>
-        <div class="preview-bottom-controls" id="preview-bottom-controls" style="display:none">
-          <div class="pagination-controls">
-            <button class="btn btn-outline" id="preview-prev-btn" disabled>Prev</button>
-            <span class="page-label" id="preview-page-label">Page 1 / 1</span>
-            <button class="btn btn-outline" id="preview-next-btn" disabled>Next</button>
-          </div>
-        </div>
-        <div class="progress" id="progress" style="display:none">
-          <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
-        </div>
-      </div>
-    </div>
-
-    <div id="deleted-tab" style="display:none">
-      <div class="card">
-        <h2>Deleted Items History</h2>
-        <div id="deleted-list"><div class="loading">Loading...</div></div>
-      </div>
-    </div>
-
-    <div id="settings-tab" style="display:none">
-      <div class="card">
-        <h2>Settings</h2>
-        <div class="form-group">
-          <label for="setting-default-location">Default location</label>
-          <select id="setting-default-location">
-            <option value="new">Inbox (New)</option>
-            <option value="later">Later</option>
-            <option value="shortlist">Shortlist</option>
-            <option value="feed">Feed</option>
-            <option value="archive">Archive</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="setting-default-days">Default age in days</label>
-          <input id="setting-default-days" type="number" min="1" max="3650">
-        </div>
-        <div class="form-group">
-          <label for="setting-preview-limit">Preview item limit</label>
-          <input id="setting-preview-limit" type="number" min="1" max="500">
-        </div>
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input id="setting-confirm-actions" type="checkbox">
-            Confirm before delete/archive actions
-          </label>
-        </div>
-        <div class="btn-group">
-          <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
-        </div>
-        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
-        <h2 style="font-size:1rem;margin-bottom:0.65rem;">Readwise API Key</h2>
-        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.6rem;">
-          Key is stored server-side in this Worker KV and is never returned to browser clients after save.
-        </p>
-        <p id="token-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking token status…</p>
-        <div class="form-group">
-          <label for="setting-readwise-token">Set/replace API key</label>
-          <input id="setting-readwise-token" type="password" autocomplete="off" placeholder="rw_...">
-        </div>
-        <div class="btn-group">
-          <button class="btn btn-outline" id="save-token-btn">Save API Key</button>
-        </div>
-        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
-        <h2 style="font-size:1rem;margin-bottom:0.5rem;">About & History</h2>
-        <p style="margin-bottom: 0.75rem; color: var(--text-muted);">
-          Use this tool to quickly review and clean Readwise Reader items by source and date range, while keeping a restorable local delete history.
-        </p>
-        <div class="history-list" id="version-history"></div>
-      </div>
-    </div>
-
-    <div id="about-tab" style="display:none">
-      <div class="card">
-        <h2>About</h2>
-        <p style="margin-bottom: 0.75rem;">Version <strong id="about-version">${APP_VERSION}</strong></p>
-        <p style="margin-bottom: 0.75rem; color: var(--text-muted);">
-          Use this tool to quickly review and clean Readwise Reader items by source and date range, while keeping a restorable local delete history.
-        </p>
-        <p style="margin-bottom: 0.5rem;">Features:</p>
-        <ul class="about-list">
-          <li>Preview old items before action.</li>
-          <li>Delete or archive items by location/date.</li>
-          <li>Restore deleted URLs from history.</li>
-          <li>Store preferences for defaults and confirmations.</li>
-        </ul>
-        <p style="margin-top: 0.9rem; color: var(--text-muted);">
-          Privacy: this app stores settings and deleted-item history in your Cloudflare KV namespace only.
-        </p>
-        <div class="history-list"></div>
-      </div>
-    </div>
-        </div>
-      </main>
-    </div>
-  </div>
-
-  <script>
-    var APP_VERSION = '${APP_VERSION}';
-    var VERSION_HISTORY = ${JSON.stringify(VERSION_HISTORY)};
-    var currentCount = 0;
-    var previewData = [];
-    var selectedPreviewIds = new Set();
-    var previewPage = 1;
-    var previewPageSize = 10;
-    var previewSearch = '';
-    var previewSortMode = 'added';
-    var activeDateShortcutTarget = 'to';
-    var swipeStateById = {};
-    var cleanupInFlight = false;
-    var cleanupBatchSize = 20;
-    var deletedItems = [];
-    var selectedDeletedIds = new Set();
-    var deletedSearch = '';
-    var deletedSortMode = 'deleted';
-    var lastQuery = null;
-    var settings = {
-      defaultLocation: 'new',
-      defaultDays: 30,
-      previewLimit: 100,
-      confirmActions: true
-    };
-
-    var locationSelect = document.getElementById('location');
-    var fromDateInput = document.getElementById('from-date');
-    var toDateInput = document.getElementById('to-date');
-    var fromDateWrap = document.getElementById('from-date-wrap');
-    var toDateWrap = document.getElementById('to-date-wrap');
-    var previewBtn = document.getElementById('preview-btn');
-    var previewSearchInput = document.getElementById('preview-search');
-    var previewSearchClearBtn = document.getElementById('preview-search-clear');
-    var previewSortAddedBtn = document.getElementById('preview-sort-added');
-    var previewSortPublishedBtn = document.getElementById('preview-sort-published');
-    var openSelectedBtn = document.getElementById('open-selected-btn');
-    var deleteBtn = document.getElementById('delete-btn');
-    var archiveBtn = document.getElementById('archive-btn');
-    var resultsCard = document.getElementById('results-card');
-    var itemCountEl = document.getElementById('item-count');
-    var locationDisplay = document.getElementById('location-display');
-    var previewList = document.getElementById('preview-list');
-    var previewTopControls = document.getElementById('preview-top-controls');
-    var previewBottomControls = document.getElementById('preview-bottom-controls');
-    var selectAllPreview = document.getElementById('select-all-preview');
-    var previewPrevBtn = document.getElementById('preview-prev-btn');
-    var previewNextBtn = document.getElementById('preview-next-btn');
-    var previewPageLabel = document.getElementById('preview-page-label');
-    var deletedList = document.getElementById('deleted-list');
-    var restoreBtn = document.getElementById('restore-btn');
-    var removeSelectedBtn = document.getElementById('remove-selected-btn');
-    var clearHistoryBtn = document.getElementById('clear-history-btn');
-    var selectAllDeleted = document.getElementById('select-all-deleted');
-    var deletedSearchInput = document.getElementById('deleted-search');
-    var deletedSearchClearBtn = document.getElementById('deleted-search-clear');
-    var deletedSortAddedBtn = document.getElementById('deleted-sort-added');
-    var deletedSortPublishedBtn = document.getElementById('deleted-sort-published');
-    var deletedSortDeletedBtn = document.getElementById('deleted-sort-deleted');
-    var deletedCountBadge = document.getElementById('deleted-count');
-    var saveSettingsBtn = document.getElementById('save-settings-btn');
-    var cleanupControlsCard = document.getElementById('cleanup-controls');
-    var deletedControlsCard = document.getElementById('deleted-controls');
-    var versionBadgeBtn = document.getElementById('version-badge');
-    var saveTokenBtn = document.getElementById('save-token-btn');
-    var tokenStatusEl = document.getElementById('token-status');
-    var settingsTokenInput = document.getElementById('setting-readwise-token');
-
-    var settingsDefaultLocation = document.getElementById('setting-default-location');
-    var settingsDefaultDays = document.getElementById('setting-default-days');
-    var settingsPreviewLimit = document.getElementById('setting-preview-limit');
-    var settingsConfirmActions = document.getElementById('setting-confirm-actions');
-    var TAB_ROUTES = {
-      cleanup: '/',
-      deleted: '/deleted',
-      settings: '/settings',
-      about: '/about',
-    };
-    var ROUTE_TABS = {
-      '/': 'cleanup',
-      '/deleted': 'deleted',
-      '/settings': 'settings',
-      '/about': 'about',
-    };
-
-    function formatInputDate(date) {
-      return date.toISOString().split('T')[0];
-    }
-
-    function setDateFromDays(days) {
-      var safeDays = Number.isFinite(days) ? days : 30;
-      var date = new Date();
-      date.setDate(date.getDate() - safeDays);
-      var formatted = formatInputDate(date);
-      if (activeDateShortcutTarget === 'from') {
-        fromDateInput.value = formatted;
-      } else {
-        toDateInput.value = formatted;
-      }
-    }
-
-    function setDateShortcutTarget(target) {
-      activeDateShortcutTarget = target === 'from' ? 'from' : 'to';
-    }
-
-    function applySettingsToUI() {
-      var hasDefaultLocation = Array.from(locationSelect.options || []).some(function(opt) {
-        return opt && opt.value === settings.defaultLocation;
-      });
-      if (hasDefaultLocation) {
-        locationSelect.value = settings.defaultLocation;
-      }
-      var today = new Date();
-      var fromDate = new Date(today);
-      fromDate.setDate(fromDate.getDate() - settings.defaultDays);
-      fromDateInput.value = formatInputDate(fromDate);
-      toDateInput.value = formatInputDate(today);
-      previewPageSize = settings.previewLimit;
-      var hasSettingsDefaultLocation = Array.from(settingsDefaultLocation.options || []).some(function(opt) {
-        return opt && opt.value === settings.defaultLocation;
-      });
-      if (hasSettingsDefaultLocation) {
-        settingsDefaultLocation.value = settings.defaultLocation;
-      }
-      settingsDefaultDays.value = settings.defaultDays;
-      settingsPreviewLimit.value = settings.previewLimit;
-      settingsConfirmActions.checked = settings.confirmActions;
-    }
-
-    function buildLocationOptionLabel(location) {
-      if (location === 'new') return 'Inbox (New)';
-      if (location === 'later') return 'Later';
-      if (location === 'shortlist') return 'Shortlist';
-      if (location === 'feed') return 'Feed';
-      if (location === 'archive') return 'Archive';
-      return location.charAt(0).toUpperCase() + location.slice(1);
-    }
-
-    function setLocations(locations) {
-      var safeLocations = Array.isArray(locations) && locations.length > 0 ? locations : ['new', 'later', 'shortlist', 'feed', 'archive'];
-      var locationHtml = safeLocations.map(function(loc) {
-        return '<option value="' + escapeHtml(loc) + '">' + escapeHtml(buildLocationOptionLabel(loc)) + '</option>';
-      }).join('');
-      locationSelect.innerHTML = locationHtml;
-      settingsDefaultLocation.innerHTML = locationHtml;
-      applySettingsToUI();
-    }
-
-    async function loadLocations() {
-      try {
-        var res = await fetch('/api/locations');
-        var data = await parseApiJson(res);
-        setLocations(data.locations || []);
-      } catch (err) {
-        setLocations([]);
-      }
-    }
-
-    function buildQueryKey() {
-      return [
-        locationSelect.value,
-        fromDateInput.value || '',
-        toDateInput.value || '',
-        settings.previewLimit
-      ].join('|');
-    }
-
-    function on(el, eventName, handler) {
-      if (!el) return;
-      el.addEventListener(eventName, handler);
-    }
-
-    on(toDateWrap, 'pointerdown', function() { setDateShortcutTarget('to'); });
-    on(fromDateWrap, 'pointerdown', function() { setDateShortcutTarget('from'); });
-    ['focus', 'click', 'input', 'change', 'pointerdown'].forEach(function(evtName) {
-      on(toDateInput, evtName, function() { setDateShortcutTarget('to'); });
-      on(fromDateInput, evtName, function() { setDateShortcutTarget('from'); });
-    });
-
-    document.querySelectorAll('.quick-date').forEach(function(btn) {
-      on(btn, 'click', function() {
-        if (btn.dataset.action === 'today') {
-          var today = formatInputDate(new Date());
-          if (activeDateShortcutTarget === 'from') {
-            fromDateInput.value = today;
-          } else {
-            toDateInput.value = today;
-          }
-          return;
-        }
-        if (btn.dataset.action === 'all-time') {
-          if (activeDateShortcutTarget === 'from') {
-            fromDateInput.value = '';
-          } else {
-            toDateInput.value = formatInputDate(new Date());
-          }
-          return;
-        }
-        var days = parseInt(btn.dataset.days, 10);
-        setDateFromDays(days);
-      });
-    });
-
-    function normalizePath(pathname) {
-      if (!pathname || pathname === '') return '/';
-      if (pathname.length > 1 && pathname.endsWith('/')) return pathname.slice(0, -1);
-      return pathname;
-    }
-
-    function getTabFromPath(pathname) {
-      var normalized = normalizePath(pathname);
-      return ROUTE_TABS[normalized] || 'cleanup';
-    }
-
-    function setActiveTab(tabName, options) {
-      var opts = options || {};
-      var shouldPush = opts.push !== false;
-      document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-      document.querySelectorAll('.tab[data-tab="' + tabName + '"]').forEach(function(activeTabEl) {
-        activeTabEl.classList.add('active');
-      });
-
-      document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? 'block' : 'none';
-      document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
-      document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
-      document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
-      cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
-      deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
-
-      if (tabName === 'deleted') {
-        loadDeletedItems();
-      }
-
-      var targetPath = TAB_ROUTES[tabName] || '/';
-      if (shouldPush && normalizePath(window.location.pathname) !== targetPath) {
-        history.pushState({ tab: tabName }, '', targetPath);
-      }
-    }
-
-    document.querySelectorAll('.tab').forEach(function(tab) {
-      on(tab, 'click', function(evt) {
-        evt.preventDefault();
-        setActiveTab(tab.dataset.tab, { push: true });
-      });
-    });
-
-    on(window, 'popstate', function() {
-      setActiveTab(getTabFromPath(window.location.pathname), { push: false });
-    });
-
-    on(versionBadgeBtn, 'click', function() {
-      setActiveTab('settings', { push: true });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-
-    on(previewBtn, 'click', async function() {
-      var fromDate = fromDateInput.value || '';
-      var toDate = toDateInput.value || '';
-      if (!toDate) toDate = formatInputDate(new Date());
-
-      var queryKey = buildQueryKey();
-      if (lastQuery === queryKey && previewData.length > 0) {
-        syncPreviewSelectionUI();
-        renderPreview();
-        showToast('Using cached preview', 'success');
-        return;
-      }
-
-      previewBtn.disabled = true;
-      previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
-
-      try {
-        var params = new URLSearchParams({
-          location: locationSelect.value,
-          to: toDate,
-          limit: String(settings.previewLimit || 100)
-        });
-        if (fromDate) params.set('from', fromDate);
-        var res = await fetch('/api/preview?' + params.toString());
-        var data = await parseApiJson(res);
-        if (data.error) throw new Error(data.error);
-
-        currentCount = data.total || 0;
-        previewData = data.preview || [];
-        selectedPreviewIds = new Set(previewData.map(function(item) { return String(item.id); }));
-        previewPage = 1;
-        lastQuery = queryKey;
-        syncPreviewSelectionUI();
-        renderPreview();
-
-        itemCountEl.textContent = currentCount;
-        locationDisplay.textContent = locationSelect.value;
-        previewTopControls.style.display = previewData.length > 0 ? 'flex' : 'none';
-        previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
-        showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        previewBtn.disabled = false;
-        previewBtn.innerHTML = 'Preview Items';
-      }
-    });
-
-    function getFilteredPreviewItems() {
-      if (!previewSearch) return previewData;
-      return previewData.filter(function(article) {
-        return (article.searchable || '').includes(previewSearch);
-      });
-    }
-
-    function getPreviewSortTimestamp(item) {
-      var rawDate = previewSortMode === 'published' ? item.publishedAt : item.savedAt;
-      var ts = Date.parse(rawDate || '');
-      return Number.isFinite(ts) ? ts : 0;
-    }
-
-    function getSortedFilteredPreviewItems() {
-      var filtered = getFilteredPreviewItems().slice();
-      filtered.sort(function(a, b) {
-        return getPreviewSortTimestamp(b) - getPreviewSortTimestamp(a);
-      });
-      return filtered;
-    }
-
-    function updatePreviewSortButtons() {
-      previewSortAddedBtn.classList.toggle('active', previewSortMode === 'added');
-      previewSortPublishedBtn.classList.toggle('active', previewSortMode === 'published');
-    }
-
-    function getActiveSelectedIds() {
-      if (!previewSearch) return Array.from(selectedPreviewIds);
-      var filteredIds = new Set(getFilteredPreviewItems().map(function(item) { return String(item.id); }));
-      return Array.from(selectedPreviewIds).filter(function(id) { return filteredIds.has(id); });
-    }
-
-    function renderPreview() {
-      var filtered = getSortedFilteredPreviewItems();
-      if (filtered.length === 0) {
-        previewList.innerHTML = '<div class="empty">No items match this filter</div>';
-        previewBottomControls.style.display = 'none';
-        syncPreviewSelectionUI();
-        return;
-      }
-
-      var totalPages = Math.max(1, Math.ceil(filtered.length / previewPageSize));
-      if (previewPage > totalPages) previewPage = totalPages;
-      var start = (previewPage - 1) * previewPageSize;
-      var end = start + previewPageSize;
-      var pageItems = filtered.slice(start, end);
-
-      var html = '<div class="article-list">';
-      pageItems.forEach(function(article) {
-        var articleId = String(article.id);
-        var checked = selectedPreviewIds.has(articleId) ? ' checked' : '';
-        html += '<div class="swipe-item" data-article-id="' + escapeHtml(articleId) + '">';
-        html += '<div class="swipe-bg right">Delete</div>';
-        html += '<div class="swipe-bg left">Archive</div>';
-        html += '<div class="article-item swipe-content"';
-        html += ' onpointerdown="handlePreviewPointerDown(event,this)"';
-        html += ' onpointermove="handlePreviewPointerMove(event,this)"';
-        html += ' onpointerup="handlePreviewPointerUp(event,this)"';
-        html += ' onpointercancel="handlePreviewPointerCancel(event,this)">';
-        html += '<input type="checkbox" data-article-id="' + escapeHtml(articleId) + '" onchange="togglePreviewItem(this)"' + checked + '>';
-        if (article.thumbnail) {
-          html += '<img class="preview-thumb" src="' + escapeHtml(article.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
-        } else {
-          html += '<span class="preview-thumb-fallback">No image</span>';
-        }
-        html += '<div class="article-info">';
-        var activeDateValue = previewSortMode === 'published' ? article.publishedAt : article.savedAt;
-        var activeDateLabel = previewSortMode === 'published' ? 'Published' : 'Added';
-        html += '<div class="title-row">';
-        html += '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
-        html += '<span class="article-date-right">' + escapeHtml(activeDateLabel) + ' ' + escapeHtml(formatDate(activeDateValue || article.savedAt)) + '</span>';
-        html += '</div>';
-        html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
-        if (article.author) {
-          html += ' by ' + escapeHtml(article.author);
-        }
-        html += ' · ' + formatDate(article.savedAt) + '</div></div></div></div>';
-      });
-      html += '</div>';
-
-      previewList.innerHTML = html;
-      previewList.querySelectorAll('.preview-open-link').forEach(function(link) {
-        on(link, 'click', function(evt) {
-          openPreviewUrl(evt, link.dataset.openUrl || link.getAttribute('href') || '');
-        });
-      });
-      previewPageLabel.textContent = 'Page ' + previewPage + ' / ' + totalPages;
-      previewPrevBtn.disabled = previewPage <= 1;
-      previewNextBtn.disabled = previewPage >= totalPages;
-      previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
-      syncPreviewSelectionUI();
-    }
-
-    on(deleteBtn, 'click', function() { performCleanup('delete'); });
-    on(archiveBtn, 'click', function() { performCleanup('archive'); });
-
-    function syncPreviewSelectionUI() {
-      var filtered = getFilteredPreviewItems();
-      if (previewData.length === 0 || filtered.length === 0) {
-        selectAllPreview.checked = false;
-        selectAllPreview.indeterminate = false;
-        openSelectedBtn.disabled = true;
-        openSelectedBtn.style.display = 'none';
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
-        openSelectedBtn.textContent = 'Open Selected';
-        deleteBtn.textContent = 'Delete Selected';
-        archiveBtn.textContent = 'Archive Selected';
-        return;
-      }
-      var selectedCount = selectedPreviewIds.size;
-      var filteredIds = new Set(filtered.map(function(item) { return String(item.id); }));
-      var filteredSelected = [...selectedPreviewIds].filter(function(id) { return filteredIds.has(id); }).length;
-      var displayCount = previewSearch ? filteredSelected : selectedCount;
-      selectAllPreview.checked = filteredSelected > 0 && filteredSelected === filtered.length;
-      selectAllPreview.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
-      var canOpenFew = displayCount > 0 && displayCount < 5;
-      openSelectedBtn.style.display = canOpenFew ? 'inline-flex' : 'none';
-      openSelectedBtn.disabled = !canOpenFew;
-      deleteBtn.disabled = displayCount === 0;
-      archiveBtn.disabled = displayCount === 0;
-      openSelectedBtn.textContent = displayCount > 0 ? 'Open Selected (' + displayCount + ')' : 'Open Selected';
-      deleteBtn.textContent = displayCount > 0 ? 'Delete Selected (' + displayCount + ')' : 'Delete Selected';
-      archiveBtn.textContent = displayCount > 0 ? 'Archive Selected (' + displayCount + ')' : 'Archive Selected';
-    }
-
-    function togglePreviewItem(checkbox) {
-      var articleId = checkbox.dataset.articleId;
-      if (checkbox.checked) selectedPreviewIds.add(articleId);
-      else selectedPreviewIds.delete(articleId);
-      syncPreviewSelectionUI();
-    }
-    window.togglePreviewItem = togglePreviewItem;
-
-    on(selectAllPreview, 'change', function() {
-      var filtered = getFilteredPreviewItems();
-      if (selectAllPreview.checked) {
-        filtered.forEach(function(item) { selectedPreviewIds.add(String(item.id)); });
-      } else {
-        filtered.forEach(function(item) { selectedPreviewIds.delete(String(item.id)); });
-      }
-      renderPreview();
-    });
-
-    on(previewPrevBtn, 'click', function() {
-      if (previewPage > 1) {
-        previewPage--;
-        renderPreview();
-      }
-    });
-
-    on(previewNextBtn, 'click', function() {
-      var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
-      if (previewPage < totalPages) {
-        previewPage++;
-        renderPreview();
-      }
-    });
-
-    on(previewSearchInput, 'input', function() {
-      previewSearch = (previewSearchInput.value || '').trim().toLowerCase();
-      previewPage = 1;
-      renderPreview();
-    });
-
-    on(previewSearchClearBtn, 'click', function() {
-      previewSearch = '';
-      previewSearchInput.value = '';
-      previewPage = 1;
-      renderPreview();
-      previewSearchInput.focus();
-    });
-
-    on(previewSortAddedBtn, 'click', function() {
-      previewSortMode = 'added';
-      updatePreviewSortButtons();
-      previewPage = 1;
-      renderPreview();
-    });
-
-    on(previewSortPublishedBtn, 'click', function() {
-      previewSortMode = 'published';
-      updatePreviewSortButtons();
-      previewPage = 1;
-      renderPreview();
-    });
-    updatePreviewSortButtons();
-
-    function runSwipeAction(articleId, action) {
-      var id = String(articleId);
-      performCleanup(action, true, [id]);
-    }
-
-    function handlePreviewPointerDown(evt, element) {
-      if (
-        evt.target &&
-        evt.target.closest &&
-        (evt.target.closest('.preview-open-link') || evt.target.closest('input[type="checkbox"]'))
-      ) {
-        return;
-      }
-      var parent = element.parentElement;
-      var articleId = parent.dataset.articleId;
-      swipeStateById[articleId] = { startX: evt.clientX, deltaX: 0, pointerId: evt.pointerId };
-      element.style.transition = 'none';
-      if (element.setPointerCapture) {
-        element.setPointerCapture(evt.pointerId);
-      }
-    }
-    window.handlePreviewPointerDown = handlePreviewPointerDown;
-
-    function handlePreviewPointerMove(evt, element) {
-      var parent = element.parentElement;
-      var articleId = parent.dataset.articleId;
-      var state = swipeStateById[articleId];
-      if (!state) return;
-      if (state.pointerId !== evt.pointerId) return;
-      state.deltaX = evt.clientX - state.startX;
-      element.style.transform = 'translateX(' + Math.max(-120, Math.min(120, state.deltaX)) + 'px)';
-    }
-    window.handlePreviewPointerMove = handlePreviewPointerMove;
-
-    function finishPreviewSwipe(evt, element) {
-      var parent = element.parentElement;
-      var articleId = parent.dataset.articleId;
-      var state = swipeStateById[articleId];
-      element.style.transition = 'transform 0.15s ease';
-      if (!state) {
-        element.style.transform = 'translateX(0px)';
-        return;
-      }
-      if (state.deltaX <= -80) {
-        element.style.transform = 'translateX(-120px)';
-        setTimeout(function() { runSwipeAction(articleId, 'archive'); }, 120);
-      } else if (state.deltaX >= 80) {
-        element.style.transform = 'translateX(120px)';
-        setTimeout(function() { runSwipeAction(articleId, 'delete'); }, 120);
-      } else {
-        element.style.transform = 'translateX(0px)';
-      }
-      delete swipeStateById[articleId];
-    }
-    function handlePreviewPointerUp(evt, element) {
-      finishPreviewSwipe(evt, element);
-    }
-    window.handlePreviewPointerUp = handlePreviewPointerUp;
-    function handlePreviewPointerCancel(evt, element) {
-      finishPreviewSwipe(evt, element);
-    }
-    window.handlePreviewPointerCancel = handlePreviewPointerCancel;
-
-    function openPreviewUrl(evt, url) {
-      evt.preventDefault();
-      evt.stopPropagation();
-      if (!url) return;
-      window.open(url, '_blank');
-    }
-    window.openPreviewUrl = openPreviewUrl;
-
-    async function parseApiJson(res) {
-      var text = await res.text();
-      var contentType = (res.headers.get('content-type') || '').toLowerCase();
-      if (contentType.indexOf('application/json') === -1) {
-        throw new Error('Server returned non-JSON response (' + res.status + ')');
-      }
-      try {
-        return JSON.parse(text);
-      } catch (err) {
-        throw new Error('Invalid JSON response from server');
-      }
-    }
-
-    on(openSelectedBtn, 'click', function() {
-      var activeIds = new Set(getActiveSelectedIds());
-      if (activeIds.size === 0) return;
-      var selected = previewData.filter(function(item) { return activeIds.has(String(item.id)); });
-      selected.forEach(function(item) {
-        if (item.url) {
-          window.open(item.url, '_blank');
-        }
-      });
-    });
-
-    async function performCleanup(action, skipConfirm, forcedIds) {
-      if (cleanupInFlight) {
-        showToast('Please wait for the current action to finish', 'warning');
-        return;
-      }
-      var activeSelectedIds = Array.isArray(forcedIds) && forcedIds.length > 0
-        ? Array.from(new Set(forcedIds.map(function(id) { return String(id); })))
-        : getActiveSelectedIds();
-      var selectedCount = activeSelectedIds.length;
-      if (selectedCount === 0) {
-        showToast('Select at least one item first', 'warning');
-        return;
-      }
-      if (settings.confirmActions && !skipConfirm) {
-        var confirmed = window.confirm('Confirm ' + action + ' for ' + selectedCount + ' selected items?');
-        if (!confirmed) return;
-      }
-
-      deleteBtn.disabled = true;
-      archiveBtn.disabled = true;
-      cleanupInFlight = true;
-      var btn = action === 'delete' ? deleteBtn : archiveBtn;
-      var originalText = btn.innerHTML;
-      btn.innerHTML = '<span class="spinner"></span> Processing...';
-      document.getElementById('progress').style.display = 'block';
-      document.getElementById('progress-bar').style.width = '50%';
-
-      try {
-        var selectedItems = previewData
-          .filter(function(item) { return activeSelectedIds.indexOf(String(item.id)) !== -1; })
-          .map(function(item) {
-            return {
-              id: String(item.id),
-              title: item.title || '',
-              author: item.author || '',
-              url: item.url || '',
-              savedAt: item.savedAt || '',
-              publishedAt: item.publishedAt || null,
-              thumbnail: item.thumbnail || null
-            };
-          });
-
-        var processedTotal = 0;
-        var allErrors = [];
-        var allProcessedIds = [];
-        for (var batchStart = 0; batchStart < activeSelectedIds.length; batchStart += cleanupBatchSize) {
-          var idsBatch = activeSelectedIds.slice(batchStart, batchStart + cleanupBatchSize);
-          var batchIdSet = new Set(idsBatch);
-          var itemsBatch = selectedItems.filter(function(item) { return batchIdSet.has(String(item.id)); });
-
-          var progressPct = Math.round((batchStart / activeSelectedIds.length) * 90) + 5;
-          document.getElementById('progress-bar').style.width = String(progressPct) + '%';
-
-          var res = await fetch('/api/cleanup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              location: locationSelect.value,
-              fromDate: fromDateInput.value || undefined,
-              toDate: toDateInput.value || formatInputDate(new Date()),
-              action: action,
-              ids: idsBatch,
-              items: itemsBatch
-            })
-          });
-          var batchData = await parseApiJson(res);
-          if (batchData.error) throw new Error(batchData.error);
-          processedTotal += batchData.processed || 0;
-          if (Array.isArray(batchData.processedIds)) {
-            allProcessedIds = allProcessedIds.concat(batchData.processedIds.map(function(id) { return String(id); }));
-          } else {
-            allProcessedIds = allProcessedIds.concat(idsBatch.map(function(id) { return String(id); }));
-          }
-          if (Array.isArray(batchData.errors)) {
-            allErrors = allErrors.concat(batchData.errors);
-          }
-        }
-        var data = {
-          processed: processedTotal,
-          processedIds: allProcessedIds,
-          errors: allErrors.length > 0 ? allErrors : undefined
-        };
-
-        document.getElementById('progress-bar').style.width = '100%';
-        if (data.processed < selectedCount) {
-          showToast(
-            (action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' of ' + selectedCount + ' items',
-            'warning'
-          );
-        } else {
-          showToast((action === 'delete' ? 'Deleted ' : 'Archived ') + data.processed + ' items', 'success');
-        }
-
-        var successfulIds = new Set(
-          Array.isArray(data.processedIds) && data.processedIds.length > 0
-            ? data.processedIds.map(function(id) { return String(id); })
-            : activeSelectedIds.map(function(id) { return String(id); })
-        );
-        if (Array.isArray(data.errors)) {
-          data.errors.forEach(function(err) {
-            if (err && err.id !== undefined && err.id !== null) {
-              successfulIds.delete(String(err.id));
-            }
-          });
-        }
-
-        if (successfulIds.size > 0) {
-          previewData = previewData.filter(function(item) {
-            return !successfulIds.has(String(item.id));
-          });
-          successfulIds.forEach(function(id) { selectedPreviewIds.delete(String(id)); });
-          currentCount = Math.max(0, currentCount - successfulIds.size);
-        }
-
-        if (previewData.length === 0) {
-          selectedPreviewIds.clear();
-          lastQuery = null;
-          previewPage = 1;
-          itemCountEl.textContent = '0';
-          renderPreview();
-          previewTopControls.style.display = 'none';
-          previewBottomControls.style.display = 'none';
-        } else {
-          var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
-          if (previewPage > totalPages) previewPage = totalPages;
-          itemCountEl.textContent = String(currentCount);
-          renderPreview();
-          previewTopControls.style.display = 'flex';
-          previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
-        }
-
-        document.getElementById('progress').style.display = 'none';
-        document.getElementById('progress-bar').style.width = '0%';
-        loadDeletedCount();
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        cleanupInFlight = false;
-        deleteBtn.disabled = false;
-        archiveBtn.disabled = false;
-        btn.innerHTML = originalText;
-      }
-    }
-
-    function updateSelectedButtons() {
-      var filtered = getFilteredDeletedItems();
-      var activeSelectedItems = getActiveSelectedDeletedItems();
-      var selectedCount = selectedDeletedIds.size;
-      var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
-      var filteredSelected = Array.from(selectedDeletedIds).filter(function(id) { return filteredIdSet.has(id); }).length;
-      var displayCount = deletedSearch ? filteredSelected : selectedCount;
-
-      restoreBtn.disabled = activeSelectedItems.length === 0;
-      removeSelectedBtn.disabled = activeSelectedItems.length === 0;
-      restoreBtn.textContent = displayCount > 0 ? 'Restore Selected (' + displayCount + ')' : 'Restore Selected';
-      removeSelectedBtn.textContent = displayCount > 0 ? 'Remove from History (' + displayCount + ')' : 'Remove from History';
-
-      if (deletedItems.length === 0 || filtered.length === 0) {
-        selectAllDeleted.checked = false;
-        selectAllDeleted.indeterminate = false;
-        return;
-      }
-      selectAllDeleted.checked = filteredSelected > 0 && filteredSelected === filtered.length;
-      selectAllDeleted.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
-    }
-
-    function toggleRestoreItem(checkbox) {
-      var itemId = checkbox.dataset.itemId;
-      if (checkbox.checked) selectedDeletedIds.add(itemId);
-      else selectedDeletedIds.delete(itemId);
-      updateSelectedButtons();
-    }
-    window.toggleRestoreItem = toggleRestoreItem;
-
-    function getDeletedItemKey(item) {
-      if (item && item.id !== undefined && item.id !== null) return String(item.id);
-      return [
-        item && item.url ? item.url : '',
-        item && item.deletedAt ? item.deletedAt : '',
-        item && item.savedAt ? item.savedAt : '',
-        item && item.title ? item.title : '',
-      ].join('|');
-    }
-
-    function buildDeletedSearchableText(item) {
-      return [
-        item.title,
-        item.author,
-        item.site,
-        item.url,
-      ].filter(Boolean).join(' ').toLowerCase();
-    }
-
-    function getFilteredDeletedItems() {
-      if (!deletedSearch) return deletedItems;
-      return deletedItems.filter(function(item) {
-        return buildDeletedSearchableText(item).includes(deletedSearch);
-      });
-    }
-
-    function getActiveSelectedDeletedItems() {
-      var filtered = getFilteredDeletedItems();
-      if (!deletedSearch) {
-        return deletedItems.filter(function(item) { return selectedDeletedIds.has(getDeletedItemKey(item)); });
-      }
-      var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
-      return deletedItems.filter(function(item) {
-        var id = getDeletedItemKey(item);
-        return selectedDeletedIds.has(id) && filteredIdSet.has(id);
-      });
-    }
-
-    function getDeletedSortTimestamp(item) {
-      var rawDate = item.deletedAt;
-      if (deletedSortMode === 'published') {
-        rawDate = item.publishedAt || item.savedAt || item.deletedAt;
-      } else if (deletedSortMode === 'added') {
-        rawDate = item.savedAt || item.deletedAt;
-      }
-      var ts = Date.parse(rawDate || '');
-      return Number.isFinite(ts) ? ts : 0;
-    }
-
-    function updateDeletedSortButtons() {
-      deletedSortAddedBtn.classList.toggle('active', deletedSortMode === 'added');
-      deletedSortPublishedBtn.classList.toggle('active', deletedSortMode === 'published');
-      deletedSortDeletedBtn.classList.toggle('active', deletedSortMode === 'deleted');
-    }
-
-    on(selectAllDeleted, 'change', function() {
-      var filtered = getFilteredDeletedItems();
-      if (filtered.length === 0) {
-        updateSelectedButtons();
-        return;
-      }
-      var shouldSelectAllFiltered = filtered.some(function(item) {
-        return !selectedDeletedIds.has(getDeletedItemKey(item));
-      });
-      if (shouldSelectAllFiltered) {
-        filtered.forEach(function(item) { selectedDeletedIds.add(getDeletedItemKey(item)); });
-      } else {
-        filtered.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
-      }
-      renderDeletedItems();
-      updateSelectedButtons();
-    });
-
-    on(deletedSearchInput, 'input', function() {
-      deletedSearch = (deletedSearchInput.value || '').trim().toLowerCase();
-      renderDeletedItems();
-    });
-
-    on(deletedSearchClearBtn, 'click', function() {
-      deletedSearch = '';
-      deletedSearchInput.value = '';
-      renderDeletedItems();
-      deletedSearchInput.focus();
-    });
-
-    on(deletedSortAddedBtn, 'click', function() {
-      deletedSortMode = 'added';
-      updateDeletedSortButtons();
-      renderDeletedItems();
-    });
-
-    on(deletedSortPublishedBtn, 'click', function() {
-      deletedSortMode = 'published';
-      updateDeletedSortButtons();
-      renderDeletedItems();
-    });
-
-    on(deletedSortDeletedBtn, 'click', function() {
-      deletedSortMode = 'deleted';
-      updateDeletedSortButtons();
-      renderDeletedItems();
-    });
-    updateDeletedSortButtons();
-
-    async function loadDeletedItems() {
-      deletedList.innerHTML = '<div class="loading"><span class="spinner"></span> Loading...</div>';
-      try {
-        var res = await fetch('/api/deleted');
-        var data = await parseApiJson(res);
-        deletedItems = data.items || [];
-        selectedDeletedIds = new Set(deletedItems.map(function(item) { return getDeletedItemKey(item); }));
-        renderDeletedItems();
-        updateDeletedBadge();
-      } catch (err) {
-        deletedList.innerHTML = '<div class="empty">Failed to load deleted items</div>';
-      }
-    }
-
-    async function loadDeletedCount() {
-      try {
-        var res = await fetch('/api/deleted');
-        var data = await parseApiJson(res);
-        deletedItems = data.items || [];
-        updateDeletedBadge();
-      } catch (err) {}
-    }
-
-    function updateDeletedBadge() {
-      if (deletedItems.length > 0) {
-        deletedCountBadge.textContent = deletedItems.length;
-        deletedCountBadge.style.display = 'inline-block';
-      } else {
-        deletedCountBadge.style.display = 'none';
-      }
-    }
-
-    function renderDeletedItems() {
-      if (deletedItems.length === 0) {
-        deletedList.innerHTML = '<div class="empty">No deleted items in history</div>';
-        updateSelectedButtons();
-        return;
-      }
-      var filtered = getFilteredDeletedItems();
-      if (filtered.length === 0) {
-        deletedList.innerHTML = '<div class="empty">No deleted items match this filter</div>';
-        updateSelectedButtons();
-        return;
-      }
-      var sorted = filtered.slice().sort(function(a, b) {
-        return getDeletedSortTimestamp(b) - getDeletedSortTimestamp(a);
-      });
-
-      var html = '<div class="article-list">';
-      sorted.forEach(function(item) {
-        var itemId = getDeletedItemKey(item);
-        html += '<div class="article-item">';
-        html += '<input type="checkbox" data-item-id="' + escapeHtml(itemId) + '" onchange="toggleRestoreItem(this)"';
-        if (selectedDeletedIds.has(itemId)) html += ' checked';
-        html += '>';
-        if (item.thumbnail) {
-          html += '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
-        } else {
-          html += '<span class="preview-thumb-fallback">No image</span>';
-        }
-        html += '<div class="article-info">';
-        html += '<div class="title-row"><div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link deleted-open-link" href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener" data-open-url="' + escapeHtml(item.url || '') + '"><div class="article-title">' + escapeHtml(item.title) + '</div></a></div></div>';
-        html += '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site) + '</span>';
-        if (item.author) html += ' by ' + escapeHtml(item.author);
-        if (item.savedAt) html += ' · Added ' + formatDate(item.savedAt);
-        if (item.publishedAt) html += ' · Published ' + formatDate(item.publishedAt);
-        if (item.deletedAt) html += ' · Deleted ' + formatDate(item.deletedAt);
-        html += '</div></div></div>';
-      });
-      html += '</div>';
-
-      deletedList.innerHTML = html;
-      deletedList.querySelectorAll('.deleted-open-link').forEach(function(link) {
-        on(link, 'click', function(evt) {
-          openPreviewUrl(evt, link.dataset.openUrl || link.getAttribute('href') || '');
-        });
-      });
-      updateSelectedButtons();
-    }
-
-    on(restoreBtn, 'click', async function() {
-      var activeSelectedItems = getActiveSelectedDeletedItems();
-      if (activeSelectedItems.length === 0) return;
-      var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
-      restoreBtn.disabled = true;
-      restoreBtn.innerHTML = '<span class="spinner"></span> Restoring...';
-      try {
-        var res = await fetch('/api/restore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: activeSelectedUrls })
-        });
-        var data = await res.json();
-        if (data.error) throw new Error(data.error);
-        showToast('Restored ' + data.restored + ' items', 'success');
-        activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
-        loadDeletedItems();
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        restoreBtn.innerHTML = 'Restore Selected';
-      }
-    });
-
-    on(removeSelectedBtn, 'click', async function() {
-      var activeSelectedItems = getActiveSelectedDeletedItems();
-      if (activeSelectedItems.length === 0) return;
-      var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
-      try {
-        var res = await fetch('/api/clear-deleted', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: activeSelectedUrls })
-        });
-        var data = await res.json();
-        if (data.error) throw new Error(data.error);
-        showToast('Removed ' + data.removed + ' items from history', 'success');
-        activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
-        loadDeletedItems();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-
-    on(clearHistoryBtn, 'click', async function() {
-      if (settings.confirmActions && !window.confirm('Clear all deleted-item history?')) return;
-      try {
-        var res = await fetch('/api/clear-deleted', { method: 'POST' });
-        var data = await res.json();
-        if (data.error) throw new Error(data.error);
-        deletedItems = [];
-        selectedDeletedIds.clear();
-        renderDeletedItems();
-        updateDeletedBadge();
-        showToast('History cleared', 'success');
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-
-    on(saveSettingsBtn, 'click', async function() {
-      var payload = {
-        defaultLocation: settingsDefaultLocation.value,
-        defaultDays: parseInt(settingsDefaultDays.value, 10),
-        previewLimit: parseInt(settingsPreviewLimit.value, 10),
-        confirmActions: !!settingsConfirmActions.checked
-      };
-      try {
-        var res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        var data = await res.json();
-        if (data.error) throw new Error(data.error);
-        settings = data.settings;
-        applySettingsToUI();
-        lastQuery = null;
-        showToast('Settings saved', 'success');
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-
-    async function loadSettings() {
-      try {
-        var res = await fetch('/api/settings');
-        var data = await parseApiJson(res);
-        if (data.settings) settings = data.settings;
-      } catch (err) {}
-      applySettingsToUI();
-    }
-
-    async function loadTokenStatus() {
-      try {
-        var res = await fetch('/api/token-status');
-        var data = await parseApiJson(res);
-        if (!data.hasToken) {
-          tokenStatusEl.textContent = 'No API key configured.';
-          return;
-        }
-        if (data.source === 'custom') {
-          tokenStatusEl.textContent = 'Custom API key is configured.';
-          return;
-        }
-        tokenStatusEl.textContent = 'Using environment API key.';
-      } catch (err) {
-        tokenStatusEl.textContent = 'Unable to read token status.';
-      }
-    }
-
-    on(saveTokenBtn, 'click', async function() {
-      var token = (settingsTokenInput.value || '').trim();
-      if (!token) {
-        showToast('Enter an API key first', 'warning');
-        return;
-      }
-      var confirmOverwrite = false;
-      try {
-        var statusRes = await fetch('/api/token-status');
-        var statusData = await parseApiJson(statusRes);
-        if (statusData.hasCustomToken) {
-          confirmOverwrite = window.confirm('A custom API key is already set. Overwrite it?');
-          if (!confirmOverwrite) return;
-        }
-      } catch (err) {}
-      saveTokenBtn.disabled = true;
-      var originalText = saveTokenBtn.textContent;
-      saveTokenBtn.innerHTML = '<span class="spinner"></span> Saving...';
-      try {
-        var res = await fetch('/api/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: token, confirmOverwrite: confirmOverwrite }),
-        });
-        var data = await parseApiJson(res);
-        if (data.error) throw new Error(data.error);
-        settingsTokenInput.value = '';
-        showToast(data.overwritten ? 'API key overwritten' : 'API key saved', 'success');
-        loadTokenStatus();
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        saveTokenBtn.disabled = false;
-        saveTokenBtn.textContent = originalText;
-      }
-    });
-
-    function showToast(message, type) {
-      type = type || 'success';
-      var existing = document.querySelector('.toast');
-      if (existing) existing.remove();
-      var toast = document.createElement('div');
-      toast.className = 'toast ' + type;
-      toast.textContent = message;
-      document.body.appendChild(toast);
-      setTimeout(function() { toast.remove(); }, 3000);
-    }
-
-    function escapeHtml(str) {
-      if (!str) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    }
-
-    function formatDate(dateStr) {
-      if (!dateStr) return '';
-      var date = new Date(dateStr);
-      var opts = { month: 'short', day: 'numeric' };
-      if (date.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-      return date.toLocaleDateString('en-US', opts);
-    }
-
-    function renderVersionHistory() {
-      var historyEl = document.getElementById('version-history');
-      if (!historyEl) return;
-      var lines = VERSION_HISTORY.map(function(item) {
-        return '<div class="history-item"><strong>v' + escapeHtml(item.version) + '</strong> - ' + escapeHtml(item.note) + '</div>';
-      });
-      historyEl.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem;color:var(--text)">Version History</div>' + lines.join('');
-    }
-
-    setActiveTab(getTabFromPath(window.location.pathname), { push: false });
-    loadSettings();
-    loadLocations();
-    loadTokenStatus();
-    renderVersionHistory();
-    loadDeletedCount();
-    renderPreview();
-  </script>
-</body>
-</html>`;
 
 // Export helpers for testing
-export { fetchArticlesOlderThan, extractDomain, getDeletedItems };
+export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText };
