@@ -1,38 +1,60 @@
-# New Instance Bootstrap Prompt
+# New Codex Instance Prompt (Copy/Paste)
 
-Paste this to a new Codex instance rooted at this repo:
+Resume Read Flow redesign from the current branch.
 
----
-You are resuming work on Readwise Cleanup deploy repo.
+## Workspace
+Use this as cwd:
+`/Volumes/Humboldt/marc-data/src/readflow`
 
-Repo path:
-`/Users/marc/Library/Application Support/Claude/local-agent-mode-sessions/2b883275-d134-4582-be12-fdecbeaa2cdc/63515e73-7f49-4520-b1e6-b8f5b7bb6248/local_6346d824-fcdf-48aa-a695-64c1261c8c29/outputs/readwise-cleanup-deploy`
+## Read First
+1. `AGENTS.md`
+2. `HANDOFF.md`
+3. `NEW_INSTANCE_PROMPT.md`
+4. `POSTPONED_UI_WORK.md`
+5. `ui.js`
 
-Read first:
-1. `HANDOFF.md`
-2. `POSTPONED_UI_WORK.md`
-3. `worker.js`
-4. `check-ui-script.mjs`
-5. `check-ui-browser-smoke.mjs`
+## Current State
+- App tabs/order: **Find**, **Player**, **History**
+- Local browser parity pass completed for desktop + iPhone width
+- Mobile history sort control clipping fixed in `ui.js`
+- Latest proof screenshot after fix: `readflow-mobile-history-fixed.png`
 
-Important context:
-- Local/live target is version `1.1.15` right now.
-- Always rev version each release.
-- Deploy only through `npm run deploy` (runs both gates).
-- Large cleanup selections must batch in chunks of 20.
-- Smoke test includes non-destructive 57-item batch assertion (20/20/17).
+## Immediate Objective
+Continue v3 visual parity and then behavior hardening:
+1. final spacing/typography polish vs mock
+2. behavior checks for player and deleted-history actions
+3. run tests and record results
+4. prepare deploy when approved
 
-Immediate tasks:
-1. Verify `npm run check:ui` and `npm run check:browser` pass.
-2. If making changes, keep smoke test non-destructive and deterministic.
-3. Deploy and verify `/api/version` after each release.
+## Guardrails
+- Preserve behavior unless explicitly changing it
+- Do not revert unrelated dirty files
+- Versioning:
+  - patch bump for minor fixes
+  - minor bump for larger feature additions
+- Every `VERSION_HISTORY` entry in `worker.js` must include:
+  - `version`
+  - `completedAt` (`YYYY-MM-DD`)
+  - `note`
 
-Use cloudflare skill:
-- Primary skill: `cloudflare-deploy`.
+## Commands
+Start local dev:
+```bash
+npx wrangler dev --port 8790
+```
 
-Do not regress:
-- Preview title opens in new tab.
-- Repeated delete actions do not throw JSON parse errors.
-- Cleanup removes only acted-on preview items from UI.
-- Route-backed tabs keep browser back/forward behavior.
----
+Run tests:
+```bash
+npm test
+```
+
+Deploy:
+```bash
+npm run deploy
+```
+
+## Acceptance Criteria (current pass)
+1. No obvious overflow/cropping in Find/Player/History on desktop and iPhone-width
+2. History top toolbar controls remain fully usable at narrow widths
+3. Player controls remain usable without cramped targets
+4. Provide updated screenshots + concise recommendations

@@ -27,6 +27,14 @@ if (!/\.rail-controls-host\s*\{[\s\S]*width:\s*100%;[\s\S]*overflow:\s*hidden;[\
   console.error('Browser smoke failed: rail control host must constrain overflow for docked controls');
   process.exit(1);
 }
+if (!/function shouldDockPlayerControlsRight\(\)\s*\{\s*return window\.innerWidth <= 1024;\s*\}/.test(html)) {
+  console.error('Browser smoke failed: player controls should dock in rail on desktop and move to main only on narrow layouts');
+  process.exit(1);
+}
+if (!/<div id=\"deleted-controls-main-host\">[\s\S]*<div class=\"card\" id=\"deleted-controls-card\">[\s\S]*<div id=\"deleted-list\">/.test(html)) {
+  console.error('Browser smoke failed: deleted history controls/list should render in a unified main results card');
+  process.exit(1);
+}
 const script = scriptMatch[1];
 const firstChunkMatch = script.match(/var CLIENT_TTS_FIRST_CHUNK_CHARS = (\d+);/);
 const secondChunkMatch = script.match(/var CLIENT_TTS_SECOND_CHUNK_CHARS = (\d+);/);

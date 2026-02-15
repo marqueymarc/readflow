@@ -208,11 +208,11 @@ const HTML_APP = `<!DOCTYPE html>
     .container { max-width: none; margin: 0; }
     .app-shell {
       display: grid;
-      grid-template-columns: 288px minmax(0, 1fr);
+      grid-template-columns: 332px minmax(0, 1fr);
       min-height: 100vh;
     }
     .player-rail-compact .app-shell {
-      grid-template-columns: 252px minmax(0, 1fr);
+      grid-template-columns: 316px minmax(0, 1fr);
     }
     .left-rail {
       border-right: 1px solid var(--border);
@@ -246,11 +246,47 @@ const HTML_APP = `<!DOCTYPE html>
     .rail-brand {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      justify-content: space-between;
+      gap: 0.45rem;
       font-weight: 700;
       font-size: 1.2rem;
       color: #1f2937;
       padding: 0.35rem 0.5rem 1rem;
+    }
+    .brand-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+      flex: 1;
+    }
+    .brand-version {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.22rem;
+      font-size: 0.67rem;
+      line-height: 1;
+      color: #475569;
+      border: 1px solid #c9d8ea;
+      background: #f8fbff;
+      border-radius: 999px;
+      padding: 0.18rem 0.4rem;
+      font-weight: 600;
+      white-space: nowrap;
+      text-decoration: none;
+      margin-left: auto;
+      cursor: pointer;
+    }
+    .brand-version:hover {
+      border-color: #9db9dc;
+      background: #eef6ff;
+      color: #0f4f9e;
+    }
+    .brand-version-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--primary);
     }
     .rail-section {
       margin-top: 0.65rem;
@@ -265,7 +301,7 @@ const HTML_APP = `<!DOCTYPE html>
       display: none;
       width: 100%;
       min-width: 0;
-      overflow: hidden;
+      overflow: visible;
     }
     .left-rail .rail-docked-control {
       margin-bottom: 0.6rem;
@@ -273,7 +309,7 @@ const HTML_APP = `<!DOCTYPE html>
       width: 100%;
       max-width: 100%;
       min-width: 0;
-      overflow: hidden;
+      overflow: visible;
     }
     .left-rail .rail-docked-control .form-group {
       margin-bottom: 0.62rem;
@@ -314,23 +350,6 @@ const HTML_APP = `<!DOCTYPE html>
     .left-rail .rail-docked-control .btn-group .btn {
       width: 100%;
     }
-    .left-rail #deleted-controls-card .history-actions-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.4rem;
-      margin-bottom: 0.68rem;
-    }
-    .left-rail #deleted-controls-card .history-actions-grid .btn {
-      margin: 0;
-    }
-    .left-rail #deleted-controls-card .history-actions-grid .btn:nth-child(3) {
-      grid-column: 1 / -1;
-    }
-    .left-rail #deleted-controls-card .preview-search-wrap {
-      max-width: none;
-      min-width: 0;
-      width: 100%;
-    }
     .left-rail .rail-docked-control .preview-top-controls {
       display: flex;
       flex-direction: column;
@@ -353,23 +372,30 @@ const HTML_APP = `<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       gap: 0.32rem;
-      padding: 0.52rem 0.5rem;
-      border-radius: 10px;
-      border: 1px solid #d6dfeb;
+      padding: 0.58rem 0.58rem;
+      border-radius: 12px;
+      border: 1px solid #c8d6e8;
       background: #ffffff;
-      color: var(--text);
+      color: #0f172a;
       text-decoration: none;
       font-weight: 600;
       font-size: 0.9rem;
       margin-bottom: 0;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.09);
     }
     .rail-item.active {
-      background: #e9f2ff;
-      border-color: #b8d6fb;
-      color: #0f4f9e;
+      background: #0f4f9e;
+      border-color: #0f4f9e;
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(15, 79, 158, 0.32);
     }
     .rail-item:hover {
-      background: #f4f8ff;
+      background: #eef5ff;
+      border-color: #87a8ce;
+    }
+    .rail-item.active .badge {
+      background: #ffffff;
+      color: #0f4f9e;
     }
     header {
       padding: 0;
@@ -412,6 +438,40 @@ const HTML_APP = `<!DOCTYPE html>
       margin-bottom: 0;
       color: var(--text);
     }
+    .field-label-with-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .field-label-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+      border: 1px solid #c9d8ea;
+      background: #f4f8ff;
+      position: relative;
+      flex: 0 0 auto;
+    }
+    .field-label-icon::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-color: #0f4f9e;
+      mask-repeat: no-repeat;
+      mask-position: center;
+      mask-size: 11px 11px;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      -webkit-mask-size: 11px 11px;
+    }
+    .field-label-icon.source::after {
+      mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM7.2 8.2h9.6v1.6H7.2zm0 3.3h9.6v1.6H7.2zm0 3.3h6.5v1.6H7.2z'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM7.2 8.2h9.6v1.6H7.2zm0 3.3h9.6v1.6H7.2zm0 3.3h6.5v1.6H7.2z'/%3E%3C/svg%3E");
+    }
+    .field-label-icon.calendar::after {
+      mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v2h6V2h2v2h1.5A2.5 2.5 0 0 1 21 6.5v12a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5v-12A2.5 2.5 0 0 1 5.5 4H7zm12 8H5v8.5c0 .55.45 1 1 1h12c.55 0 1-.45 1-1z'/%3E%3C/svg%3E");
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v2h6V2h2v2h1.5A2.5 2.5 0 0 1 21 6.5v12a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5v-12A2.5 2.5 0 0 1 5.5 4H7zm12 8H5v8.5c0 .55.45 1 1 1h12c.55 0 1-.45 1-1z'/%3E%3C/svg%3E");
+    }
     select, input[type="date"], input[type="number"] {
       width: 100%;
       padding: 0.75rem;
@@ -420,6 +480,21 @@ const HTML_APP = `<!DOCTYPE html>
       font-size: 1rem;
       background: var(--card);
       color: var(--text);
+    }
+    .decor-select {
+      background-image: linear-gradient(45deg, transparent 50%, #64748b 50%), linear-gradient(135deg, #64748b 50%, transparent 50%);
+      background-position: calc(100% - 18px) calc(50% + 2px), calc(100% - 13px) calc(50% + 2px);
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      padding-right: 2rem;
+      appearance: none;
+    }
+    .decor-date {
+      padding-right: 2rem;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24'%3E%3Cpath fill='%2364748b' d='M7 2h2v2h6V2h2v2h1.5A2.5 2.5 0 0 1 21 6.5v12a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5v-12A2.5 2.5 0 0 1 5.5 4H7zm12 8H5v8.5c0 .55.45 1 1 1h12c.55 0 1-.45 1-1z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: calc(100% - 10px) center;
+      background-size: 15px 15px;
     }
     select:focus, input:focus {
       outline: none;
@@ -574,7 +649,8 @@ const HTML_APP = `<!DOCTYPE html>
       white-space: pre-wrap;
     }
     .player-queue-scroll {
-      max-height: 42vh;
+      height: 100%;
+      max-height: none;
       overflow-y: auto;
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -582,16 +658,42 @@ const HTML_APP = `<!DOCTYPE html>
       background: #fff;
     }
     .player-row-progress {
+      position: relative;
       margin-top: 0.35rem;
       height: 4px;
       background: var(--border);
       border-radius: 999px;
       overflow: hidden;
     }
+    .player-row-progress-downloaded {
+      position: absolute;
+      inset: 0 auto 0 0;
+      height: 100%;
+      width: 0%;
+      background: #22c55e;
+    }
     .player-row-progress-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
       height: 100%;
       width: 0%;
       background: var(--primary);
+    }
+    .player-row-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28rem;
+    }
+    .player-row-action-btn {
+      margin-left: 0;
+      min-width: 1.9rem;
+      padding: 0.06rem 0.42rem;
+      font-size: 0.78rem;
+    }
+    .player-row-action-btn.is-done {
+      border-color: #22c55e;
+      color: #166534;
+      background: #ecfdf3;
     }
     .player-queue-row.current {
       background: #e0f2fe;
@@ -634,6 +736,11 @@ const HTML_APP = `<!DOCTYPE html>
       gap: 0.45rem;
     }
     .player-icon-btn {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.16rem;
       border-radius: 999px;
       min-width: 0;
       min-height: 46px;
@@ -655,33 +762,50 @@ const HTML_APP = `<!DOCTYPE html>
       line-height: 1;
     }
     .control-text {
-      font-size: 0.75rem;
+      display: block;
+      font-size: 0.66rem;
       line-height: 1;
     }
     #player-controls-right-host .control-icon {
-      font-size: 2.15rem;
+      font-size: 1.58rem;
     }
     #player-controls-right-host .player-icon-btn {
-      min-height: 52px;
-      padding: 0.52rem 0.3rem;
+      min-height: 42px;
+      padding: 0.36rem 0.24rem;
     }
     #player-controls-right-host .player-title-controls {
       margin-left: auto;
       justify-content: flex-end;
     }
     #player-controls-left-host .player-controls-row {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 0.35rem;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.32rem;
     }
     #player-controls-left-host .player-icon-btn {
-      min-height: 44px;
-      padding: 0.34rem 0.2rem;
+      min-height: 38px;
+      padding: 0.22rem 0.16rem;
     }
     #player-controls-left-host .control-icon {
-      font-size: 1.55rem;
+      font-size: 1.08rem;
     }
     #player-controls-left-host .control-text {
-      font-size: 0.7rem;
+      font-size: 0.6rem;
+    }
+    #player-controls-left-host #player-controls {
+      margin-top: 0;
+      padding: 0.85rem;
+    }
+    #player-controls-left-host .player-title-controls {
+      width: 100%;
+      justify-content: flex-start;
+      gap: 0.35rem;
+    }
+    #player-controls-left-host #player-speed {
+      min-width: 72px;
+      max-width: 88px;
+    }
+    #player-controls-left-host #player-audio {
+      margin-top: 0.3rem;
     }
     .now-playing-badge {
       display: inline-block;
@@ -693,6 +817,76 @@ const HTML_APP = `<!DOCTYPE html>
       font-size: 0.68rem;
       font-weight: 600;
       vertical-align: middle;
+    }
+    .floating-player-hover {
+      position: fixed;
+      left: 1rem;
+      bottom: 1rem;
+      z-index: 90;
+      display: none;
+      align-items: center;
+      gap: 0.45rem;
+      max-width: min(460px, calc(100vw - 1.4rem));
+      padding: 0.38rem 0.45rem 0.38rem 0.52rem;
+      border: 1px solid #2f4567;
+      border-radius: 999px;
+      background: #0f203a;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.34);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+    }
+    .floating-player-hover.is-visible {
+      display: inline-flex;
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .floating-player-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.42rem;
+      min-width: 0;
+      font-size: 0.8rem;
+      color: #f5f9ff;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .floating-player-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+      background: #ef4444;
+    }
+    .floating-player-dot.is-playing {
+      background: #22c55e;
+    }
+    .floating-player-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      flex: 0 0 auto;
+    }
+    .floating-player-btn {
+      border: 1px solid #3b4f73;
+      background: #1a3156;
+      color: #fff;
+      border-radius: 8px;
+      min-width: 30px;
+      min-height: 30px;
+      line-height: 1;
+      padding: 0.2rem 0.45rem;
+      cursor: pointer;
+    }
+    .floating-player-open {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.2rem 0.52rem;
     }
     .article-site {
       display: inline-block;
@@ -848,8 +1042,19 @@ const HTML_APP = `<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       gap: 0.75rem;
-      margin-bottom: 0.75rem;
+      margin-bottom: 0;
       flex-wrap: wrap;
+    }
+    #preview-top-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 8;
+      background: var(--card);
+      padding: 0.2rem 0 0.55rem;
+      margin-bottom: 0.58rem;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 0.52rem;
     }
     .preview-top-controls > * {
       min-width: 0;
@@ -858,9 +1063,9 @@ const HTML_APP = `<!DOCTYPE html>
       display: inline-flex;
       gap: 0.5rem;
       flex-wrap: wrap;
-      flex: 1 1 420px;
+      flex: 1 1 auto;
       min-width: 0;
-      justify-content: flex-end;
+      justify-content: flex-start;
     }
     .preview-actions .btn {
       flex: 1 1 180px;
@@ -1032,11 +1237,34 @@ const HTML_APP = `<!DOCTYPE html>
       box-shadow: var(--shadow);
       cursor: pointer;
     }
+    .results-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.45rem;
+    }
+    .results-summary {
+      display: inline-flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .results-pill {
+      border: 1px solid #c7d8ec;
+      background: #e9f2ff;
+      color: #0f4f9e;
+      font-size: 0.74rem;
+      font-weight: 600;
+      border-radius: 999px;
+      padding: 0.18rem 0.5rem;
+      white-space: nowrap;
+    }
     #results-card {
       display: flex;
       flex-direction: column;
       min-height: 0;
-      height: auto;
+      height: 100%;
       margin-bottom: 0;
     }
     #preview-list {
@@ -1044,27 +1272,56 @@ const HTML_APP = `<!DOCTYPE html>
       min-height: 0;
       display: flex;
       flex-direction: column;
+      overflow-y: auto;
     }
     #deleted-tab {
       min-height: 100%;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 0.8rem;
+      grid-template-rows: minmax(0, 1fr);
+      gap: 0;
+    }
+    #deleted-controls-main-host {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
     #deleted-tab .card {
       display: flex;
       flex-direction: column;
-      height: auto;
+      height: 100%;
       min-height: 0;
       margin-bottom: 0;
+    }
+    #deleted-controls-card .history-actions-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.55rem;
+      margin-top: 0.5rem;
+      margin-bottom: 0;
+    }
+    #deleted-controls-card .history-actions-grid .btn {
+      margin: 0;
+    }
+    #deleted-controls-card .preview-top-controls {
+      margin-top: 0;
+      margin-bottom: 0;
+    }
+    #deleted-top-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 8;
+      background: var(--card);
+      padding: 0.2rem 0 0.55rem;
+      margin-bottom: 0.58rem;
+      border-bottom: 1px solid var(--border);
     }
     #deleted-list {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      margin-top: 0.5rem;
-      border-top: 1px solid var(--border);
-      padding-top: 0.6rem;
+      margin-top: 0;
+      border-top: none;
+      padding-top: 0;
     }
     #player-tab {
       min-height: 100%;
@@ -1074,15 +1331,61 @@ const HTML_APP = `<!DOCTYPE html>
     #player-tab .card {
       display: flex;
       flex-direction: column;
-      height: auto;
+      height: 100%;
       min-height: 0;
       margin-bottom: 0;
     }
     #player-queue {
       flex: 1;
       min-height: 0;
+      display: flex;
+      flex-direction: column;
       overflow-y: auto;
       margin-top: 0.8rem;
+    }
+    .player-status {
+      color: var(--text-muted);
+      margin-bottom: 0.6rem;
+    }
+    .player-status.is-error {
+      color: #b91c1c;
+      font-weight: 600;
+    }
+    .player-feedback {
+      min-height: 1.1rem;
+      margin-top: 0.45rem;
+      font-size: 0.82rem;
+      color: #b91c1c;
+      font-weight: 600;
+    }
+    .player-current-progress {
+      position: relative;
+      margin-top: 0.4rem;
+      height: 4px;
+      background: #dbe7f4;
+      border-radius: 999px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .player-current-progress-downloaded {
+      position: absolute;
+      inset: 0 auto 0 0;
+      height: 100%;
+      width: 0%;
+      background: #22c55e;
+    }
+    .player-current-progress-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      height: 100%;
+      width: 0%;
+      background: var(--primary);
+      transition: width 0.15s linear;
+    }
+    .player-download-status {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.3rem;
     }
     @media (max-width: 600px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
@@ -1113,7 +1416,39 @@ const HTML_APP = `<!DOCTYPE html>
         font-size: 2.55rem;
       }
       .player-icon-btn .control-text {
-        display: none;
+        display: block;
+      }
+      #deleted-controls-card .history-actions-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      #deleted-controls-card .history-actions-grid .btn:nth-child(4) {
+        grid-column: 1 / -1;
+      }
+      #deleted-top-controls {
+        align-items: stretch;
+      }
+      #deleted-top-controls .preview-search-wrap {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+      }
+      #deleted-top-controls .preview-search {
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+      }
+      #deleted-top-controls .sort-toggle {
+        grid-column: 1 / -1;
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border-radius: 12px;
+      }
+      #deleted-top-controls .sort-toggle button {
+        min-width: 0;
+        text-align: center;
       }
     }
     @media (max-width: 1024px) {
@@ -1133,7 +1468,7 @@ const HTML_APP = `<!DOCTYPE html>
         overflow: visible;
       }
       .rail-section {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 0.26rem;
       }
       .rail-item {
@@ -1182,13 +1517,17 @@ const HTML_APP = `<!DOCTYPE html>
         padding: 0.55rem 0.45rem 0.35rem;
       }
       .rail-brand {
-        font-size: 1rem;
-        gap: 0.4rem;
+        font-size: 0.97rem;
+        gap: 0.35rem;
         padding: 0.2rem 0.35rem 0.5rem;
       }
       .rail-brand .logo {
         width: 24px;
         height: 24px;
+      }
+      .brand-version {
+        font-size: 0.62rem;
+        padding: 0.16rem 0.34rem;
       }
       .rail-section { gap: 0.22rem; }
       .rail-item {
@@ -1208,6 +1547,20 @@ const HTML_APP = `<!DOCTYPE html>
         margin-top: 0.45rem;
         font-size: 0.72rem;
         padding: 0.2rem 0.5rem;
+      }
+      .results-top {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .results-summary {
+        justify-content: flex-start;
+      }
+      .floating-player-hover {
+        left: 0.55rem;
+        right: 0.55rem;
+        bottom: 0.55rem;
+        max-width: none;
+        width: auto;
       }
       .left-rail .card {
         padding: 0.72rem;
@@ -1248,30 +1601,28 @@ const HTML_APP = `<!DOCTYPE html>
             <path d="M19.5 42.2c1 .9 1 2.7 0 3.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"></path>
             <path d="M22.3 40.8c1.9 1.8 1.9 4.8 0 6.6" stroke="#e0f2fe" stroke-width="2" stroke-linecap="round" fill="none"></path>
           </svg>
-          <span>Read Flow</span>
+          <span class="brand-title">
+            <span>Read Flow</span>
+          </span>
+          <a class="brand-version" id="version-history-link" href="/about" title="Version ${APP_VERSION}"><span class="brand-version-dot"></span>v${APP_VERSION}</a>
         </div>
         <div class="rail-section">
           <a class="rail-item tab active" data-tab="cleanup" href="/">Find <span id="cleanup-selected-count" class="badge" style="display:none">0</span></a>
           <a class="rail-item tab" data-tab="player" href="/player">Player <span id="player-selected-count" class="badge" style="display:none">0</span></a>
           <a class="rail-item tab" data-tab="deleted" href="/deleted">History <span id="deleted-count" class="badge" style="display:none">0</span></a>
+          <a class="rail-item tab" data-tab="settings" href="/settings">Settings</a>
         </div>
-        <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
         <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
         <div id="cleanup-controls-left-host" class="rail-controls-host"></div>
-        <div id="deleted-controls-left-host" class="rail-controls-host"></div>
         <div id="cleanup-controls" style="display:none"></div>
         <div id="deleted-controls" style="display:none"></div>
-        <div id="player-controls-left-host" style="display:none">
+        <div id="player-controls-left-host" class="rail-controls-host" style="display:none">
         <div id="player-controls" class="card" style="display:none;margin-top:0.8rem;">
           <div class="player-title-row">
             <h2 style="margin-bottom:0;">Audio Player</h2>
             <div class="player-title-controls">
-              <label class="checkbox-label" style="font-size:0.85rem;">
-                <input id="player-auto-next" type="checkbox" checked>
-                Auto next
-              </label>
               <label for="player-speed" style="margin:0; font-size:0.82rem;">Speed</label>
-              <select id="player-speed" style="width:auto; min-width: 84px; padding: 0.4rem 0.5rem;">
+              <select id="player-speed" style="width:auto; min-width: 84px; padding: 0.32rem 0.5rem;">
                 <option value="0.8">0.8x</option>
                 <option value="1" selected>1.0x</option>
                 <option value="1.1">1.1x</option>
@@ -1283,7 +1634,7 @@ const HTML_APP = `<!DOCTYPE html>
               <button type="button" id="player-text-toggle" class="text-preview-toggle" style="margin-left:0.2rem;">Text</button>
             </div>
           </div>
-          <p id="player-status" style="color: var(--text-muted); margin-bottom: 0.6rem;">Queue is empty.</p>
+          <p id="player-status" class="player-status">Queue is empty.</p>
           <p id="player-tts-mode" style="display:none; color: var(--text-muted); margin-bottom: 0.4rem; font-size: 0.82rem;">TTS mode: mock clip</p>
           <div id="player-current-header" class="player-current-header" style="display:none;">
             <img id="player-current-thumb" class="preview-thumb" alt="" loading="lazy" referrerpolicy="no-referrer" style="display:none;">
@@ -1291,6 +1642,11 @@ const HTML_APP = `<!DOCTYPE html>
             <div class="player-current-meta">
               <div id="player-current-title" style="font-weight:600;"></div>
               <div id="player-current-author" class="article-meta"></div>
+              <div id="player-current-progress" class="player-current-progress">
+                <div id="player-current-progress-downloaded" class="player-current-progress-downloaded"></div>
+                <div id="player-current-progress-fill" class="player-current-progress-fill"></div>
+              </div>
+              <p id="player-download-status" class="player-download-status"></p>
             </div>
           </div>
           <div id="player-current-text" class="tts-preview" style="display:none; margin-top:0; margin-bottom:0.7rem;"></div>
@@ -1301,11 +1657,9 @@ const HTML_APP = `<!DOCTYPE html>
             <button class="btn btn-outline player-icon-btn" id="player-forward-btn" title="Forward" aria-label="Forward"><span class="control-icon">⏩</span><span class="control-text">30s</span></button>
             <button class="btn btn-outline player-icon-btn" id="player-next-btn" title="Next" aria-label="Next"><span class="control-icon">⏭</span></button>
           </div>
-          <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
+          <audio id="player-audio" style="display:none;"></audio>
+          <p id="player-feedback" class="player-feedback"></p>
         </div>
-        </div>
-        <div class="rail-footer">
-          <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
         </div>
       </aside>
       <main class="main-pane" id="main-pane">
@@ -1315,8 +1669,8 @@ const HTML_APP = `<!DOCTYPE html>
       <div id="cleanup-main-controls" class="card">
         <h2>Find</h2>
         <div class="form-group">
-          <label for="location">Source</label>
-          <select id="location">
+          <label for="location" class="field-label-with-icon"><span class="field-label-icon source" aria-hidden="true"></span>Source</label>
+          <select id="location" class="decor-select">
             <option value="new">Inbox (New)</option>
             <option value="later">Later</option>
             <option value="shortlist">Shortlist</option>
@@ -1325,15 +1679,15 @@ const HTML_APP = `<!DOCTYPE html>
           </select>
         </div>
         <div class="form-group">
-          <label for="from-date">Date Range</label>
+          <label for="from-date" class="field-label-with-icon"><span class="field-label-icon calendar" aria-hidden="true"></span>Date Range</label>
           <div class="date-row">
-            <div id="to-date-wrap">
-              <label for="to-date">End</label>
-              <input type="date" id="to-date">
-            </div>
             <div id="from-date-wrap">
               <label for="from-date">Start (blank = all time)</label>
-              <input type="date" id="from-date">
+              <input type="date" id="from-date" class="decor-date">
+            </div>
+            <div id="to-date-wrap">
+              <label for="to-date">End</label>
+              <input type="date" id="to-date" class="decor-date">
             </div>
           </div>
           <div class="quick-dates">
@@ -1349,34 +1703,33 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="btn-group">
           <button class="btn btn-primary" id="preview-btn">Find</button>
         </div>
-        <div class="stats" style="margin-top:0.8rem;">
-          <div class="stat">
-            <div class="stat-value" id="item-count">0</div>
-            <div class="stat-label">Items Found</div>
-          </div>
-          <div class="stat">
-            <div class="stat-value" id="location-display">-</div>
-            <div class="stat-label">Origin</div>
-          </div>
-        </div>
       </div>
       <div class="card" id="results-card">
-        <h2>Preview Results</h2>
-        <div class="preview-top-controls" id="preview-top-controls" style="display:none">
-          <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All (filtered)</label>
-          <div class="preview-search-wrap">
-            <input class="preview-search" type="text" id="preview-search" placeholder="Search preview (title, author, content)">
-            <button type="button" class="search-clear-btn" id="preview-search-clear" title="Clear search">×</button>
-            <div class="sort-toggle" aria-label="Sort preview by date">
-              <button type="button" id="preview-sort-added" class="active" title="Sort by date added">Added</button>
-              <button type="button" id="preview-sort-published" title="Sort by publication date">Published</button>
+        <div class="results-top">
+          <h2 style="margin-bottom:0;">Preview Results</h2>
+          <div class="results-summary" id="results-summary" style="display:none">
+            <span class="results-pill" id="results-summary-filtered">All (filtered): 0</span>
+            <span class="results-pill" id="results-summary-selected">Selected: 0</span>
+            <span class="results-pill" id="results-summary-queue">Player queue: 0</span>
+          </div>
+        </div>
+        <div id="preview-top-toolbar" style="display:none">
+          <div class="preview-top-controls" id="preview-top-controls">
+            <label class="checkbox-label"><input id="select-all-preview" type="checkbox"> All (filtered)</label>
+            <div class="preview-search-wrap">
+              <input class="preview-search" type="text" id="preview-search" placeholder="Search preview (title, author, content)">
+              <button type="button" class="search-clear-btn" id="preview-search-clear" title="Clear search">×</button>
+              <div class="sort-toggle" aria-label="Sort preview by date">
+                <button type="button" id="preview-sort-added" class="active" title="Sort by date added">Added</button>
+                <button type="button" id="preview-sort-published" title="Sort by publication date">Published</button>
+              </div>
             </div>
           </div>
           <div class="preview-actions">
-            <button class="btn btn-outline" id="play-selected-btn" disabled>Play Selected</button>
-            <button class="btn btn-outline" id="open-selected-btn" disabled>Open Selected</button>
-            <button class="btn btn-danger" id="delete-btn" disabled>Delete Selected</button>
-            <button class="btn btn-primary" id="archive-btn" disabled>Archive Selected</button>
+            <button class="btn btn-outline" id="play-selected-btn" disabled>Play</button>
+            <button class="btn btn-outline" id="open-selected-btn" disabled>Open</button>
+            <button class="btn btn-danger" id="delete-btn" disabled>Delete</button>
+            <button class="btn btn-primary" id="archive-btn" disabled>Archive</button>
           </div>
         </div>
         <div id="preview-list"></div>
@@ -1394,32 +1747,31 @@ const HTML_APP = `<!DOCTYPE html>
     </div>
 
     <div id="deleted-tab" style="display:none">
-      <div id="deleted-controls-right-host"></div>
-      <div class="card" id="deleted-controls-card">
-        <h2>Deleted Items History</h2>
-        <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
-          Restore selected items to Reader or remove them from local history.
-        </p>
-        <div class="btn-group history-actions-grid" style="margin-top: 0.4rem; margin-bottom: 0.8rem;">
-          <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
-          <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
-          <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
-        </div>
-        <div class="preview-top-controls" id="deleted-top-controls">
-          <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
-          <div class="preview-search-wrap">
-            <input class="preview-search" type="text" id="deleted-search" placeholder="Search history (title, author, site, URL)">
-            <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
-            <div class="sort-toggle" aria-label="Sort deleted history by date">
-              <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
-              <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
-              <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
+      <div id="deleted-controls-main-host">
+        <div class="card" id="deleted-controls-card">
+          <h2>Deleted Items History</h2>
+          <div id="deleted-top-toolbar">
+            <div class="preview-top-controls" id="deleted-top-controls">
+              <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
+              <div class="preview-search-wrap">
+                <input class="preview-search" type="text" id="deleted-search" placeholder="Search history (title, author, site, URL)">
+                <button type="button" class="search-clear-btn" id="deleted-search-clear" title="Clear search">×</button>
+                <div class="sort-toggle" aria-label="Sort deleted history by date">
+                  <button type="button" id="deleted-sort-added" class="active" title="Sort by date added">Added</button>
+                  <button type="button" id="deleted-sort-published" title="Sort by publication date">Published</button>
+                  <button type="button" id="deleted-sort-deleted" title="Sort by date deleted">Deleted</button>
+                </div>
+              </div>
+            </div>
+            <div class="btn-group history-actions-grid">
+              <button class="btn btn-primary" id="restore-btn" disabled>Restore</button>
+              <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove</button>
+              <button class="btn btn-danger" id="delete-selected-history-btn" disabled>Delete</button>
+              <button class="btn btn-outline" id="clear-history-btn">Clear All</button>
             </div>
           </div>
+          <div id="deleted-list"><div class="loading">Loading...</div></div>
         </div>
-      </div>
-      <div class="card">
-        <div id="deleted-list"><div class="loading">Loading...</div></div>
       </div>
     </div>
 
@@ -1519,12 +1871,6 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="btn-group">
           <button class="btn btn-outline" id="save-openai-key-btn">Save OpenAI Key</button>
         </div>
-        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
-        <h2 style="font-size:1rem;margin-bottom:0.5rem;">About & History</h2>
-        <p style="margin-bottom: 0.75rem; color: var(--text-muted);">
-          Use this tool to quickly review and clean Readwise Reader items by source and date range, while keeping a restorable local delete history.
-        </p>
-        <div class="history-list" id="version-history"></div>
       </div>
     </div>
 
@@ -1533,19 +1879,19 @@ const HTML_APP = `<!DOCTYPE html>
         <h2>About</h2>
         <p style="margin-bottom: 0.75rem;">Version <strong id="about-version">${APP_VERSION}</strong></p>
         <p style="margin-bottom: 0.75rem; color: var(--text-muted);">
-          Use this tool to quickly review and clean Readwise Reader items by source and date range, while keeping a restorable local delete history.
+          Read Flow is for managing queues of saved stories and newsletters, then listening with TTS while you triage, archive, restore, or delete items.
         </p>
         <p style="margin-bottom: 0.5rem;">Features:</p>
         <ul class="about-list">
-          <li>Preview old items before action.</li>
-          <li>Delete or archive items by location/date.</li>
-          <li>Restore deleted URLs from history.</li>
-          <li>Store preferences for defaults and confirmations.</li>
+          <li>Build and manage a playback queue from filtered saved items.</li>
+          <li>Play full-text TTS with progress, seek, and queue controls.</li>
+          <li>Triage items with archive/delete/restore workflows and history.</li>
+          <li>Save defaults and playback behavior in Settings.</li>
         </ul>
         <p style="margin-top: 0.9rem; color: var(--text-muted);">
           Privacy: this app stores settings and deleted-item history in your Cloudflare KV namespace only.
         </p>
-        <div class="history-list"></div>
+        <div class="history-list" id="version-history"></div>
       </div>
     </div>
 
@@ -1561,6 +1907,10 @@ const HTML_APP = `<!DOCTYPE html>
           <div class="preview-search-wrap" style="max-width:none;">
             <input type="text" id="player-search" class="preview-search" placeholder="Search player queue...">
             <button type="button" id="player-search-clear" class="search-clear-btn" title="Clear player search" aria-label="Clear player search">×</button>
+            <div class="sort-toggle" aria-label="Sort player queue by date">
+              <button type="button" id="player-sort-added" class="active" title="Sort by date added">Added</button>
+              <button type="button" id="player-sort-published" title="Sort by publication date">Published</button>
+            </div>
           </div>
         </div>
         <div id="player-queue" class="history-list"></div>
@@ -1569,7 +1919,16 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
       </main>
     </div>
-  </div>
+    </div>
+    <div id="floating-player-hover" class="floating-player-hover" aria-live="polite" aria-hidden="true" hidden>
+      <div class="floating-player-status" id="floating-player-status"><span id="floating-player-dot" class="floating-player-dot" aria-hidden="true"></span><span id="floating-player-status-text">Playing while browsing</span></div>
+      <div class="floating-player-actions">
+        <button type="button" id="floating-player-back" class="floating-player-btn" title="Back 15s" aria-label="Back 15s">⏪</button>
+        <button type="button" id="floating-player-toggle" class="floating-player-btn" title="Play/Pause" aria-label="Play/Pause">⏸</button>
+        <button type="button" id="floating-player-next" class="floating-player-btn" title="Next" aria-label="Next">⏭</button>
+        <button type="button" id="floating-player-open" class="floating-player-btn floating-player-open" title="Open Player">Player</button>
+      </div>
+    </div>
 
   <script>
     var APP_VERSION = '${APP_VERSION}';
@@ -1620,7 +1979,15 @@ const HTML_APP = `<!DOCTYPE html>
     var playerLastItemId = '';
     var playerLoadedItemId = '';
     var playerLoadedChunkIndex = 0;
+    var playerDownloadQueue = [];
+    var playerDownloadInFlight = false;
+    var playerDownloadPaused = false;
+    var playerDownloadCurrentItemId = '';
+    var playerDownloadProgressByItemId = {};
+    var playerDownloadedManifestByItemId = {};
+    var playerDownloadHydratedByItemId = {};
     var playerSearch = '';
+    var playerSortMode = 'added';
     var currentTabName = 'cleanup';
     var playerStatePersistTimer = null;
     var playerAudioObjectUrl = '';
@@ -1654,6 +2021,7 @@ const HTML_APP = `<!DOCTYPE html>
     var locationDisplay = document.getElementById('location-display');
     var previewList = document.getElementById('preview-list');
     var previewTopControls = document.getElementById('preview-top-controls');
+    var previewTopToolbar = document.getElementById('preview-top-toolbar');
     var previewBottomControls = document.getElementById('preview-bottom-controls');
     var selectAllPreview = document.getElementById('select-all-preview');
     var previewPrevBtn = document.getElementById('preview-prev-btn');
@@ -1662,6 +2030,7 @@ const HTML_APP = `<!DOCTYPE html>
     var deletedList = document.getElementById('deleted-list');
     var restoreBtn = document.getElementById('restore-btn');
     var removeSelectedBtn = document.getElementById('remove-selected-btn');
+    var deleteSelectedHistoryBtn = document.getElementById('delete-selected-history-btn');
     var clearHistoryBtn = document.getElementById('clear-history-btn');
     var selectAllDeleted = document.getElementById('select-all-deleted');
     var deletedSearchInput = document.getElementById('deleted-search');
@@ -1677,15 +2046,26 @@ const HTML_APP = `<!DOCTYPE html>
     var deletedControlsCard = document.getElementById('deleted-controls');
     var cleanupMainControlsCard = document.getElementById('cleanup-main-controls');
     var deletedMainControlsCard = document.getElementById('deleted-controls-card');
+    var deletedControlsMainHost = document.getElementById('deleted-controls-main-host');
     var cleanupControlsLeftHost = document.getElementById('cleanup-controls-left-host');
-    var deletedControlsLeftHost = document.getElementById('deleted-controls-left-host');
     var cleanupControlsRightHost = document.getElementById('cleanup-controls-right-host');
-    var deletedControlsRightHost = document.getElementById('deleted-controls-right-host');
     var playerControlsCard = document.getElementById('player-controls');
     var playerControlsLeftHost = document.getElementById('player-controls-left-host');
     var playerControlsRightHost = document.getElementById('player-controls-right-host');
     var leftRailEl = document.querySelector('.left-rail');
-    var versionBadgeBtn = document.getElementById('version-badge');
+    var resultsSummary = document.getElementById('results-summary');
+    var resultsSummaryFiltered = document.getElementById('results-summary-filtered');
+    var resultsSummarySelected = document.getElementById('results-summary-selected');
+    var resultsSummaryQueue = document.getElementById('results-summary-queue');
+    var floatingPlayerHover = document.getElementById('floating-player-hover');
+    var floatingPlayerStatus = document.getElementById('floating-player-status');
+    var floatingPlayerDot = document.getElementById('floating-player-dot');
+    var floatingPlayerStatusText = document.getElementById('floating-player-status-text');
+    var floatingPlayerBackBtn = document.getElementById('floating-player-back');
+    var floatingPlayerToggleBtn = document.getElementById('floating-player-toggle');
+    var floatingPlayerNextBtn = document.getElementById('floating-player-next');
+    var floatingPlayerOpenBtn = document.getElementById('floating-player-open');
+    var versionHistoryLink = document.getElementById('version-history-link');
     var saveTokenBtn = document.getElementById('save-token-btn');
     var tokenStatusEl = document.getElementById('token-status');
     var settingsTokenInput = document.getElementById('setting-readwise-token');
@@ -1701,25 +2081,31 @@ const HTML_APP = `<!DOCTYPE html>
     var settingsOpenAiKeyInput = document.getElementById('setting-openai-key');
     var playerAudio = document.getElementById('player-audio');
     var playerStatus = document.getElementById('player-status');
+    var playerFeedback = document.getElementById('player-feedback');
     var playerTtsModeEl = document.getElementById('player-tts-mode');
     var playerCurrentHeader = document.getElementById('player-current-header');
     var playerCurrentThumb = document.getElementById('player-current-thumb');
     var playerCurrentThumbFallback = document.getElementById('player-current-thumb-fallback');
     var playerCurrentTitle = document.getElementById('player-current-title');
     var playerCurrentAuthor = document.getElementById('player-current-author');
+    var playerCurrentProgress = document.getElementById('player-current-progress');
+    var playerCurrentProgressDownloaded = document.getElementById('player-current-progress-downloaded');
+    var playerCurrentProgressFill = document.getElementById('player-current-progress-fill');
+    var playerDownloadStatus = document.getElementById('player-download-status');
     var playerTextToggleBtn = document.getElementById('player-text-toggle');
     var playerCurrentText = document.getElementById('player-current-text');
     var playerQueueEl = document.getElementById('player-queue');
     var playerSelectAll = document.getElementById('player-select-all');
     var playerSearchInput = document.getElementById('player-search');
     var playerSearchClearBtn = document.getElementById('player-search-clear');
+    var playerSortAddedBtn = document.getElementById('player-sort-added');
+    var playerSortPublishedBtn = document.getElementById('player-sort-published');
     var playerPrevBtn = document.getElementById('player-prev-btn');
     var playerPlayPauseBtn = document.getElementById('player-playpause-btn');
     var playerNextBtn = document.getElementById('player-next-btn');
     var playerBackBtn = document.getElementById('player-back-btn');
     var playerForwardBtn = document.getElementById('player-forward-btn');
     var playerSpeedSelect = document.getElementById('player-speed');
-    var playerAutoNextCheckbox = document.getElementById('player-auto-next');
     var playerShowText = false;
 
     var settingsDefaultLocation = document.getElementById('setting-default-location');
@@ -1747,18 +2133,23 @@ const HTML_APP = `<!DOCTYPE html>
 
     function setDateFromDays(days) {
       var safeDays = Number.isFinite(days) ? days : 30;
-      var date = new Date();
-      date.setDate(date.getDate() - safeDays);
-      var formatted = formatInputDate(date);
-      if (activeDateShortcutTarget === 'from') {
-        fromDateInput.value = formatted;
-      } else {
-        toDateInput.value = formatted;
-      }
+      var today = new Date();
+      var fromDate = new Date(today);
+      fromDate.setDate(fromDate.getDate() - safeDays);
+      fromDateInput.value = formatInputDate(fromDate);
+      toDateInput.value = formatInputDate(today);
+      syncDateInputBounds();
     }
 
     function setDateShortcutTarget(target) {
       activeDateShortcutTarget = target === 'from' ? 'from' : 'to';
+    }
+
+    function syncDateInputBounds() {
+      var fromVal = fromDateInput && fromDateInput.value ? fromDateInput.value : '';
+      var toVal = toDateInput && toDateInput.value ? toDateInput.value : '';
+      if (toDateInput) toDateInput.min = fromVal || '';
+      if (fromDateInput) fromDateInput.max = toVal || '';
     }
 
     function applySettingsToUI() {
@@ -1773,6 +2164,7 @@ const HTML_APP = `<!DOCTYPE html>
       fromDate.setDate(fromDate.getDate() - settings.defaultDays);
       fromDateInput.value = formatInputDate(fromDate);
       toDateInput.value = formatInputDate(today);
+      syncDateInputBounds();
       previewPageSize = settings.previewLimit;
       var hasSettingsDefaultLocation = Array.from(settingsDefaultLocation.options || []).some(function(opt) {
         return opt && opt.value === settings.defaultLocation;
@@ -1790,7 +2182,6 @@ const HTML_APP = `<!DOCTYPE html>
       settingMaxOpenTabs.value = settings.maxOpenTabs;
       settingPlayerAutoNext.checked = !!settings.playerAutoNext;
       settingPlayerAutoAction.value = settings.playerAutoAction || 'none';
-      playerAutoNextCheckbox.checked = !!settings.playerAutoNext;
       var backTextEl = playerBackBtn && playerBackBtn.querySelector ? playerBackBtn.querySelector('.control-text') : null;
       var fwdTextEl = playerForwardBtn && playerForwardBtn.querySelector ? playerForwardBtn.querySelector('.control-text') : null;
       if (backTextEl) backTextEl.textContent = settings.audioBackSeconds + 's';
@@ -1836,6 +2227,11 @@ const HTML_APP = `<!DOCTYPE html>
       ].join('|');
     }
 
+    function setFindMeta(count, location) {
+      if (itemCountEl) itemCountEl.textContent = String(count || 0);
+      if (locationDisplay) locationDisplay.textContent = location || '-';
+    }
+
     function updatePreviewButtonLabel() {
       var hasCachedPreview = previewData.length > 0 && !!lastQuery;
       var hasStaleCache = hasCachedPreview && lastPreviewLoadedAt > 0
@@ -1849,30 +2245,39 @@ const HTML_APP = `<!DOCTYPE html>
       el.addEventListener(eventName, handler);
     }
 
+    function handleImageLoadError(evt) {
+      var img = evt && evt.target ? evt.target : null;
+      if (!img || img.dataset.broken === '1') return;
+      img.dataset.broken = '1';
+      img.removeAttribute('src');
+      img.style.display = 'none';
+      var sibling = img.nextElementSibling;
+      if (sibling && sibling.classList && sibling.classList.contains('preview-thumb-fallback')) {
+        sibling.style.display = 'inline-flex';
+      }
+    }
+    window.handleImageLoadError = handleImageLoadError;
+
     on(toDateWrap, 'pointerdown', function() { setDateShortcutTarget('to'); });
     on(fromDateWrap, 'pointerdown', function() { setDateShortcutTarget('from'); });
-    ['focus', 'click', 'input', 'change', 'pointerdown'].forEach(function(evtName) {
-      on(toDateInput, evtName, function() { setDateShortcutTarget('to'); });
-      on(fromDateInput, evtName, function() { setDateShortcutTarget('from'); });
+    ['input', 'change'].forEach(function(evtName) {
+      on(toDateInput, evtName, syncDateInputBounds);
+      on(fromDateInput, evtName, syncDateInputBounds);
     });
 
     document.querySelectorAll('.quick-date').forEach(function(btn) {
       on(btn, 'click', function() {
         if (btn.dataset.action === 'today') {
           var today = formatInputDate(new Date());
-          if (activeDateShortcutTarget === 'from') {
-            fromDateInput.value = today;
-          } else {
-            toDateInput.value = today;
-          }
+          fromDateInput.value = today;
+          toDateInput.value = today;
+          syncDateInputBounds();
           return;
         }
         if (btn.dataset.action === 'all-time') {
-          if (activeDateShortcutTarget === 'from') {
-            fromDateInput.value = '';
-          } else {
-            toDateInput.value = formatInputDate(new Date());
-          }
+          fromDateInput.value = '';
+          toDateInput.value = formatInputDate(new Date());
+          syncDateInputBounds();
           return;
         }
         var days = parseInt(btn.dataset.days, 10);
@@ -1887,10 +2292,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function shouldDockPlayerControlsRight() {
-      if (window.innerWidth <= 1024) return true;
-      if (!leftRailEl || !leftRailEl.getBoundingClientRect) return false;
-      var railWidth = leftRailEl.getBoundingClientRect().width || 0;
-      return railWidth > 0 && railWidth < 380;
+      return window.innerWidth <= 1024;
     }
 
     function shouldDockMainControlsLeft() {
@@ -1910,18 +2312,12 @@ const HTML_APP = `<!DOCTYPE html>
         }
         cleanupMainControlsCard.classList.toggle('rail-docked-control', dockLeft);
       }
-      if (deletedMainControlsCard && deletedControlsLeftHost && deletedControlsRightHost) {
-        var deletedTargetHost = dockLeft ? deletedControlsLeftHost : deletedControlsRightHost;
-        if (deletedMainControlsCard.parentElement !== deletedTargetHost && typeof deletedTargetHost.appendChild === 'function') {
-          deletedTargetHost.appendChild(deletedMainControlsCard);
-        }
-        deletedMainControlsCard.classList.toggle('rail-docked-control', dockLeft);
+      if (deletedMainControlsCard && deletedControlsMainHost && deletedMainControlsCard.parentElement !== deletedControlsMainHost && typeof deletedControlsMainHost.appendChild === 'function') {
+        deletedControlsMainHost.appendChild(deletedMainControlsCard);
       }
+      if (deletedMainControlsCard) deletedMainControlsCard.classList.remove('rail-docked-control');
       if (cleanupControlsLeftHost) {
         cleanupControlsLeftHost.style.display = currentTabName === 'cleanup' && dockLeft ? 'block' : 'none';
-      }
-      if (deletedControlsLeftHost) {
-        deletedControlsLeftHost.style.display = currentTabName === 'deleted' && dockLeft ? 'block' : 'none';
       }
     }
 
@@ -1952,7 +2348,6 @@ const HTML_APP = `<!DOCTYPE html>
       var syncPlayerFromSelection = opts.syncPlayerFromSelection !== false;
       if (currentTabName === 'player' && tabName !== 'player') {
         saveCurrentPlayerProgress();
-        if (playerAudio && !playerAudio.paused) playerAudio.pause();
       }
       document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
       document.querySelectorAll('.tab[data-tab="' + tabName + '"]').forEach(function(activeTabEl) {
@@ -1983,6 +2378,7 @@ const HTML_APP = `<!DOCTYPE html>
       currentTabName = tabName;
       syncMainControlsDock();
       syncPlayerControlsDock();
+      updateFloatingPlayerHover();
       schedulePersistAppState();
     }
 
@@ -2001,15 +2397,39 @@ const HTML_APP = `<!DOCTYPE html>
       syncPlayerControlsDock();
     });
 
-    on(versionBadgeBtn, 'click', function() {
-      setActiveTab('settings', { push: true });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    on(floatingPlayerToggleBtn, 'click', function() {
+      if (!playerAudio || !playerAudio.src) {
+        setPlayerStatus('No audio loaded. Queue a story and press Play.', true);
+        showToast('No audio loaded', 'error');
+        return;
+      }
+      if (playerAudio.paused) playerAudio.play();
+      else playerAudio.pause();
+    });
+    on(floatingPlayerBackBtn, 'click', function() {
+      if (!playerAudio || !playerAudio.src) return;
+      playerAudio.currentTime = Math.max(0, playerAudio.currentTime - settings.audioBackSeconds);
+    });
+    on(floatingPlayerNextBtn, 'click', function() {
+      var nextIdx = findNextPlayableIndex(playerIndex);
+      if (nextIdx >= 0) loadPlayerIndex(nextIdx);
+    });
+    on(floatingPlayerOpenBtn, 'click', function() {
+      setActiveTab('player', { push: true, syncPlayerFromSelection: false });
+    });
+    on(versionHistoryLink, 'click', function(evt) {
+      evt.preventDefault();
+      setActiveTab('about', { push: true, syncPlayerFromSelection: false });
     });
 
     on(previewBtn, 'click', async function() {
       var fromDate = fromDateInput.value || '';
       var toDate = toDateInput.value || '';
       if (!toDate) toDate = formatInputDate(new Date());
+      if (fromDate && toDate && fromDate > toDate) {
+        showToast('Start date must be on or before end date', 'warning');
+        return;
+      }
 
       var queryKey = buildQueryKey();
 
@@ -2036,10 +2456,10 @@ const HTML_APP = `<!DOCTYPE html>
         syncPreviewSelectionUI();
         renderPreview();
         updatePreviewButtonLabel();
+        updateResultsSummary();
 
-        itemCountEl.textContent = currentCount;
-        locationDisplay.textContent = locationSelect.value;
-        previewTopControls.style.display = previewData.length > 0 ? 'flex' : 'none';
+        setFindMeta(currentCount, locationSelect.value);
+        if (previewTopToolbar) previewTopToolbar.style.display = previewData.length > 0 ? 'grid' : 'none';
         previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
         showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
       } catch (err) {
@@ -2077,7 +2497,6 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function getActiveSelectedIds() {
-      if (!previewSearch) return Array.from(selectedPreviewIds);
       var filteredIds = new Set(getFilteredPreviewItems().map(function(item) { return String(item.id); }));
       return Array.from(selectedPreviewIds).filter(function(id) { return filteredIds.has(id); });
     }
@@ -2093,10 +2512,7 @@ const HTML_APP = `<!DOCTYPE html>
         }
       }
 
-      var playerCount = 0;
-      if (playerQueue.length > 0 && playerEnabledIds && typeof playerEnabledIds.size === 'number') {
-        playerCount = playerEnabledIds.size;
-      }
+      var playerCount = playerQueue.length;
       if (playerSelectedCountBadge) {
         if (playerCount > 0) {
           playerSelectedCountBadge.textContent = String(playerCount);
@@ -2105,6 +2521,44 @@ const HTML_APP = `<!DOCTYPE html>
           playerSelectedCountBadge.style.display = 'none';
         }
       }
+    }
+
+    function updateResultsSummary() {
+      if (!resultsSummary || !resultsSummaryFiltered || !resultsSummarySelected || !resultsSummaryQueue) return;
+      if (previewData.length === 0) {
+        resultsSummary.style.display = 'none';
+        return;
+      }
+      var filteredCount = getFilteredPreviewItems().length;
+      var selectedCount = getActiveSelectedIds().length;
+      var queueCount = playerQueue.length;
+      resultsSummaryFiltered.textContent = 'All (filtered): ' + filteredCount;
+      resultsSummarySelected.textContent = 'Selected: ' + selectedCount;
+      resultsSummaryQueue.textContent = 'Player queue: ' + queueCount;
+      resultsSummary.style.display = 'inline-flex';
+    }
+
+    function updateFloatingPlayerHover() {
+      if (!floatingPlayerHover || !floatingPlayerStatus) return;
+      var isPlaying = !!(playerAudio && playerAudio.src && !playerAudio.paused);
+      var hasAudioLoaded = !!(playerAudio && playerAudio.src);
+      var shouldShow = hasAudioLoaded && currentTabName !== 'player';
+      floatingPlayerHover.classList.toggle('is-visible', shouldShow);
+      floatingPlayerHover.hidden = !shouldShow;
+      if (floatingPlayerHover.setAttribute) {
+        floatingPlayerHover.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+      }
+      if (!shouldShow) return;
+      var item = playerQueue[playerIndex] || {};
+      var stateLabel = isPlaying ? 'Playing' : 'Paused';
+      var itemLabel = item && item.title ? item.title : 'Player';
+      var statusText = stateLabel + ': ' + itemLabel;
+      if (floatingPlayerStatusText) floatingPlayerStatusText.textContent = statusText;
+      else floatingPlayerStatus.textContent = statusText;
+      if (floatingPlayerDot && floatingPlayerDot.classList) {
+        floatingPlayerDot.classList.toggle('is-playing', isPlaying);
+      }
+      if (floatingPlayerToggleBtn) floatingPlayerToggleBtn.textContent = isPlaying ? '⏸' : '▶';
     }
 
     function isArchiveSourceSelected() {
@@ -2116,13 +2570,26 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function getSecondaryActionLabel() {
-      return getSecondaryCleanupAction() === 'restore' ? 'Restore Selected' : 'Archive Selected';
+      return getSecondaryCleanupAction() === 'restore' ? 'Restore' : 'Archive';
     }
 
     function getActionPastTense(action) {
       if (action === 'delete') return 'Deleted';
       if (action === 'restore') return 'Restored';
       return 'Archived';
+    }
+
+    function setPlayerStatus(message, isError) {
+      if (!playerStatus) return;
+      if (isError) {
+        playerStatus.textContent = '';
+        playerStatus.classList.remove('is-error');
+        if (playerFeedback) playerFeedback.textContent = message || '';
+        return;
+      }
+      playerStatus.textContent = message || '';
+      playerStatus.classList.remove('is-error');
+      if (playerFeedback) playerFeedback.textContent = '';
     }
 
     function renderPreview() {
@@ -2136,6 +2603,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
         previewBottomControls.style.display = 'none';
         syncPreviewSelectionUI();
+        updateResultsSummary();
         return;
       }
 
@@ -2159,7 +2627,7 @@ const HTML_APP = `<!DOCTYPE html>
         html += ' onpointercancel="handlePreviewPointerCancel(event,this)">';
         html += '<input type="checkbox" data-article-id="' + escapeHtml(articleId) + '" onchange="togglePreviewItem(this)"' + checked + '>';
         if (article.thumbnail) {
-          html += '<img class="preview-thumb" src="' + escapeHtml(article.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+          html += '<img class="preview-thumb" src="' + escapeHtml(article.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">';
         } else {
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
@@ -2198,6 +2666,7 @@ const HTML_APP = `<!DOCTYPE html>
       previewNextBtn.disabled = previewPage >= totalPages;
       previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
       syncPreviewSelectionUI();
+      updateResultsSummary();
       schedulePersistAppState();
     }
 
@@ -2214,16 +2683,16 @@ const HTML_APP = `<!DOCTYPE html>
         playSelectedBtn.disabled = true;
         deleteBtn.disabled = true;
         archiveBtn.disabled = true;
-        openSelectedBtn.textContent = 'Open Selected';
-        deleteBtn.textContent = 'Delete Selected';
+        playSelectedBtn.textContent = 'Play';
+        openSelectedBtn.textContent = 'Open';
+        deleteBtn.textContent = 'Delete';
         archiveBtn.textContent = getSecondaryActionLabel();
         updateRailSelectionBadges();
         return;
       }
-      var selectedCount = selectedPreviewIds.size;
       var filteredIds = new Set(filtered.map(function(item) { return String(item.id); }));
       var filteredSelected = [...selectedPreviewIds].filter(function(id) { return filteredIds.has(id); }).length;
-      var displayCount = previewSearch ? filteredSelected : selectedCount;
+      var displayCount = filteredSelected;
       selectAllPreview.checked = filteredSelected > 0 && filteredSelected === filtered.length;
       selectAllPreview.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
       var maxTabs = Number(settings.maxOpenTabs || 5);
@@ -2231,14 +2700,15 @@ const HTML_APP = `<!DOCTYPE html>
       openSelectedBtn.style.display = canOpenFew ? 'inline-flex' : 'none';
       openSelectedBtn.disabled = !canOpenFew;
       playSelectedBtn.disabled = displayCount === 0;
-      playSelectedBtn.textContent = displayCount > 0 ? 'Play Selected (' + displayCount + ')' : 'Play Selected';
+      playSelectedBtn.textContent = displayCount > 0 ? 'Play (' + displayCount + ')' : 'Play';
       deleteBtn.disabled = displayCount === 0;
       archiveBtn.disabled = displayCount === 0;
-      openSelectedBtn.textContent = displayCount > 0 ? 'Open Selected (' + displayCount + ')' : 'Open Selected';
-      deleteBtn.textContent = displayCount > 0 ? 'Delete Selected (' + displayCount + ')' : 'Delete Selected';
+      openSelectedBtn.textContent = displayCount > 0 ? 'Open (' + displayCount + ')' : 'Open';
+      deleteBtn.textContent = displayCount > 0 ? 'Delete (' + displayCount + ')' : 'Delete';
       var secondaryLabel = getSecondaryActionLabel();
       archiveBtn.textContent = displayCount > 0 ? (secondaryLabel + ' (' + displayCount + ')') : secondaryLabel;
       updateRailSelectionBadges();
+      updateResultsSummary();
     }
 
     function togglePreviewItem(checkbox) {
@@ -2498,6 +2968,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (!item) return;
       var itemId = String(item.id || '');
       if (!itemId) return;
+      playerLoadToken += 1;
       var selected = getSelectedPreviewItemsForPlayer().filter(function(qItem) {
         return String(qItem && qItem.id || '') !== itemId;
       });
@@ -2525,6 +2996,7 @@ const HTML_APP = `<!DOCTYPE html>
       var queueIds = playerQueue.map(function(item) { return String(item && item.id ? item.id : ''); });
       if (selectedIds.join('|') === queueIds.join('|') && playerQueue.length > 0) return;
 
+      playerLoadToken += 1;
       saveCurrentPlayerProgress();
       playerQueue = selected.slice();
       playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
@@ -2687,6 +3159,8 @@ const HTML_APP = `<!DOCTYPE html>
       if (playerPlayPauseBtn.setAttribute) {
         playerPlayPauseBtn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
       }
+      if (floatingPlayerToggleBtn) floatingPlayerToggleBtn.textContent = isPlaying ? '⏸' : '▶';
+      updateFloatingPlayerHover();
     }
 
     function syncPlayerQueueAfterProcessedIds(processedIds, opts) {
@@ -2696,10 +3170,11 @@ const HTML_APP = `<!DOCTYPE html>
       var currentPlayingId = String(playerLoadedItemId || getCurrentPlayerItemId() || '');
       var removedCurrent = currentPlayingId && removedSet.has(currentPlayingId);
       if (removedCurrent) {
+        playerLoadToken += 1;
         clearPlayerAudioSource();
         playerLoadedItemId = '';
         playerLoadedChunkIndex = 0;
-        playerStatus.textContent = 'Playback stopped: current item was removed.';
+        setPlayerStatus('Playback stopped: current item was removed.', true);
       }
       if (!playerQueue.length) {
         setPlayerPlayPauseButtonState();
@@ -2730,7 +3205,166 @@ const HTML_APP = `<!DOCTYPE html>
       return String(itemId || '') + '|' + String(chunkIndex || 0) + '|' + (settings.mockTts ? 'mock' : 'real') + '|' + String(settings.ttsVoice || 'alloy');
     }
 
+    function getDownloadProfileKey(itemId) {
+      return String(itemId || '') + '|' + (settings.mockTts ? 'mock' : 'real') + '|' + String(settings.ttsVoice || 'alloy');
+    }
+
+    function openAudioCacheDb() {
+      if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+      if (openAudioCacheDb._promise) return openAudioCacheDb._promise;
+      openAudioCacheDb._promise = new Promise(function(resolve) {
+        try {
+          var request = indexedDB.open('readflow_audio_cache_v1', 1);
+          request.onupgradeneeded = function(evt) {
+            var db = evt.target.result;
+            if (!db.objectStoreNames.contains('chunks')) db.createObjectStore('chunks', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('manifests')) db.createObjectStore('manifests', { keyPath: 'id' });
+          };
+          request.onsuccess = function() { resolve(request.result); };
+          request.onerror = function() { resolve(null); };
+        } catch (err) {
+          resolve(null);
+        }
+      });
+      return openAudioCacheDb._promise;
+    }
+
+    async function idbPut(storeName, value) {
+      var db = await openAudioCacheDb();
+      if (!db) return;
+      await new Promise(function(resolve) {
+        try {
+          var tx = db.transaction(storeName, 'readwrite');
+          tx.objectStore(storeName).put(value);
+          tx.oncomplete = function() { resolve(); };
+          tx.onerror = function() { resolve(); };
+        } catch (err) {
+          resolve();
+        }
+      });
+    }
+
+    async function idbGet(storeName, key) {
+      var db = await openAudioCacheDb();
+      if (!db) return null;
+      return await new Promise(function(resolve) {
+        try {
+          var tx = db.transaction(storeName, 'readonly');
+          var req = tx.objectStore(storeName).get(key);
+          req.onsuccess = function() { resolve(req.result || null); };
+          req.onerror = function() { resolve(null); };
+        } catch (err) {
+          resolve(null);
+        }
+      });
+    }
+
+    async function idbCountChunksForProfile(profileKey) {
+      var db = await openAudioCacheDb();
+      if (!db) return 0;
+      return await new Promise(function(resolve) {
+        try {
+          var tx = db.transaction('chunks', 'readonly');
+          var store = tx.objectStore('chunks');
+          var count = 0;
+          var req = store.openCursor();
+          req.onsuccess = function() {
+            var cursor = req.result;
+            if (!cursor) return resolve(count);
+            var row = cursor.value;
+            if (row && typeof row.id === 'string' && row.id.indexOf(profileKey + '|') === 0) {
+              count += 1;
+            }
+            cursor.continue();
+          };
+          req.onerror = function() { resolve(count); };
+        } catch (err) {
+          resolve(0);
+        }
+      });
+    }
+
+    async function getDownloadedChunkPacket(itemId, chunkIndex) {
+      var profileKey = getDownloadProfileKey(itemId);
+      var row = await idbGet('chunks', profileKey + '|' + String(chunkIndex));
+      if (!row || !row.blob) return null;
+      return {
+        blob: row.blob,
+        isMock: !!row.isMock,
+        isReal: !row.isMock,
+        key: 'downloaded:' + profileKey + '|' + String(chunkIndex),
+      };
+    }
+
+    async function saveDownloadedChunkPacket(itemId, chunkIndex, packet) {
+      if (!packet || !packet.blob) return;
+      var profileKey = getDownloadProfileKey(itemId);
+      await idbPut('chunks', {
+        id: profileKey + '|' + String(chunkIndex),
+        profileKey: profileKey,
+        itemId: String(itemId || ''),
+        chunkIndex: Number(chunkIndex || 0),
+        blob: packet.blob,
+        isMock: !!packet.isMock,
+        savedAt: Date.now(),
+      });
+    }
+
+    async function loadDownloadedManifest(itemId) {
+      var profileKey = getDownloadProfileKey(itemId);
+      var manifest = await idbGet('manifests', profileKey);
+      if (manifest) playerDownloadedManifestByItemId[String(itemId)] = manifest;
+      return manifest;
+    }
+
+    async function hydrateDownloadedProgressForItem(item) {
+      if (!item || !item.id) return;
+      var itemId = String(item.id);
+      if (playerDownloadHydratedByItemId[itemId]) return;
+      var profileKey = getDownloadProfileKey(itemId);
+      var totalChunks = Math.max(1, getPlayerItemChunks(item).length);
+      var manifest = playerDownloadedManifestByItemId[itemId] || await loadDownloadedManifest(itemId);
+      if (manifest) {
+        playerDownloadProgressByItemId[itemId] = 100;
+        playerDownloadHydratedByItemId[itemId] = true;
+        return;
+      }
+      var downloadedChunks = await idbCountChunksForProfile(profileKey);
+      if (downloadedChunks > 0) {
+        playerDownloadProgressByItemId[itemId] = Math.max(
+          Number(playerDownloadProgressByItemId[itemId] || 0),
+          Math.min(99, Math.round((downloadedChunks / totalChunks) * 100))
+        );
+      }
+      playerDownloadHydratedByItemId[itemId] = true;
+    }
+
+    async function saveDownloadedManifest(itemId, chunkCount) {
+      var profileKey = getDownloadProfileKey(itemId);
+      var manifest = {
+        id: profileKey,
+        profileKey: profileKey,
+        itemId: String(itemId || ''),
+        chunkCount: Number(chunkCount || 0),
+        downloadedAt: Date.now(),
+      };
+      playerDownloadedManifestByItemId[String(itemId)] = manifest;
+      await idbPut('manifests', manifest);
+    }
+
+    async function isItemFullyDownloaded(item) {
+      if (!item) return false;
+      var itemId = String(item.id || '');
+      if (!itemId) return false;
+      var manifest = playerDownloadedManifestByItemId[itemId] || await loadDownloadedManifest(itemId);
+      if (!manifest) return false;
+      var expected = getPlayerItemChunks(item).length;
+      return Number(manifest.chunkCount || 0) >= expected;
+    }
+
     async function fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex) {
+      var downloadedPacket = await getDownloadedChunkPacket(itemId, chunkIndex);
+      if (downloadedPacket) return downloadedPacket;
       var key = getPlayerChunkCacheKey(itemId, chunkIndex);
       if (playerChunkBlobByKey[key]) return playerChunkBlobByKey[key];
       if (playerChunkFetchByKey[key]) return playerChunkFetchByKey[key];
@@ -2781,6 +3415,75 @@ const HTML_APP = `<!DOCTYPE html>
       var chunkText = chunks[chunkIndex] || '';
       if (!chunkText.trim()) return;
       fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex).catch(function() {});
+    }
+
+    function queueDownloadsForItems(items) {
+      if (!Array.isArray(items) || !items.length) return;
+      items.forEach(function(item) {
+        if (!item || !item.id) return;
+        var itemId = String(item.id);
+        if (playerDownloadQueue.indexOf(itemId) === -1) playerDownloadQueue.push(itemId);
+      });
+      runDownloadQueue();
+      updatePlayerDownloadStatus();
+      renderPlayerQueue();
+    }
+
+    async function downloadItemAudio(item) {
+      if (!item || !item.id) return;
+      var itemId = String(item.id);
+      var chunks = getPlayerItemChunks(item);
+      if (!chunks.length) return;
+      playerDownloadProgressByItemId[itemId] = 0;
+      updatePlayerDownloadStatus();
+      renderPlayerQueue();
+      for (var i = 0; i < chunks.length; i++) {
+        while (playerDownloadPaused) {
+          await new Promise(function(resolve) { setTimeout(resolve, 160); });
+        }
+        var text = chunks[i] || '';
+        if (!text.trim()) text = item.title || 'Untitled';
+        var packet = await fetchPlayerChunkBlob(item, itemId, text, i);
+        await saveDownloadedChunkPacket(itemId, i, packet);
+        var pct = Math.round(((i + 1) / chunks.length) * 100);
+        playerDownloadProgressByItemId[itemId] = pct;
+        updatePlayerDownloadStatus();
+        renderPlayerQueue();
+      }
+      await saveDownloadedManifest(itemId, chunks.length);
+      playerDownloadProgressByItemId[itemId] = 100;
+      updatePlayerDownloadStatus();
+      renderPlayerQueue();
+    }
+
+    async function runDownloadQueue() {
+      if (playerDownloadInFlight) return;
+      if (!playerDownloadQueue.length) {
+        playerDownloadCurrentItemId = '';
+        updatePlayerDownloadStatus();
+        return;
+      }
+      playerDownloadInFlight = true;
+      while (playerDownloadQueue.length > 0) {
+        while (playerDownloadPaused) {
+          await new Promise(function(resolve) { setTimeout(resolve, 160); });
+        }
+        var nextId = playerDownloadQueue.shift();
+        playerDownloadCurrentItemId = String(nextId || '');
+        updatePlayerDownloadStatus();
+        var item = playerQueue.find(function(it) { return String(it && it.id || '') === String(nextId); });
+        if (!item) continue;
+        try {
+          await downloadItemAudio(item);
+        } catch (err) {
+          showToast('Download failed for "' + (item.title || 'Untitled') + '"', 'warning');
+        }
+      }
+      playerDownloadInFlight = false;
+      playerDownloadPaused = false;
+      playerDownloadCurrentItemId = '';
+      updatePlayerDownloadStatus();
+      renderPlayerQueue();
     }
 
     function snapshotPreviewItemsForStorage(items) {
@@ -2848,6 +3551,7 @@ const HTML_APP = `<!DOCTYPE html>
           playerIndex: Number(playerIndex || 0),
           playerEnabledIds: Array.from(playerEnabledIds || []),
           playerSearch: playerSearch || '',
+          playerSortMode: playerSortMode || 'added',
           playerShowText: !!playerShowText,
           playerSpeed: Number(parseFloat(playerSpeedSelect && playerSpeedSelect.value || '1')),
           scroll: {
@@ -2934,6 +3638,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (hasLocation) locationSelect.value = state.location;
       if (typeof state.fromDate === 'string') fromDateInput.value = state.fromDate;
       if (typeof state.toDate === 'string') toDateInput.value = state.toDate;
+      syncDateInputBounds();
       if (state.activeDateShortcutTarget === 'from' || state.activeDateShortcutTarget === 'to') {
         activeDateShortcutTarget = state.activeDateShortcutTarget;
       }
@@ -2969,6 +3674,9 @@ const HTML_APP = `<!DOCTYPE html>
       if (state.deletedSortMode === 'added' || state.deletedSortMode === 'published' || state.deletedSortMode === 'deleted') {
         deletedSortMode = state.deletedSortMode;
       }
+      if (state.playerSortMode === 'added' || state.playerSortMode === 'published') {
+        playerSortMode = state.playerSortMode;
+      }
 
       if (Array.isArray(state.playerQueue) && state.playerQueue.length > 0) {
         playerQueue = snapshotPreviewItemsForStorage(state.playerQueue);
@@ -2993,16 +3701,16 @@ const HTML_APP = `<!DOCTYPE html>
         });
         if (hasSpeed) playerSpeedSelect.value = String(restoredSpeed);
       }
-
-      itemCountEl.textContent = currentCount;
-      locationDisplay.textContent = locationSelect.value || '-';
-      previewTopControls.style.display = previewData.length > 0 ? 'flex' : 'none';
+      setFindMeta(currentCount, locationSelect.value || '-');
+      if (previewTopToolbar) previewTopToolbar.style.display = previewData.length > 0 ? 'grid' : 'none';
       previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
       renderPreview();
+      updateResultsSummary();
       updateDeletedBadge();
       renderDeletedItems();
       renderPlayerQueue();
       renderPlayerText();
+      updatePlayerSortButtons();
 
       var normalizedPath = normalizePath(window.location.pathname);
       var hasExplicitRoute = Object.prototype.hasOwnProperty.call(ROUTE_TABS, normalizedPath);
@@ -3057,6 +3765,8 @@ const HTML_APP = `<!DOCTYPE html>
       var durationSeconds = queueItem
         ? getEstimatedTotalDurationSeconds(queueItem, item)
         : Math.max(Number(playerDurationByItemId[item] || 0), sumKnownChunkDurations(item));
+      var downloadPct = Number(playerDownloadProgressByItemId[item] || 0);
+      if (!downloadPct && playerDownloadedManifestByItemId[item]) downloadPct = 100;
       var progressPct = 0;
       if (durationSeconds > 0) {
         progressPct = Math.max(0, Math.min(100, (progressSeconds / durationSeconds) * 100));
@@ -3068,6 +3778,48 @@ const HTML_APP = `<!DOCTYPE html>
           el.style.width = progressPct.toFixed(1) + '%';
         }
       });
+      playerQueueEl.querySelectorAll('.player-row-progress-downloaded').forEach(function(el) {
+        if (String(el.dataset.itemId || '') === item) {
+          el.style.width = Math.max(0, Math.min(100, downloadPct)).toFixed(1) + '%';
+        }
+      });
+      if (playerCurrentProgressFill && item === String(playerLoadedItemId || getCurrentPlayerItemId() || '')) {
+        playerCurrentProgressFill.style.width = progressPct.toFixed(1) + '%';
+      }
+      if (playerCurrentProgressDownloaded && item === String(playerLoadedItemId || getCurrentPlayerItemId() || '')) {
+        playerCurrentProgressDownloaded.style.width = Math.max(0, Math.min(100, downloadPct)).toFixed(1) + '%';
+      }
+    }
+
+    function updatePlayerDownloadStatus() {
+      if (!playerDownloadStatus) return;
+      var currentItem = playerQueue[playerIndex] || null;
+      var currentId = currentItem && currentItem.id ? String(currentItem.id) : '';
+      var queuedCount = playerDownloadQueue.length + (playerDownloadInFlight ? 1 : 0);
+      if (!currentId) {
+        playerDownloadStatus.textContent = queuedCount > 0 ? ('Downloads queued: ' + queuedCount) : '';
+        return;
+      }
+      var pct = Number(playerDownloadProgressByItemId[currentId] || 0);
+      var done = !!playerDownloadedManifestByItemId[currentId] || pct >= 100;
+      if (done) {
+        playerDownloadStatus.textContent = 'Downloaded for offline playback';
+        return;
+      }
+      var isCurrent = playerDownloadInFlight && playerDownloadCurrentItemId === currentId;
+      if (isCurrent && playerDownloadPaused) {
+        playerDownloadStatus.textContent = 'Download paused';
+        return;
+      }
+      if (isCurrent) {
+        playerDownloadStatus.textContent = 'Downloading audio: ' + Math.max(0, Math.min(100, pct)).toFixed(0) + '%';
+        return;
+      }
+      if (queuedCount > 0) {
+        playerDownloadStatus.textContent = 'Downloads queued: ' + queuedCount;
+      } else {
+        playerDownloadStatus.textContent = '';
+      }
     }
 
     function buildPlayerSearchText(item) {
@@ -3079,6 +3831,19 @@ const HTML_APP = `<!DOCTYPE html>
       ].join(' ').toLowerCase();
     }
 
+    function getPlayerSortTimestamp(item) {
+      var rawDate = playerSortMode === 'published'
+        ? (item && (item.publishedAt || item.savedAt))
+        : (item && item.savedAt);
+      var ts = Date.parse(rawDate || '');
+      return Number.isFinite(ts) ? ts : 0;
+    }
+
+    function updatePlayerSortButtons() {
+      if (playerSortAddedBtn) playerSortAddedBtn.classList.toggle('active', playerSortMode === 'added');
+      if (playerSortPublishedBtn) playerSortPublishedBtn.classList.toggle('active', playerSortMode === 'published');
+    }
+
     function getFilteredPlayerIndices() {
       var term = (playerSearch || '').trim().toLowerCase();
       var indices = [];
@@ -3087,7 +3852,25 @@ const HTML_APP = `<!DOCTYPE html>
           indices.push(i);
         }
       }
+      indices.sort(function(a, b) {
+        return getPlayerSortTimestamp(playerQueue[b]) - getPlayerSortTimestamp(playerQueue[a]);
+      });
       return indices;
+    }
+
+    async function preloadDownloadedManifestsForQueue() {
+      if (!playerQueue || !playerQueue.length) return;
+      var changed = false;
+      for (var i = 0; i < playerQueue.length; i++) {
+        var item = playerQueue[i];
+        var itemId = String(item && item.id || '');
+        if (!itemId) continue;
+        var before = Number(playerDownloadProgressByItemId[itemId] || 0);
+        await hydrateDownloadedProgressForItem(item);
+        var after = Number(playerDownloadProgressByItemId[itemId] || 0);
+        if (after !== before) changed = true;
+      }
+      if (changed) renderPlayerQueue();
     }
 
     function estimateChunkDurationSeconds(item, itemId, chunkIndex, chunks) {
@@ -3165,33 +3948,40 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function renderPlayerQueue() {
+      preloadDownloadedManifestsForQueue();
       if (playerQueue.length === 0) {
         playerQueueEl.innerHTML = '<div class="history-item">No queued items.</div>';
         playerCurrentHeader.style.display = 'none';
         playerCurrentTitle.textContent = '';
         playerCurrentAuthor.textContent = '';
-        playerStatus.textContent = 'Queue is empty.';
+        setPlayerStatus('Queue is empty.', false);
         playerTtsModeEl.style.display = settings.mockTts ? 'block' : 'none';
         playerTtsModeEl.textContent = settings.mockTts ? 'TTS mode: mock clip' : '';
         playerLoadedItemId = '';
         playerCurrentText.style.display = 'none';
         playerCurrentText.textContent = '';
         playerTextToggleBtn.textContent = 'Text';
+        if (playerCurrentProgressFill) playerCurrentProgressFill.style.width = '0%';
         playerSelectAll.checked = false;
         playerSelectAll.indeterminate = false;
         playerSelectAll.disabled = true;
         updateRailSelectionBadges();
+        updateResultsSummary();
+        updatePlayerDownloadStatus();
         schedulePersistAppState();
         return;
       }
       playerSelectAll.disabled = false;
-      playerStatus.textContent = '';
+      setPlayerStatus('', false);
       var currentItem = playerQueue[playerIndex] || {};
+      var currentItemId = getPlayerItemId(currentItem, playerIndex);
       playerCurrentHeader.style.display = 'flex';
       playerCurrentTitle.textContent = currentItem.title || 'Untitled';
       playerCurrentAuthor.textContent = currentItem.author ? ('By ' + currentItem.author) : (currentItem.site || '');
       if (currentItem.thumbnail) {
         playerCurrentThumb.src = currentItem.thumbnail;
+        playerCurrentThumb.onerror = handleImageLoadError;
+        playerCurrentThumb.dataset.broken = '';
         playerCurrentThumb.style.display = 'inline-flex';
         playerCurrentThumbFallback.style.display = 'none';
       } else {
@@ -3199,12 +3989,15 @@ const HTML_APP = `<!DOCTYPE html>
         playerCurrentThumb.style.display = 'none';
         playerCurrentThumbFallback.style.display = 'inline-flex';
       }
+      updatePlayerRowProgressUI(currentItemId);
       var filteredIndices = getFilteredPlayerIndices();
       if (filteredIndices.length === 0) {
         playerQueueEl.innerHTML = '<div class="history-item">No queued items match this filter.</div>';
         playerSelectAll.checked = false;
         playerSelectAll.indeterminate = false;
         updateRailSelectionBadges();
+        updateResultsSummary();
+        updatePlayerDownloadStatus();
         schedulePersistAppState();
         return;
       }
@@ -3225,6 +4018,14 @@ const HTML_APP = `<!DOCTYPE html>
         var itemClass = isCurrent ? 'history-item current player-queue-row' : 'history-item player-queue-row';
         var progressSeconds = Number(playerProgressByItemId[itemId] || 0);
         var durationSeconds = getEstimatedTotalDurationSeconds(item, itemId);
+        var dlPct = Number(playerDownloadProgressByItemId[itemId] || 0);
+        var hasManifest = !!playerDownloadedManifestByItemId[itemId];
+        var inQueue = playerDownloadQueue.indexOf(itemId) >= 0;
+        var isCurrentDownload = playerDownloadInFlight && playerDownloadCurrentItemId === itemId;
+        var isDownloading = isCurrentDownload && !playerDownloadPaused;
+        var dlDone = hasManifest || dlPct >= 100;
+        var downloadSymbol = dlDone ? '✓' : (isCurrentDownload ? (playerDownloadPaused ? '▶' : '⏸') : (inQueue ? '⏳' : '⬇'));
+        var downloadClass = dlDone ? ' is-done' : '';
         var progressPct = 0;
         if (durationSeconds > 0) {
           progressPct = Math.max(0, Math.min(100, (progressSeconds / durationSeconds) * 100));
@@ -3243,17 +4044,22 @@ const HTML_APP = `<!DOCTYPE html>
           '<input type="checkbox" class="player-queue-check" data-queue-id="' + escapeHtml(queueId) + '"' + checked + '>' +
           '</label>' +
           (item.thumbnail
-            ? '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
+            ? '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">'
             : '<span class="preview-thumb-fallback">No image</span>') +
           '<div class="article-info">' +
           '<div class="title-row">' +
           '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span>' +
           '<button type="button" class="text-preview-toggle player-queue-jump" data-queue-idx="' + idx + '" style="text-align:left; width:100%;">' + escapeHtml(prefix + (item.title || 'Untitled')) + (isCurrent ? '<span class="now-playing-badge">Now Playing</span>' : '') + '</button>' +
+          '<div class="player-row-actions">' +
+          '<button type="button" class="text-preview-toggle icon-btn player-row-action-btn player-queue-open" data-open-url="' + escapeHtml(item.url || '') + '" title="Open story" aria-label="Open story">↗</button>' +
+          '<button type="button" class="text-preview-toggle icon-btn player-row-action-btn player-queue-download' + downloadClass + '" data-queue-idx="' + idx + '" title="Download audio" aria-label="Download audio">' + downloadSymbol + '</button>' +
+          '</div>' +
           '</div>' +
           '<span class="article-date-right">Added ' + escapeHtml(formatDate(item.savedAt || '')) + '</span>' +
           '</div>' +
           '<div class="article-meta"><span class="article-site">' + escapeHtml(item.site || '') + '</span>' + (item.author ? ' by ' + escapeHtml(item.author) : '') + '</div>' +
           '<div class="player-row-progress" data-queue-idx="' + idx + '" data-item-id="' + escapeHtml(itemId) + '" title="' + Math.round(progressSeconds) + 's listened / ~' + Math.round(durationSeconds) + 's">' +
+          '<div class="player-row-progress-downloaded" data-item-id="' + escapeHtml(itemId) + '" style="width:' + Math.max(0, Math.min(100, dlPct)).toFixed(1) + '%;"></div>' +
           '<div class="player-row-progress-fill" data-item-id="' + escapeHtml(itemId) + '" style="width:' + progressPct.toFixed(1) + '%;"></div>' +
           '</div>' +
           '</div>' +
@@ -3278,6 +4084,35 @@ const HTML_APP = `<!DOCTYPE html>
         on(btn, 'click', function() {
           var idx = parseInt(btn.dataset.queueIdx, 10);
           if (Number.isFinite(idx)) loadPlayerIndex(idx);
+        });
+      });
+      playerQueueEl.querySelectorAll('.player-queue-open').forEach(function(btn) {
+        on(btn, 'click', function(evt) {
+          openPreviewUrl(evt, btn.dataset.openUrl || '');
+        });
+      });
+      playerQueueEl.querySelectorAll('.player-queue-download').forEach(function(btn) {
+        on(btn, 'click', function(evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          var idx = parseInt(btn.dataset.queueIdx, 10);
+          if (!Number.isFinite(idx) || idx < 0 || idx >= playerQueue.length) return;
+          var item = playerQueue[idx];
+          var itemId = String(item && item.id || '');
+          if (!itemId) return;
+          var isCurrent = playerDownloadInFlight && playerDownloadCurrentItemId === itemId;
+          if (isCurrent) {
+            playerDownloadPaused = !playerDownloadPaused;
+            renderPlayerQueue();
+            return;
+          }
+          var queuedIdx = playerDownloadQueue.indexOf(itemId);
+          if (queuedIdx >= 0) {
+            playerDownloadQueue.splice(queuedIdx, 1);
+            renderPlayerQueue();
+            return;
+          }
+          queueDownloadsForItems([item]);
         });
       });
       playerQueueEl.querySelectorAll('.player-queue-row').forEach(function(row) {
@@ -3305,6 +4140,8 @@ const HTML_APP = `<!DOCTYPE html>
         });
       });
       updateRailSelectionBadges();
+      updateResultsSummary();
+      updatePlayerDownloadStatus();
       schedulePersistAppState();
     }
 
@@ -3354,9 +4191,14 @@ const HTML_APP = `<!DOCTYPE html>
       schedulePersistPlayerState();
       schedulePersistAppState();
       setPlayerPlayPauseButtonState();
+      if (!(typeof navigator !== 'undefined' && navigator && navigator.onLine === false)) {
+        isItemFullyDownloaded(item).then(function(done) {
+          if (!done) queueDownloadsForItems([item]);
+        }).catch(function() {});
+      }
 
       try {
-        playerStatus.textContent = 'Loading audio chunk ' + (chunkIndex + 1) + ' of ' + chunks.length + '...';
+        setPlayerStatus('Loading audio chunk ' + (chunkIndex + 1) + ' of ' + chunks.length + '...', true);
         clearPlayerAudioSource();
         var packet = await fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex);
         if (loadToken !== playerLoadToken) return;
@@ -3373,7 +4215,7 @@ const HTML_APP = `<!DOCTYPE html>
         if (loadToken !== playerLoadToken) return;
         playerAudioObjectUrl = URL.createObjectURL(packet.blob);
         playerAudio.src = playerAudioObjectUrl;
-        playerAudio.playbackRate = parseFloat(playerSpeedSelect.value || '1');
+        playerAudio.playbackRate = parseFloat(playerSpeedSelect && playerSpeedSelect.value || '1');
         await new Promise(function(resolve) {
           var applySeek = function() {
             var duration = Number(playerAudio.duration || 0);
@@ -3402,16 +4244,25 @@ const HTML_APP = `<!DOCTYPE html>
         renderPlayerQueue();
       } catch (err) {
         if (loadToken !== playerLoadToken) return;
-        playerStatus.textContent = err.message || 'Audio load failed';
+        if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
+          var nextDownloadedIdx = await findNextDownloadedPlayableIndex(idx);
+          if (nextDownloadedIdx >= 0) {
+            setPlayerStatus('Offline: skipping undownloaded story.', true);
+            loadPlayerIndex(nextDownloadedIdx, { autoplay: true });
+            return;
+          }
+        }
+        setPlayerStatus(err.message || 'Audio load failed', true);
         playerTtsModeEl.style.display = 'block';
         playerTtsModeEl.textContent = 'TTS mode: error';
         setPlayerPlayPauseButtonState();
-        showToast(playerStatus.textContent, 'error');
+        showToast((err && err.message) || 'Audio load failed', 'error');
       }
     }
 
     function startPlayerWithItems(items) {
       if (!Array.isArray(items) || items.length === 0) return;
+      playerLoadToken += 1;
       playerQueue = items.slice();
       playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
       var restoreId = playerLastItemId || '';
@@ -3442,8 +4293,17 @@ const HTML_APP = `<!DOCTYPE html>
       return -1;
     }
 
+    async function findNextDownloadedPlayableIndex(fromIdx) {
+      for (var i = fromIdx + 1; i < playerQueue.length; i++) {
+        if (!playerEnabledIds.has(getPlayerQueueId(playerQueue[i], i))) continue;
+        if (await isItemFullyDownloaded(playerQueue[i])) return i;
+      }
+      return -1;
+    }
+
     function removePlayerQueueIndex(idx) {
       if (idx < 0 || idx >= playerQueue.length) return;
+      if (idx === playerIndex) playerLoadToken += 1;
       playerQueue.splice(idx, 1);
       playerEnabledIds = new Set(playerQueue.map(function(item, qIdx) { return getPlayerQueueId(item, qIdx); }));
       if (playerQueue.length === 0) {
@@ -3477,7 +4337,11 @@ const HTML_APP = `<!DOCTYPE html>
       if (nextIdx >= 0) loadPlayerIndex(nextIdx);
     });
     on(playerPlayPauseBtn, 'click', function() {
-      if (!playerAudio.src) return;
+      if (!playerAudio.src) {
+        setPlayerStatus('No audio loaded. Queue a story and press Play.', true);
+        showToast('No audio loaded', 'error');
+        return;
+      }
       if (playerAudio.paused) playerAudio.play();
       else playerAudio.pause();
     });
@@ -3487,9 +4351,15 @@ const HTML_APP = `<!DOCTYPE html>
     on(playerForwardBtn, 'click', function() {
       playerAudio.currentTime = Math.min(playerAudio.duration || Infinity, playerAudio.currentTime + settings.audioForwardSeconds);
     });
+    on(playerCurrentProgress, 'click', function(evt) {
+      if (!playerCurrentProgress || !playerCurrentProgress.getBoundingClientRect) return;
+      var rect = playerCurrentProgress.getBoundingClientRect();
+      var rel = rect.width > 0 ? (evt.clientX - rect.left) / rect.width : 0;
+      seekPlayerQueueRowProgress(playerIndex, rel);
+    });
     on(playerSpeedSelect, 'change', function() {
-      var speed = parseFloat(playerSpeedSelect.value || '1');
-      playerAudio.playbackRate = speed;
+      if (!playerAudio) return;
+      playerAudio.playbackRate = parseFloat(playerSpeedSelect.value || '1');
       schedulePersistAppState();
     });
     on(playerTextToggleBtn, 'click', function() {
@@ -3523,6 +4393,17 @@ const HTML_APP = `<!DOCTYPE html>
       renderPlayerQueue();
       playerSearchInput.focus();
     });
+    on(playerSortAddedBtn, 'click', function() {
+      playerSortMode = 'added';
+      updatePlayerSortButtons();
+      renderPlayerQueue();
+    });
+    on(playerSortPublishedBtn, 'click', function() {
+      playerSortMode = 'published';
+      updatePlayerSortButtons();
+      renderPlayerQueue();
+    });
+    updatePlayerSortButtons();
     on(playerAudio, 'ended', async function() {
       saveCurrentPlayerProgress();
       setPlayerPlayPauseButtonState();
@@ -3547,7 +4428,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (action === 'archive' || action === 'delete') {
         removedCurrent = await runPlayerItemAction(currentIdx, action);
       }
-      if (!playerAutoNextCheckbox.checked && !settings.playerAutoNext) return;
+      if (!settings.playerAutoNext) return;
       if (playerQueue.length === 0) return;
       if (removedCurrent && playerIndex < playerQueue.length) {
         await loadPlayerIndex(playerIndex);
@@ -3592,10 +4473,6 @@ const HTML_APP = `<!DOCTYPE html>
     on(previewList, 'scroll', function() { schedulePersistAppState(); });
     on(deletedList, 'scroll', function() { schedulePersistAppState(); });
     on(playerQueueEl, 'scroll', function() { schedulePersistAppState(); });
-    on(playerAutoNextCheckbox, 'change', function() {
-      settings.playerAutoNext = !!playerAutoNextCheckbox.checked;
-      schedulePersistAppState();
-    });
 
     async function performCleanup(action, skipConfirm, forcedIds) {
       if (cleanupInFlight) {
@@ -3718,18 +4595,19 @@ const HTML_APP = `<!DOCTYPE html>
           selectedPreviewIds.clear();
           lastQuery = null;
           previewPage = 1;
-          itemCountEl.textContent = '0';
+          setFindMeta(0, locationSelect.value || '-');
           renderPreview();
-          previewTopControls.style.display = 'none';
+          if (previewTopToolbar) previewTopToolbar.style.display = 'none';
           previewBottomControls.style.display = 'none';
         } else {
           var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
           if (previewPage > totalPages) previewPage = totalPages;
-          itemCountEl.textContent = String(currentCount);
+          setFindMeta(currentCount, locationSelect.value || '-');
           renderPreview();
-          previewTopControls.style.display = 'flex';
+          if (previewTopToolbar) previewTopToolbar.style.display = 'grid';
           previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
         }
+        updateResultsSummary();
 
         document.getElementById('progress').style.display = 'none';
         document.getElementById('progress-bar').style.width = '0%';
@@ -3749,15 +4627,18 @@ const HTML_APP = `<!DOCTYPE html>
     function updateSelectedButtons() {
       var filtered = getFilteredDeletedItems();
       var activeSelectedItems = getActiveSelectedDeletedItems();
-      var selectedCount = selectedDeletedIds.size;
       var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
       var filteredSelected = Array.from(selectedDeletedIds).filter(function(id) { return filteredIdSet.has(id); }).length;
-      var displayCount = deletedSearch ? filteredSelected : selectedCount;
+      var displayCount = filteredSelected;
 
       restoreBtn.disabled = activeSelectedItems.length === 0;
       removeSelectedBtn.disabled = activeSelectedItems.length === 0;
-      restoreBtn.textContent = displayCount > 0 ? 'Restore Selected (' + displayCount + ')' : 'Restore Selected';
-      removeSelectedBtn.textContent = displayCount > 0 ? 'Remove from History (' + displayCount + ')' : 'Remove from History';
+      if (deleteSelectedHistoryBtn) deleteSelectedHistoryBtn.disabled = activeSelectedItems.length === 0;
+      restoreBtn.textContent = displayCount > 0 ? 'Restore (' + displayCount + ')' : 'Restore';
+      removeSelectedBtn.textContent = displayCount > 0 ? 'Remove (' + displayCount + ')' : 'Remove';
+      if (deleteSelectedHistoryBtn) {
+        deleteSelectedHistoryBtn.textContent = displayCount > 0 ? 'Delete (' + displayCount + ')' : 'Delete';
+      }
 
       if (deletedItems.length === 0 || filtered.length === 0) {
         selectAllDeleted.checked = false;
@@ -3805,9 +4686,6 @@ const HTML_APP = `<!DOCTYPE html>
 
     function getActiveSelectedDeletedItems() {
       var filtered = getFilteredDeletedItems();
-      if (!deletedSearch) {
-        return deletedItems.filter(function(item) { return selectedDeletedIds.has(getDeletedItemKey(item)); });
-      }
       var filteredIdSet = new Set(filtered.map(function(item) { return getDeletedItemKey(item); }));
       return deletedItems.filter(function(item) {
         var id = getDeletedItemKey(item);
@@ -3939,7 +4817,7 @@ const HTML_APP = `<!DOCTYPE html>
         if (selectedDeletedIds.has(itemId)) html += ' checked';
         html += '>';
         if (item.thumbnail) {
-          html += '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+          html += '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">';
         } else {
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
@@ -3984,13 +4862,23 @@ const HTML_APP = `<!DOCTYPE html>
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
-        restoreBtn.innerHTML = 'Restore Selected';
+        restoreBtn.innerHTML = 'Restore';
       }
     });
 
-    on(removeSelectedBtn, 'click', async function() {
+    on(removeSelectedBtn, 'click', function() {
       var activeSelectedItems = getActiveSelectedDeletedItems();
       if (activeSelectedItems.length === 0) return;
+      activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
+      updateSelectedButtons();
+      schedulePersistAppState();
+      showToast('Removed ' + activeSelectedItems.length + ' from selection', 'success');
+    });
+
+    on(deleteSelectedHistoryBtn, 'click', async function() {
+      var activeSelectedItems = getActiveSelectedDeletedItems();
+      if (activeSelectedItems.length === 0) return;
+      if (!window.confirm('Delete ' + activeSelectedItems.length + ' items from history? This cannot be undone.')) return;
       var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
       try {
         var res = await fetch('/api/clear-deleted', {
@@ -4000,7 +4888,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
         var data = await res.json();
         if (data.error) throw new Error(data.error);
-        showToast('Removed ' + data.removed + ' items from history', 'success');
+        showToast('Deleted ' + data.removed + ' from history', 'success');
         activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
         loadDeletedItems();
       } catch (err) {
@@ -4009,7 +4897,7 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     on(clearHistoryBtn, 'click', async function() {
-      if (settings.confirmActions && !window.confirm('Clear all deleted-item history?')) return;
+      if (!window.confirm('Clear all deleted-item history? This cannot be undone.')) return;
       try {
         var res = await fetch('/api/clear-deleted', { method: 'POST' });
         var data = await res.json();
@@ -4301,7 +5189,7 @@ const HTML_APP = `<!DOCTYPE html>
         var stamp = item.completedAt ? ' <span style="color:var(--text-muted);font-size:0.78rem;">(' + escapeHtml(item.completedAt) + ')</span>' : '';
         return '<div class="history-item"><strong>v' + escapeHtml(item.version) + '</strong>' + stamp + ' - ' + escapeHtml(item.note) + '</div>';
       });
-      historyEl.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem;color:var(--text)">Version History</div>' + lines.join('');
+      historyEl.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem;color:var(--text)">Fix & Version History</div>' + lines.join('');
     }
 
     async function initializeApp() {
@@ -4314,6 +5202,7 @@ const HTML_APP = `<!DOCTYPE html>
       } else {
         setActiveTab(getTabFromPath(window.location.pathname), { push: false });
         renderPreview();
+        updateResultsSummary();
       }
       updatePreviewButtonLabel();
       loadTokenStatus();
@@ -4321,6 +5210,8 @@ const HTML_APP = `<!DOCTYPE html>
       renderVersionHistory();
       loadDeletedCount();
       setPlayerPlayPauseButtonState();
+      updateResultsSummary();
+      updateFloatingPlayerHover();
       updateRailSelectionBadges();
       syncMainControlsDock();
       syncPlayerControlsDock();

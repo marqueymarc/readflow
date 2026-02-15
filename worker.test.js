@@ -69,6 +69,26 @@ describe('buildTtsText', () => {
     const matches = text.match(/Insider trading, I often say around here,? is not about fairness; it is about theft\./gi) || [];
     expect(matches.length).toBe(1);
   });
+
+  it('strips URLs, emails, and long machine-like numbers from spoken text', () => {
+    const article = {
+      content: 'See https://example.com/report and www.example.org. Contact test.user@example.com id 1234-5678-9012-3456 should not be read.',
+    };
+    const text = buildTtsText(article);
+    expect(text).not.toMatch(/https?:\/\//i);
+    expect(text).not.toMatch(/\bwww\./i);
+    expect(text).not.toMatch(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i);
+    expect(text).not.toContain('1234-5678-9012-3456');
+  });
+
+  it('includes image captions extracted from HTML figcaptions and alt text', () => {
+    const article = {
+      html_content: '<figure><img src="x.jpg" alt="A lighthouse at dawn"></figure><figcaption>Harbor traffic before sunrise</figcaption>',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Image caption: A lighthouse at dawn');
+    expect(text).toContain('Image caption: Harbor traffic before sunrise');
+  });
 });
 
 describe('API Endpoints', () => {
@@ -353,7 +373,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.2.3');
+      expect(data.version).toBe('3.2.14');
     });
   });
 
@@ -565,8 +585,8 @@ describe('PWA Serving', () => {
     const html = await res.text();
 
     expect(html).toContain('Find');
-    expect(html).toContain('Delete Selected');
-    expect(html).toContain('Archive Selected');
+    expect(html).toContain('Delete');
+    expect(html).toContain('Archive');
   });
 
   it('includes preview selection and pagination controls', async () => {
@@ -599,9 +619,9 @@ describe('PWA Serving', () => {
     expect(html).toContain('deleted-sort-published');
     expect(html).toContain('deleted-sort-deleted');
     expect(html).toContain('Search history');
-    expect(html).toContain('Restore Selected');
-    expect(html).toContain('Remove from History');
-    expect(html).toContain('Clear History');
+    expect(html).toContain('Restore');
+    expect(html).toContain('Remove');
+    expect(html).toContain('Clear All');
   });
 
   it('includes settings and about content', async () => {
@@ -613,8 +633,8 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.2.3');
-    expect(html).toContain('2026-02-13');
+    expect(html).toContain('v3.2.14');
+    expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
     expect(html).toContain('setting-max-open-tabs');
@@ -826,7 +846,7 @@ describe('HTML/JavaScript validity', () => {
     const script = scriptMatch[1];
 
     expect(script).toContain("return isArchiveSourceSelected() ? 'restore' : 'archive'");
-    expect(script).toContain('Restore Selected');
+    expect(script).toContain("return getSecondaryCleanupAction() === 'restore' ? 'Restore' : 'Archive'");
   });
 
   it('player queue supports search, filtered all-toggle, and resume progress hooks', async () => {

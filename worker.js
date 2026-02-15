@@ -13,8 +13,15 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.2.7';
+const APP_VERSION = '3.2.14';
 const VERSION_HISTORY = [
+  { version: '3.2.14', completedAt: '2026-02-15', note: 'Improved player resilience and control fidelity: persisted/localized download progress across refresh/navigation, tightened filtered-selection action scoping, added mini-player back skip, stabilized queue buffer invalidation on resets/removals, improved thumbnail fallback handling, and hardened TTS text cleanup to exclude URLs/machine-style long numbers while preserving image captions.' },
+  { version: '3.2.13', completedAt: '2026-02-15', note: 'Moved red player error/loading feedback into a dedicated line below transport controls to keep the player layout stable during status updates while preserving high-visibility messaging.' },
+  { version: '3.2.12', completedAt: '2026-02-15', note: 'Refined local-audio workflow and queue UX: unified played/downloaded progress into one selectable bar (blue played over green downloaded), moved download controls to per-item queue buttons with pause/resume semantics, added queue-level download state in player header, enabled background/forced queue downloads using the same indicators, preserved playback while downloads continue, and tightened rail button contrast.' },
+  { version: '3.2.11', completedAt: '2026-02-15', note: 'Increased rail nav button contrast, added floating player red/green status dot, introduced queue-download workflow (selected queueing, sequential downloads, abort, per-item status/progress), enabled offline playback fallback for downloaded stories, surfaced current-story progress in player header, added open/download actions in queue rows, moved auto-next control to Settings-only defaults, and made loading-chunk status text red for visibility.' },
+  { version: '3.2.10', completedAt: '2026-02-15', note: 'Added red/green state dot to floating player hover, strengthened rail menu button styling, and refined playback control presentation while keeping speed control in custom player controls only.' },
+  { version: '3.2.9', completedAt: '2026-02-15', note: 'Improved queue-management UX: stabilized player queue indicator updates, refined Find date-range behavior, moved timestamped fix history back into Settings, and updated About copy for queue + TTS workflows.' },
+  { version: '3.2.8', completedAt: '2026-02-15', note: 'Aligned v3 layout to mock intent: player controls now dock to the rail on desktop, and History actions/filter/sort controls now live at the top of the History results card.' },
   { version: '3.2.7', completedAt: '2026-02-15', note: 'Constrained docked rail control layouts to prevent overflow into the main pane and keep result lists visually anchored in the main content area.' },
   { version: '3.2.6', completedAt: '2026-02-15', note: 'Fixed initialization-time control docking so Find/History controls reliably move into the left rail on desktop without requiring a manual resize.' },
   { version: '3.2.5', completedAt: '2026-02-15', note: 'Expanded v3 rail docking so Find/History controls move into the left rail at standard desktop widths with rail-specific card/button sizing.' },
@@ -1105,6 +1112,25 @@ function extractImageFromHtml(html) {
   return null;
 }
 
+function extractImageCaptionsFromHtml(html) {
+  if (!html || typeof html !== 'string') return [];
+  const out = [];
+  const figCaptions = html.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/gi) || [];
+  figCaptions.forEach((raw) => {
+    const plain = normalizeTtsText(raw.replace(/<[^>]+>/g, ' '));
+    if (plain) out.push(plain);
+  });
+  const imgTags = html.match(/<img[^>]*>/gi) || [];
+  imgTags.forEach((tag) => {
+    const altMatch = tag.match(/\salt=["']([^"']+)["']/i);
+    if (altMatch && altMatch[1]) {
+      const plain = normalizeTtsText(altMatch[1]);
+      if (plain) out.push(plain);
+    }
+  });
+  return Array.from(new Set(out)).slice(0, 20);
+}
+
 function extractFirstHttpUrlFromHtml(html) {
   if (!html || typeof html !== 'string') return null;
   const decodedHtml = decodeHtmlEntities(html);
@@ -1199,6 +1225,8 @@ function buildTtsText(article) {
   pushUnique(article.notes);
 
   if (typeof article.html_content === 'string' && article.html_content.length > 0) {
+    const captions = extractImageCaptionsFromHtml(article.html_content);
+    captions.forEach((caption) => pushUnique(`Image caption: ${caption}`));
     const plain = normalizeTtsText(article.html_content
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -1228,6 +1256,10 @@ function cleanupTtsText(text, context = {}) {
   let cleaned = normalizeTtsText(text);
   if (!cleaned) return '';
   cleaned = cleaned
+    .replace(/\bhttps?:\/\/[^\s)]+/gi, ' ')
+    .replace(/\bwww\.[^\s)]+/gi, ' ')
+    .replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi, ' ')
+    .replace(/\b(?:\d[ -]?){7,}\d\b/g, ' ')
     .replace(/\bView in browser\b[:\s-]*/gi, ' ')
     .replace(/\bOpen in browser\b[:\s-]*/gi, ' ')
     .replace(/\bRead online\b[:\s-]*/gi, ' ')
