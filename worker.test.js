@@ -373,7 +373,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.2.14');
+      expect(data.version).toBe('3.2.16');
     });
   });
 
@@ -633,7 +633,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.2.14');
+    expect(html).toContain('v3.2.16');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -800,6 +800,19 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain('loadPlayerIndex(idx)');
   });
 
+  it('player progress seeking avoids stale overwrite and routes through chunk-aware load', async () => {
+    const res = await SELF.fetch('https://example.com/');
+    const html = await res.text();
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+    const script = scriptMatch[1];
+
+    expect(script).toContain('async function seekPlayerQueueRowProgress(queueIdx, ratio)');
+    expect(script).toContain('skipSaveCurrentProgress: isCurrent');
+    expect(script).toContain('suppressLoadingStatus: suppressLoadingStatus');
+    expect(script).toContain('if (!opts.skipSaveCurrentProgress) {');
+  });
+
   it('preview play shortcut is wired to open player without swipe capture', async () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
@@ -823,6 +836,7 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain('handlePlayerPointerDown(event,this)');
     expect(script).toContain('settings.playerAutoAction');
     expect(script).toContain('runPlayerItemAction(currentIdx, action)');
+    expect(script).toContain("evt.target.closest('.player-row-progress')");
   });
 
   it('preview play forces insert-and-play in player without queue overwrite', async () => {

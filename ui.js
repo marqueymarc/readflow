@@ -2867,7 +2867,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (
         evt.target &&
         evt.target.closest &&
-        (evt.target.closest('.player-queue-jump') || evt.target.closest('.player-queue-check') || evt.target.closest('input[type="checkbox"]') || evt.target.closest('button'))
+        (evt.target.closest('.player-queue-jump') || evt.target.closest('.player-queue-check') || evt.target.closest('.player-row-progress') || evt.target.closest('input[type="checkbox"]') || evt.target.closest('button'))
       ) {
         return;
       }
@@ -3921,7 +3921,7 @@ const HTML_APP = `<!DOCTYPE html>
       return { chunkIndex: chunks.length - 1, chunkTime: 0, total: getEstimatedTotalDurationSeconds(item, itemId) };
     }
 
-    function seekPlayerQueueRowProgress(queueIdx, ratio) {
+    async function seekPlayerQueueRowProgress(queueIdx, ratio) {
       var idx = Number(queueIdx);
       if (!Number.isFinite(idx) || idx < 0 || idx >= playerQueue.length) return;
       var item = playerQueue[idx];
@@ -3938,12 +3938,30 @@ const HTML_APP = `<!DOCTYPE html>
       };
       schedulePersistPlayerState();
       updatePlayerRowProgressUI(itemId);
-      if (idx === playerIndex) {
-        var shouldAutoplay = !!(playerAudio && playerAudio.src && !playerAudio.paused);
-        loadPlayerIndex(idx, { chunkIndex: seekPoint.chunkIndex, seekSeconds: seekPoint.chunkTime, autoplay: shouldAutoplay });
-      } else {
+      var isCurrent = idx === playerIndex;
+      var shouldAutoplay = !!(playerAudio && playerAudio.src && !playerAudio.paused);
+
+      // Fast-path seeks inside the currently loaded chunk to avoid a needless reload/status flash.
+      if (isCurrent && playerAudio && playerAudio.src && playerLoadedItemId === itemId && Number(playerLoadedChunkIndex || 0) === Number(seekPoint.chunkIndex || 0)) {
+        var duration = Number(playerAudio.duration || 0);
+        var target = duration > 0
+          ? Math.max(0, Math.min(duration - 0.1, Number(seekPoint.chunkTime || 0)))
+          : Math.max(0, Number(seekPoint.chunkTime || 0));
+        try { playerAudio.currentTime = target; } catch (e) {}
         renderPlayerQueue();
+        schedulePersistAppState();
+        return;
       }
+
+      var downloadedPacket = await getDownloadedChunkPacket(itemId, seekPoint.chunkIndex);
+      var suppressLoadingStatus = !!downloadedPacket;
+      loadPlayerIndex(idx, {
+        chunkIndex: seekPoint.chunkIndex,
+        seekSeconds: seekPoint.chunkTime,
+        autoplay: shouldAutoplay,
+        skipSaveCurrentProgress: isCurrent,
+        suppressLoadingStatus: suppressLoadingStatus,
+      });
       schedulePersistAppState();
     }
 
@@ -4165,7 +4183,9 @@ const HTML_APP = `<!DOCTYPE html>
       var opts = options || {};
       var loadToken = ++playerLoadToken;
 
-      saveCurrentPlayerProgress();
+      if (!opts.skipSaveCurrentProgress) {
+        saveCurrentPlayerProgress();
+      }
       playerIndex = idx;
       renderPlayerQueue();
       renderPlayerText();
@@ -4198,7 +4218,9 @@ const HTML_APP = `<!DOCTYPE html>
       }
 
       try {
-        setPlayerStatus('Loading audio chunk ' + (chunkIndex + 1) + ' of ' + chunks.length + '...', true);
+        if (!opts.suppressLoadingStatus) {
+          setPlayerStatus('Loading audio chunk ' + (chunkIndex + 1) + ' of ' + chunks.length + '...', true);
+        }
         clearPlayerAudioSource();
         var packet = await fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex);
         if (loadToken !== playerLoadToken) return;

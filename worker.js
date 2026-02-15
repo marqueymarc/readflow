@@ -13,8 +13,10 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.2.14';
+const APP_VERSION = '3.2.16';
 const VERSION_HISTORY = [
+  { version: '3.2.16', completedAt: '2026-02-15', note: 'Fixed timeline click interception in playlist rows by excluding progress bars from swipe gesture capture, so progress-bar clicks consistently invoke seek behavior instead of row navigation.' },
+  { version: '3.2.15', completedAt: '2026-02-15', note: 'Fixed player timeline seeking fidelity: seeking from queue/current progress bars now routes through target chunk loads without stale-progress overwrite, seeks can jump directly when already in the loaded chunk, and downloaded-target seeks suppress redundant loading-status flashes.' },
   { version: '3.2.14', completedAt: '2026-02-15', note: 'Improved player resilience and control fidelity: persisted/localized download progress across refresh/navigation, tightened filtered-selection action scoping, added mini-player back skip, stabilized queue buffer invalidation on resets/removals, improved thumbnail fallback handling, and hardened TTS text cleanup to exclude URLs/machine-style long numbers while preserving image captions.' },
   { version: '3.2.13', completedAt: '2026-02-15', note: 'Moved red player error/loading feedback into a dedicated line below transport controls to keep the player layout stable during status updates while preserving high-visibility messaging.' },
   { version: '3.2.12', completedAt: '2026-02-15', note: 'Refined local-audio workflow and queue UX: unified played/downloaded progress into one selectable bar (blue played over green downloaded), moved download controls to per-item queue buttons with pause/resume semantics, added queue-level download state in player header, enabled background/forced queue downloads using the same indicators, preserved playback while downloads continue, and tightened rail button contrast.' },
