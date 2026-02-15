@@ -1880,6 +1880,11 @@ const HTML_APP = `<!DOCTYPE html>
           Gmail hook accepts normalized email items and labels from an external sync job. OAuth sync setup follows in a later 3.3.x step.
         </p>
         <p id="gmail-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking Gmail hook status…</p>
+        <div class="btn-group" style="margin-bottom:0.6rem;">
+          <button class="btn btn-outline" id="connect-gmail-btn">Connect Gmail</button>
+          <button class="btn btn-outline" id="sync-gmail-btn">Sync Gmail</button>
+          <button class="btn btn-outline" id="disconnect-gmail-btn">Disconnect</button>
+        </div>
         <div class="form-group">
           <label for="setting-gmail-labels">Filter labels (comma-separated; optional)</label>
           <input id="setting-gmail-labels" type="text" autocomplete="off" placeholder="newsletters, priority, longread">
@@ -2105,6 +2110,9 @@ const HTML_APP = `<!DOCTYPE html>
     var gmailStatusEl = document.getElementById('gmail-status');
     var saveGmailLabelsBtn = document.getElementById('save-gmail-labels-btn');
     var settingsGmailLabelsInput = document.getElementById('setting-gmail-labels');
+    var connectGmailBtn = document.getElementById('connect-gmail-btn');
+    var syncGmailBtn = document.getElementById('sync-gmail-btn');
+    var disconnectGmailBtn = document.getElementById('disconnect-gmail-btn');
     var settingMockTts = document.getElementById('setting-mock-tts');
     var settingTtsVoice = document.getElementById('setting-tts-voice');
     var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
@@ -5298,9 +5306,14 @@ const HTML_APP = `<!DOCTYPE html>
         var mode = data.mode ? String(data.mode) : 'hook';
         var count = Number(data.itemCount || 0);
         var labels = Array.isArray(data.selectedLabels) ? data.selectedLabels : [];
-        gmailStatusEl.textContent = 'Mode: ' + mode + ' · Synced items: ' + count + (labels.length ? ' · Active labels: ' + labels.join(', ') : '');
+        var connected = !!data.connected;
+        gmailStatusEl.textContent = 'Mode: ' + mode + ' · Connected: ' + (connected ? 'yes' : 'no') + ' · Synced items: ' + count + (labels.length ? ' · Active labels: ' + labels.join(', ') : '');
+        if (disconnectGmailBtn) disconnectGmailBtn.disabled = !connected;
+        if (syncGmailBtn) syncGmailBtn.disabled = !connected;
       } catch (err) {
         gmailStatusEl.textContent = 'Unable to read Gmail status.';
+        if (disconnectGmailBtn) disconnectGmailBtn.disabled = true;
+        if (syncGmailBtn) syncGmailBtn.disabled = true;
       }
     }
 
@@ -5365,6 +5378,47 @@ const HTML_APP = `<!DOCTYPE html>
       } finally {
         saveGmailLabelsBtn.disabled = false;
         saveGmailLabelsBtn.textContent = originalText;
+      }
+    });
+
+    on(connectGmailBtn, 'click', function() {
+      window.location.href = '/api/gmail/connect';
+    });
+
+    on(syncGmailBtn, 'click', async function() {
+      syncGmailBtn.disabled = true;
+      var originalText = syncGmailBtn.textContent;
+      syncGmailBtn.innerHTML = '<span class="spinner"></span> Syncing...';
+      try {
+        var res = await fetch('/api/gmail/sync', { method: 'POST' });
+        var data = await parseApiJson(res);
+        if (data.error) throw new Error(data.error);
+        showToast('Gmail sync complete (' + Number(data.synced || 0) + ' updates)', 'success');
+        loadGmailStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        syncGmailBtn.disabled = false;
+        syncGmailBtn.textContent = originalText;
+      }
+    });
+
+    on(disconnectGmailBtn, 'click', async function() {
+      if (!window.confirm('Disconnect Gmail and remove stored OAuth token?')) return;
+      disconnectGmailBtn.disabled = true;
+      var originalText = disconnectGmailBtn.textContent;
+      disconnectGmailBtn.innerHTML = '<span class="spinner"></span> Disconnecting...';
+      try {
+        var res = await fetch('/api/gmail/disconnect', { method: 'POST' });
+        var data = await parseApiJson(res);
+        if (data.error) throw new Error(data.error);
+        showToast('Gmail disconnected', 'success');
+        loadGmailStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        disconnectGmailBtn.disabled = false;
+        disconnectGmailBtn.textContent = originalText;
       }
     });
 
@@ -5461,6 +5515,21 @@ const HTML_APP = `<!DOCTYPE html>
       historyEl.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem;color:var(--text)">Fix & Version History</div>' + lines.join('');
     }
 
+    function handleOauthFlashFromQuery() {
+      try {
+        var params = new URLSearchParams(window.location.search || '');
+        var status = params.get('gmail_oauth');
+        if (!status) return;
+        if (status === 'connected') showToast('Gmail connected', 'success');
+        else if (status === 'missing_config') showToast('Gmail OAuth is missing configuration', 'error');
+        else showToast('Gmail OAuth: ' + status, 'warning');
+        params.delete('gmail_oauth');
+        params.delete('reason');
+        var next = window.location.pathname + (params.toString() ? ('?' + params.toString()) : '');
+        history.replaceState({}, '', next);
+      } catch (err) {}
+    }
+
     async function initializeApp() {
       restorePlayerState();
       var restoredState = restoreAppState();
@@ -5483,6 +5552,7 @@ const HTML_APP = `<!DOCTYPE html>
       updateResultsSummary();
       updateFloatingPlayerHover();
       updateRailSelectionBadges();
+      handleOauthFlashFromQuery();
       syncMainControlsDock();
       syncPlayerControlsDock();
       var deferFrame = (typeof requestAnimationFrame === 'function')

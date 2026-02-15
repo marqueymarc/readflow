@@ -13,8 +13,9 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.3.1';
 const VERSION_HISTORY = [
+  { version: '3.3.1', completedAt: '2026-02-15', note: 'Extended Gmail integration with OAuth connect/callback/disconnect flow, token refresh support, direct Gmail sync endpoint, and Settings controls to connect/sync/disconnect without manual hook payload posting.' },
   { version: '3.3.0', completedAt: '2026-02-15', note: 'Started Gmail source integration with source-aware query plumbing, Gmail hook/status/labels APIs, and normalized Gmail item ingestion for Find/Player workflows.' },
   { version: '3.2.18', completedAt: '2026-02-15', note: 'Removed non-actionable “playback stopped” status messaging after auto archive/delete transitions so end-of-item automation no longer emits redundant stop feedback in player status.' },
   { version: '3.2.17', completedAt: '2026-02-15', note: 'Improved downloaded-audio persistence visibility across fresh app instances by adding cross-profile (voice/mode aware fallback) manifest/chunk lookup and distinct-chunk hydration, so previously downloaded queue entries reliably show downloaded state and remain playable offline.' },
@@ -113,6 +114,11 @@ const TTS_SECOND_CHUNK_CHARS = 1000;
 const PREVIEW_CACHE_STALE_MS = 15 * 60 * 1000;
 const GMAIL_ITEMS_KEY = 'gmail_items_v1';
 const GMAIL_LABELS_KEY = 'gmail_labels_v1';
+const GMAIL_OAUTH_TOKEN_KEY = 'gmail_oauth_token_v1';
+const GMAIL_OAUTH_STATE_KEY = 'gmail_oauth_state_v1';
+const GMAIL_OAUTH_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+];
 const { HTML_APP, HTML_MOCKUP_V3 } = getUiHtml({
   appVersion: APP_VERSION,
   versionHistory: VERSION_HISTORY,
@@ -193,11 +199,35 @@ export default {
       if (url.pathname === '/api/gmail/status') {
         return await handleGmailStatus(env, corsHeaders);
       }
+      if (url.pathname === '/api/gmail/connect') {
+        return await handleGmailConnect(request, env);
+      }
+      if (url.pathname === '/api/gmail/oauth/callback') {
+        return await handleGmailOauthCallback(request, env);
+      }
+      if (url.pathname === '/api/gmail/disconnect') {
+        if (request.method === 'POST') {
+          return await handleGmailDisconnect(env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
       if (url.pathname === '/api/gmail/labels') {
         if (request.method === 'POST') {
           return await handleSaveGmailLabels(request, env, corsHeaders);
         }
         return await handleGetGmailLabels(env, corsHeaders);
+      }
+      if (url.pathname === '/api/gmail/sync') {
+        if (request.method === 'POST') {
+          return await handleGmailSync(env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
       }
       if (url.pathname === '/api/gmail/hook') {
         if (request.method === 'POST') {
@@ -731,15 +761,111 @@ async function handleSaveOpenAIKey(request, env, corsHeaders) {
 async function handleGmailStatus(env, corsHeaders) {
   const settings = await getSettings(env);
   const hasHookSecret = typeof env.GMAIL_HOOK_SECRET === 'string' && env.GMAIL_HOOK_SECRET.length > 0;
+  const token = await getGmailOauthToken(env);
   const items = await getGmailItems(env);
   const labels = await getKnownGmailLabels(env);
   return new Response(JSON.stringify({
     enabled: true,
-    mode: 'hook',
+    mode: token ? 'oauth' : 'hook',
     hookConfigured: hasHookSecret,
+    connected: !!token,
+    tokenExpiresAt: token && token.expiresAt ? token.expiresAt : null,
     itemCount: items.length,
     selectedLabels: settings.gmailSelectedLabels || [],
     labels,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleGmailConnect(request, env) {
+  const config = getGmailOauthConfig(request, env);
+  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    const fallback = `${config.origin}/settings?gmail_oauth=missing_config`;
+    return Response.redirect(fallback, 302);
+  }
+  const state = crypto.randomUUID();
+  await env.KV.put(GMAIL_OAUTH_STATE_KEY, JSON.stringify({
+    state,
+    createdAt: Date.now(),
+  }), { expirationTtl: 10 * 60 });
+  const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  auth.searchParams.set('client_id', config.clientId);
+  auth.searchParams.set('redirect_uri', config.redirectUri);
+  auth.searchParams.set('response_type', 'code');
+  auth.searchParams.set('scope', GMAIL_OAUTH_SCOPES.join(' '));
+  auth.searchParams.set('access_type', 'offline');
+  auth.searchParams.set('prompt', 'consent');
+  auth.searchParams.set('state', state);
+  return Response.redirect(auth.toString(), 302);
+}
+
+async function handleGmailOauthCallback(request, env) {
+  const url = new URL(request.url);
+  const config = getGmailOauthConfig(request, env);
+  const state = url.searchParams.get('state') || '';
+  const code = url.searchParams.get('code') || '';
+  const err = url.searchParams.get('error') || '';
+  const redirectBase = `${config.origin}/settings`;
+
+  if (err) {
+    return Response.redirect(`${redirectBase}?gmail_oauth=error&reason=${encodeURIComponent(err)}`, 302);
+  }
+  if (!state || !code) {
+    return Response.redirect(`${redirectBase}?gmail_oauth=invalid_callback`, 302);
+  }
+  const rawSavedState = await env.KV.get(GMAIL_OAUTH_STATE_KEY);
+  await env.KV.delete(GMAIL_OAUTH_STATE_KEY);
+  if (!rawSavedState) {
+    return Response.redirect(`${redirectBase}?gmail_oauth=state_missing`, 302);
+  }
+  let savedState = null;
+  try { savedState = JSON.parse(rawSavedState); } catch {}
+  if (!savedState || savedState.state !== state) {
+    return Response.redirect(`${redirectBase}?gmail_oauth=state_mismatch`, 302);
+  }
+  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    return Response.redirect(`${redirectBase}?gmail_oauth=missing_config`, 302);
+  }
+
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: config.redirectUri,
+      }),
+    });
+    const data = await tokenRes.json();
+    if (!tokenRes.ok || !data || !data.access_token) {
+      const reason = data && (data.error_description || data.error) ? String(data.error_description || data.error) : `token_${tokenRes.status}`;
+      return Response.redirect(`${redirectBase}?gmail_oauth=token_error&reason=${encodeURIComponent(reason)}`, 302);
+    }
+    const now = Date.now();
+    const expiresIn = Number(data.expires_in || 3600);
+    const next = {
+      accessToken: String(data.access_token),
+      refreshToken: data.refresh_token ? String(data.refresh_token) : '',
+      scope: typeof data.scope === 'string' ? data.scope : GMAIL_OAUTH_SCOPES.join(' '),
+      tokenType: typeof data.token_type === 'string' ? data.token_type : 'Bearer',
+      expiresAt: new Date(now + (expiresIn * 1000)).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+    };
+    await saveGmailOauthToken(env, next);
+    return Response.redirect(`${redirectBase}?gmail_oauth=connected`, 302);
+  } catch (error) {
+    return Response.redirect(`${redirectBase}?gmail_oauth=token_exception&reason=${encodeURIComponent(error.message || 'unknown')}`, 302);
+  }
+}
+
+async function handleGmailDisconnect(env, corsHeaders) {
+  await env.KV.delete(GMAIL_OAUTH_TOKEN_KEY);
+  return new Response(JSON.stringify({
+    disconnected: true,
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -811,6 +937,73 @@ async function handleGmailHook(request, env, corsHeaders) {
 
   return new Response(JSON.stringify({
     accepted,
+    total: nextItems.length,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleGmailSync(env, corsHeaders) {
+  const token = await getValidGmailAccessToken(env);
+  if (!token) {
+    return new Response(JSON.stringify({ error: 'Gmail is not connected. Use Connect Gmail in Settings first.' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+  const settings = await getSettings(env);
+  const selectedLabels = Array.isArray(settings.gmailSelectedLabels) ? settings.gmailSelectedLabels : [];
+  const gmailLabelIds = await fetchGmailLabelsByName(token, selectedLabels);
+  const queryParts = ['in:inbox'];
+  if (selectedLabels.length > 0) {
+    queryParts.push(selectedLabels.map((label) => `label:"${label.replace(/"/g, '\\"')}"`).join(' OR '));
+  }
+  const q = queryParts.join(' ');
+  const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+  listUrl.searchParams.set('maxResults', '100');
+  listUrl.searchParams.set('q', q);
+  for (const labelId of gmailLabelIds) {
+    listUrl.searchParams.append('labelIds', labelId);
+  }
+  const listRes = await fetch(listUrl.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const listData = await listRes.json();
+  if (!listRes.ok) {
+    const msg = listData && (listData.error && listData.error.message) ? listData.error.message : `gmail_list_${listRes.status}`;
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+  const messages = Array.isArray(listData.messages) ? listData.messages.slice(0, 100) : [];
+  const items = [];
+  for (const message of messages) {
+    const id = String(message && message.id || '');
+    if (!id) continue;
+    const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`;
+    const msgRes = await fetch(msgUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!msgRes.ok) continue;
+    const msgData = await msgRes.json();
+    const normalized = normalizeGmailMessageFromApi(msgData, selectedLabels);
+    if (normalized) items.push(normalized);
+  }
+  const existing = await getGmailItems(env);
+  const byId = new Map(existing.map((item) => [String(item.id), item]));
+  const labelSet = new Set(await getKnownGmailLabels(env));
+  for (const item of items) {
+    byId.set(String(item.id), item);
+    for (const label of item.labels || []) labelSet.add(label);
+  }
+  const nextItems = Array.from(byId.values())
+    .sort((a, b) => Date.parse(b.savedAt || 0) - Date.parse(a.savedAt || 0))
+    .slice(0, 4000);
+  await env.KV.put(GMAIL_ITEMS_KEY, JSON.stringify(nextItems));
+  await env.KV.put(GMAIL_LABELS_KEY, JSON.stringify(Array.from(labelSet).sort()));
+  return new Response(JSON.stringify({
+    synced: items.length,
     total: nextItems.length,
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -936,6 +1129,151 @@ async function getKnownGmailLabels(env) {
   } catch {
     return [];
   }
+}
+
+function getGmailOauthConfig(request, env) {
+  const reqUrl = new URL(request.url);
+  const origin = `${reqUrl.protocol}//${reqUrl.host}`;
+  const clientId = typeof env.GMAIL_CLIENT_ID === 'string' ? env.GMAIL_CLIENT_ID.trim() : '';
+  const clientSecret = typeof env.GMAIL_CLIENT_SECRET === 'string' ? env.GMAIL_CLIENT_SECRET.trim() : '';
+  const redirectUri = typeof env.GMAIL_REDIRECT_URI === 'string' && env.GMAIL_REDIRECT_URI.trim()
+    ? env.GMAIL_REDIRECT_URI.trim()
+    : `${origin}/api/gmail/oauth/callback`;
+  return { origin, clientId, clientSecret, redirectUri };
+}
+
+async function getGmailOauthToken(env) {
+  try {
+    const raw = await env.KV.get(GMAIL_OAUTH_TOKEN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed.accessToken) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function saveGmailOauthToken(env, token) {
+  await env.KV.put(GMAIL_OAUTH_TOKEN_KEY, JSON.stringify(token));
+}
+
+async function refreshGmailAccessTokenIfNeeded(env, token) {
+  if (!token) return null;
+  const expTs = Date.parse(token.expiresAt || '');
+  const now = Date.now();
+  if (Number.isFinite(expTs) && expTs > now + 60 * 1000) return token;
+  if (!token.refreshToken) return null;
+  const clientId = typeof env.GMAIL_CLIENT_ID === 'string' ? env.GMAIL_CLIENT_ID.trim() : '';
+  const clientSecret = typeof env.GMAIL_CLIENT_SECRET === 'string' ? env.GMAIL_CLIENT_SECRET.trim() : '';
+  if (!clientId || !clientSecret) return null;
+
+  const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: token.refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const data = await refreshRes.json();
+  if (!refreshRes.ok || !data || !data.access_token) return null;
+  const next = {
+    ...token,
+    accessToken: String(data.access_token),
+    scope: typeof data.scope === 'string' ? data.scope : token.scope,
+    tokenType: typeof data.token_type === 'string' ? data.token_type : (token.tokenType || 'Bearer'),
+    expiresAt: new Date(Date.now() + (Number(data.expires_in || 3600) * 1000)).toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await saveGmailOauthToken(env, next);
+  return next;
+}
+
+async function getValidGmailAccessToken(env) {
+  const token = await getGmailOauthToken(env);
+  if (!token) return '';
+  const valid = await refreshGmailAccessTokenIfNeeded(env, token);
+  if (!valid || !valid.accessToken) return '';
+  return String(valid.accessToken);
+}
+
+function decodeBase64Url(input) {
+  if (!input) return '';
+  const normalized = String(input).replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = (4 - (normalized.length % 4)) % 4;
+  const padded = normalized + '='.repeat(padLen);
+  try {
+    return atob(padded);
+  } catch {
+    return '';
+  }
+}
+
+function extractMessageHeaders(payload) {
+  const headers = Array.isArray(payload && payload.headers) ? payload.headers : [];
+  const byName = new Map(headers
+    .filter((h) => h && typeof h.name === 'string')
+    .map((h) => [h.name.toLowerCase(), String(h.value || '')]));
+  return byName;
+}
+
+function extractPlainTextFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const mimeType = String(payload.mimeType || '').toLowerCase();
+  const bodyData = payload.body && payload.body.data ? decodeBase64Url(payload.body.data) : '';
+  if (mimeType === 'text/plain' && bodyData) return bodyData;
+  if (Array.isArray(payload.parts)) {
+    for (const part of payload.parts) {
+      const text = extractPlainTextFromPayload(part);
+      if (text) return text;
+    }
+  }
+  if (bodyData && mimeType.indexOf('text/') === 0) return bodyData;
+  return '';
+}
+
+function normalizeGmailMessageFromApi(message, selectedLabels = []) {
+  if (!message || typeof message !== 'object') return null;
+  const id = String(message.id || '');
+  if (!id) return null;
+  const payload = message.payload || {};
+  const headers = extractMessageHeaders(payload);
+  const subject = headers.get('subject') || 'Untitled';
+  const from = headers.get('from') || 'Unknown';
+  const internalDate = Number(message.internalDate || 0);
+  const savedAt = Number.isFinite(internalDate) && internalDate > 0
+    ? new Date(internalDate).toISOString()
+    : new Date().toISOString();
+  const labelIds = Array.isArray(message.labelIds) ? message.labelIds.map((v) => String(v || '')).filter(Boolean) : [];
+  const labels = selectedLabels && selectedLabels.length > 0 ? selectedLabels : labelIds;
+  const textBody = extractPlainTextFromPayload(payload);
+  return normalizeGmailItem({
+    id,
+    subject,
+    from,
+    text: textBody,
+    labels,
+    date: savedAt,
+    url: `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(id)}`,
+  });
+}
+
+async function fetchGmailLabelsByName(accessToken, names) {
+  const selected = Array.isArray(names) ? names.map((v) => String(v || '').trim()).filter(Boolean) : [];
+  if (selected.length === 0) return [];
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok || !data || !Array.isArray(data.labels)) return [];
+  const byName = new Map(data.labels.map((label) => [String(label.name || '').toLowerCase(), String(label.id || '')]));
+  return selected
+    .map((name) => byName.get(name.toLowerCase()) || '')
+    .filter(Boolean);
 }
 
 function normalizeGmailItem(item) {

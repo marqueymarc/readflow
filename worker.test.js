@@ -378,7 +378,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.0');
+      expect(data.version).toBe('3.3.1');
     });
   });
 
@@ -389,6 +389,7 @@ describe('API Endpoints', () => {
       expect(res.status).toBe(200);
       expect(data.enabled).toBe(true);
       expect(data.mode).toBe('hook');
+      expect(data.connected).toBe(false);
       expect(Array.isArray(data.selectedLabels)).toBe(true);
     });
 
@@ -458,6 +459,32 @@ describe('API Endpoints', () => {
       expect(data.total).toBeGreaterThanOrEqual(1);
       expect(Array.isArray(data.preview)).toBe(true);
       expect(data.preview[0].id).toBe('gmail-preview-1');
+    });
+
+    it('returns redirect when gmail connect config is missing', async () => {
+      const res = await SELF.fetch('https://example.com/api/gmail/connect', { redirect: 'manual' });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toContain('/settings?gmail_oauth=missing_config');
+    });
+
+    it('disconnect endpoint clears oauth token', async () => {
+      await env.KV.put('gmail_oauth_token_v1', JSON.stringify({
+        accessToken: 'x',
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      }));
+      const res = await SELF.fetch('https://example.com/api/gmail/disconnect', { method: 'POST' });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.disconnected).toBe(true);
+      const stored = await env.KV.get('gmail_oauth_token_v1');
+      expect(stored).toBeNull();
+    });
+
+    it('sync endpoint requires gmail connection', async () => {
+      const res = await SELF.fetch('https://example.com/api/gmail/sync', { method: 'POST' });
+      const data = await res.json();
+      expect(res.status).toBe(400);
+      expect(data.error).toContain('Gmail is not connected');
     });
   });
 
@@ -719,7 +746,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.0');
+    expect(html).toContain('v3.3.1');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -733,6 +760,9 @@ describe('PWA Serving', () => {
     expect(html).toContain('Readwise API Key');
     expect(html).toContain('Gmail Source (Hook)');
     expect(html).toContain('save-gmail-labels-btn');
+    expect(html).toContain('connect-gmail-btn');
+    expect(html).toContain('sync-gmail-btn');
+    expect(html).toContain('disconnect-gmail-btn');
     expect(html).toContain('Save API Key');
     expect(html).toContain('Mock TTS mode');
     expect(html).toContain('OpenAI API Key');
