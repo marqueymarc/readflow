@@ -13,8 +13,10 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.2.16';
+const APP_VERSION = '3.2.18';
 const VERSION_HISTORY = [
+  { version: '3.2.18', completedAt: '2026-02-15', note: 'Removed non-actionable “playback stopped” status messaging after auto archive/delete transitions so end-of-item automation no longer emits redundant stop feedback in player status.' },
+  { version: '3.2.17', completedAt: '2026-02-15', note: 'Improved downloaded-audio persistence visibility across fresh app instances by adding cross-profile (voice/mode aware fallback) manifest/chunk lookup and distinct-chunk hydration, so previously downloaded queue entries reliably show downloaded state and remain playable offline.' },
   { version: '3.2.16', completedAt: '2026-02-15', note: 'Fixed timeline click interception in playlist rows by excluding progress bars from swipe gesture capture, so progress-bar clicks consistently invoke seek behavior instead of row navigation.' },
   { version: '3.2.15', completedAt: '2026-02-15', note: 'Fixed player timeline seeking fidelity: seeking from queue/current progress bars now routes through target chunk loads without stale-progress overwrite, seeks can jump directly when already in the loaded chunk, and downloaded-target seeks suppress redundant loading-status flashes.' },
   { version: '3.2.14', completedAt: '2026-02-15', note: 'Improved player resilience and control fidelity: persisted/localized download progress across refresh/navigation, tightened filtered-selection action scoping, added mini-player back skip, stabilized queue buffer invalidation on resets/removals, improved thumbnail fallback handling, and hardened TTS text cleanup to exclude URLs/machine-style long numbers while preserving image captions.' },

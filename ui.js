@@ -1986,6 +1986,7 @@ const HTML_APP = `<!DOCTYPE html>
     var playerDownloadProgressByItemId = {};
     var playerDownloadedManifestByItemId = {};
     var playerDownloadHydratedByItemId = {};
+    var playerResolvedDownloadProfileByItemId = {};
     var playerSearch = '';
     var playerSortMode = 'added';
     var currentTabName = 'cleanup';
@@ -3174,7 +3175,6 @@ const HTML_APP = `<!DOCTYPE html>
         clearPlayerAudioSource();
         playerLoadedItemId = '';
         playerLoadedChunkIndex = 0;
-        setPlayerStatus('Playback stopped: current item was removed.', true);
       }
       if (!playerQueue.length) {
         setPlayerPlayPauseButtonState();
@@ -3259,6 +3259,88 @@ const HTML_APP = `<!DOCTYPE html>
       });
     }
 
+    async function idbFindLatestManifestForItem(itemId) {
+      var db = await openAudioCacheDb();
+      if (!db) return null;
+      var wanted = String(itemId || '');
+      return await new Promise(function(resolve) {
+        try {
+          var tx = db.transaction('manifests', 'readonly');
+          var store = tx.objectStore('manifests');
+          var best = null;
+          var req = store.openCursor();
+          req.onsuccess = function() {
+            var cursor = req.result;
+            if (!cursor) return resolve(best);
+            var row = cursor.value;
+            var rowItemId = String(row && row.itemId || '');
+            if (rowItemId === wanted) {
+              if (!best || Number(row.downloadedAt || 0) > Number(best.downloadedAt || 0)) {
+                best = row;
+              }
+            }
+            cursor.continue();
+          };
+          req.onerror = function() { resolve(best); };
+        } catch (err) {
+          resolve(null);
+        }
+      });
+    }
+
+    async function idbFindLatestChunkForItemIndex(itemId, chunkIndex) {
+      var db = await openAudioCacheDb();
+      if (!db) return null;
+      var wanted = String(itemId || '');
+      var wantedChunk = Number(chunkIndex || 0);
+      return await new Promise(function(resolve) {
+        try {
+          var tx = db.transaction('chunks', 'readonly');
+          var store = tx.objectStore('chunks');
+          var best = null;
+          var req = store.openCursor();
+          req.onsuccess = function() {
+            var cursor = req.result;
+            if (!cursor) return resolve(best);
+            var row = cursor.value;
+            if (String(row && row.itemId || '') === wanted && Number(row.chunkIndex || 0) === wantedChunk) {
+              if (!best || Number(row.savedAt || 0) > Number(best.savedAt || 0)) best = row;
+            }
+            cursor.continue();
+          };
+          req.onerror = function() { resolve(best); };
+        } catch (err) {
+          resolve(null);
+        }
+      });
+    }
+
+    async function idbCountDistinctChunksForItem(itemId) {
+      var db = await openAudioCacheDb();
+      if (!db) return 0;
+      var wanted = String(itemId || '');
+      return await new Promise(function(resolve) {
+        try {
+          var tx = db.transaction('chunks', 'readonly');
+          var store = tx.objectStore('chunks');
+          var indices = {};
+          var req = store.openCursor();
+          req.onsuccess = function() {
+            var cursor = req.result;
+            if (!cursor) return resolve(Object.keys(indices).length);
+            var row = cursor.value;
+            if (String(row && row.itemId || '') === wanted) {
+              indices[String(Number(row.chunkIndex || 0))] = true;
+            }
+            cursor.continue();
+          };
+          req.onerror = function() { resolve(Object.keys(indices).length); };
+        } catch (err) {
+          resolve(0);
+        }
+      });
+    }
+
     async function idbCountChunksForProfile(profileKey) {
       var db = await openAudioCacheDb();
       if (!db) return 0;
@@ -3285,8 +3367,25 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     async function getDownloadedChunkPacket(itemId, chunkIndex) {
-      var profileKey = getDownloadProfileKey(itemId);
+      var keyItemId = String(itemId || '');
+      var profileKey = playerResolvedDownloadProfileByItemId[keyItemId] || getDownloadProfileKey(itemId);
       var row = await idbGet('chunks', profileKey + '|' + String(chunkIndex));
+      if (!row && profileKey !== getDownloadProfileKey(itemId)) {
+        var currentProfileKey = getDownloadProfileKey(itemId);
+        row = await idbGet('chunks', currentProfileKey + '|' + String(chunkIndex));
+        if (row) {
+          profileKey = currentProfileKey;
+          playerResolvedDownloadProfileByItemId[keyItemId] = currentProfileKey;
+        }
+      }
+      if (!row) {
+        var fallbackRow = await idbFindLatestChunkForItemIndex(itemId, chunkIndex);
+        if (fallbackRow) {
+          row = fallbackRow;
+          profileKey = String(fallbackRow.profileKey || profileKey || '');
+          if (profileKey) playerResolvedDownloadProfileByItemId[keyItemId] = profileKey;
+        }
+      }
       if (!row || !row.blob) return null;
       return {
         blob: row.blob,
@@ -3299,6 +3398,7 @@ const HTML_APP = `<!DOCTYPE html>
     async function saveDownloadedChunkPacket(itemId, chunkIndex, packet) {
       if (!packet || !packet.blob) return;
       var profileKey = getDownloadProfileKey(itemId);
+      playerResolvedDownloadProfileByItemId[String(itemId || '')] = profileKey;
       await idbPut('chunks', {
         id: profileKey + '|' + String(chunkIndex),
         profileKey: profileKey,
@@ -3311,8 +3411,25 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     async function loadDownloadedManifest(itemId) {
-      var profileKey = getDownloadProfileKey(itemId);
+      var keyItemId = String(itemId || '');
+      var profileKey = playerResolvedDownloadProfileByItemId[keyItemId] || getDownloadProfileKey(itemId);
       var manifest = await idbGet('manifests', profileKey);
+      if (!manifest && profileKey !== getDownloadProfileKey(itemId)) {
+        var currentProfileKey = getDownloadProfileKey(itemId);
+        manifest = await idbGet('manifests', currentProfileKey);
+        if (manifest) {
+          profileKey = currentProfileKey;
+          playerResolvedDownloadProfileByItemId[keyItemId] = currentProfileKey;
+        }
+      }
+      if (!manifest) {
+        var fallback = await idbFindLatestManifestForItem(itemId);
+        if (fallback) {
+          manifest = fallback;
+          profileKey = String(fallback.profileKey || fallback.id || profileKey || '');
+          if (profileKey) playerResolvedDownloadProfileByItemId[keyItemId] = profileKey;
+        }
+      }
       if (manifest) playerDownloadedManifestByItemId[String(itemId)] = manifest;
       return manifest;
     }
@@ -3330,6 +3447,9 @@ const HTML_APP = `<!DOCTYPE html>
         return;
       }
       var downloadedChunks = await idbCountChunksForProfile(profileKey);
+      if (downloadedChunks <= 0) {
+        downloadedChunks = await idbCountDistinctChunksForItem(itemId);
+      }
       if (downloadedChunks > 0) {
         playerDownloadProgressByItemId[itemId] = Math.max(
           Number(playerDownloadProgressByItemId[itemId] || 0),
@@ -3341,6 +3461,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     async function saveDownloadedManifest(itemId, chunkCount) {
       var profileKey = getDownloadProfileKey(itemId);
+      playerResolvedDownloadProfileByItemId[String(itemId || '')] = profileKey;
       var manifest = {
         id: profileKey,
         profileKey: profileKey,
@@ -3357,9 +3478,10 @@ const HTML_APP = `<!DOCTYPE html>
       var itemId = String(item.id || '');
       if (!itemId) return false;
       var manifest = playerDownloadedManifestByItemId[itemId] || await loadDownloadedManifest(itemId);
-      if (!manifest) return false;
       var expected = getPlayerItemChunks(item).length;
-      return Number(manifest.chunkCount || 0) >= expected;
+      if (manifest) return Number(manifest.chunkCount || 0) >= expected;
+      var downloadedChunks = await idbCountDistinctChunksForItem(itemId);
+      return downloadedChunks >= expected;
     }
 
     async function fetchPlayerChunkBlob(item, itemId, chunkText, chunkIndex) {

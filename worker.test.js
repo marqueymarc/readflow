@@ -373,7 +373,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.2.16');
+      expect(data.version).toBe('3.2.18');
     });
   });
 
@@ -633,7 +633,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.2.16');
+    expect(html).toContain('v3.2.18');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -811,6 +811,8 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain('skipSaveCurrentProgress: isCurrent');
     expect(script).toContain('suppressLoadingStatus: suppressLoadingStatus');
     expect(script).toContain('if (!opts.skipSaveCurrentProgress) {');
+    expect(script).toContain('idbFindLatestManifestForItem(itemId)');
+    expect(script).toContain('idbCountDistinctChunksForItem(itemId)');
   });
 
   it('preview play shortcut is wired to open player without swipe capture', async () => {
@@ -837,6 +839,7 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain('settings.playerAutoAction');
     expect(script).toContain('runPlayerItemAction(currentIdx, action)');
     expect(script).toContain("evt.target.closest('.player-row-progress')");
+    expect(script).not.toContain('Playback stopped: current item was removed.');
   });
 
   it('preview play forces insert-and-play in player without queue overwrite', async () => {
