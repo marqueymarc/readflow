@@ -203,20 +203,21 @@ const HTML_APP = `<!DOCTYPE html>
       color: var(--text);
       min-height: 100vh;
       padding: 0;
+      overflow-x: hidden;
     }
     .container { max-width: none; margin: 0; }
     .app-shell {
       display: grid;
-      grid-template-columns: 332px minmax(0, 1fr);
+      grid-template-columns: 288px minmax(0, 1fr);
       min-height: 100vh;
     }
     .player-rail-compact .app-shell {
-      grid-template-columns: 286px minmax(0, 1fr);
+      grid-template-columns: 252px minmax(0, 1fr);
     }
     .left-rail {
       border-right: 1px solid var(--border);
-      background: #f3f6fb;
-      padding: 1rem 0.75rem;
+      background: #eef3fa;
+      padding: 0.9rem 0.7rem 0.6rem;
       position: sticky;
       top: 0;
       height: 100vh;
@@ -226,16 +227,22 @@ const HTML_APP = `<!DOCTYPE html>
     }
     .main-pane {
       min-width: 0;
-      padding: 0.35rem 1.1rem 2rem;
+      padding: 0.7rem 0.95rem 1.2rem;
       height: 100vh;
-      overflow: hidden;
+      overflow-y: auto;
+      background: radial-gradient(circle at 8% 10%, #f9fcff 0%, #f4f8fc 45%, #f3f7fb 100%);
     }
     .main-inner {
-      max-width: 1120px;
-      margin: 0 auto;
-      height: 100%;
+      max-width: none;
+      margin: 0;
+      min-height: 100%;
     }
-    #cleanup-tab { height: 100%; }
+    #cleanup-tab {
+      min-height: 100%;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 0.8rem;
+    }
     .rail-brand {
       display: flex;
       align-items: center;
@@ -246,28 +253,123 @@ const HTML_APP = `<!DOCTYPE html>
       padding: 0.35rem 0.5rem 1rem;
     }
     .rail-section {
-      margin-top: 0.75rem;
+      margin-top: 0.65rem;
       border-top: 1px solid var(--border);
-      padding-top: 0.65rem;
+      padding-top: 0.55rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+    }
+    .rail-controls-host {
+      margin-top: 0.8rem;
+      display: none;
+      width: 100%;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .left-rail .rail-docked-control {
+      margin-bottom: 0.6rem;
+      padding: 0.9rem;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .left-rail .rail-docked-control .form-group {
+      margin-bottom: 0.62rem;
+    }
+    .left-rail .rail-docked-control .btn {
+      padding: 0.6rem 0.72rem;
+      font-size: 0.84rem;
+    }
+    .left-rail .rail-docked-control .quick-date {
+      padding: 0.22rem 0.58rem;
+      font-size: 0.74rem;
+    }
+    .left-rail .rail-docked-control .quick-dates {
+      gap: 0.3rem;
+    }
+    .left-rail .rail-docked-control .stats {
+      margin-top: 0.55rem;
+      gap: 0.52rem;
+    }
+    .left-rail .rail-docked-control .stat {
+      padding: 0.68rem 0.45rem;
+    }
+    .left-rail .rail-docked-control .stat-value {
+      font-size: 1.35rem;
+      line-height: 1.05;
+    }
+    .left-rail .rail-docked-control .stat-label {
+      font-size: 0.68rem;
+    }
+    .left-rail .rail-docked-control:last-child {
+      margin-bottom: 0;
+    }
+    .left-rail .rail-docked-control .btn-group {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.45rem;
+    }
+    .left-rail .rail-docked-control .btn-group .btn {
+      width: 100%;
+    }
+    .left-rail #deleted-controls-card .history-actions-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.4rem;
+      margin-bottom: 0.68rem;
+    }
+    .left-rail #deleted-controls-card .history-actions-grid .btn {
+      margin: 0;
+    }
+    .left-rail #deleted-controls-card .history-actions-grid .btn:nth-child(3) {
+      grid-column: 1 / -1;
+    }
+    .left-rail #deleted-controls-card .preview-search-wrap {
+      max-width: none;
+      min-width: 0;
+      width: 100%;
+    }
+    .left-rail .rail-docked-control .preview-top-controls {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.45rem;
+      min-width: 0;
+    }
+    .left-rail .rail-docked-control .preview-search-wrap,
+    .left-rail .rail-docked-control .preview-search,
+    .left-rail .rail-docked-control .sort-toggle {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .left-rail .rail-docked-control .sort-toggle {
+      justify-content: flex-start;
     }
     .rail-item {
       display: flex;
       align-items: center;
-      gap: 0.45rem;
-      padding: 0.5rem 0.6rem;
-      border-radius: 8px;
+      justify-content: space-between;
+      gap: 0.32rem;
+      padding: 0.52rem 0.5rem;
+      border-radius: 10px;
+      border: 1px solid #d6dfeb;
+      background: #ffffff;
       color: var(--text);
       text-decoration: none;
-      font-weight: 500;
-      font-size: 0.95rem;
-      margin-bottom: 0.2rem;
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-bottom: 0;
     }
     .rail-item.active {
-      background: #e9eef8;
-      color: #1d4ed8;
+      background: #e9f2ff;
+      border-color: #b8d6fb;
+      color: #0f4f9e;
     }
     .rail-item:hover {
-      background: #e9eef8;
+      background: #f4f8ff;
     }
     header {
       padding: 0;
@@ -506,7 +608,7 @@ const HTML_APP = `<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       gap: 0.75rem;
-      margin-bottom: 0.05rem;
+      margin-bottom: 0.35rem;
       flex-wrap: wrap;
     }
     .player-title-controls {
@@ -523,6 +625,7 @@ const HTML_APP = `<!DOCTYPE html>
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      max-width: min(100%, 58ch);
     }
     .player-controls-row {
       display: grid;
@@ -561,6 +664,10 @@ const HTML_APP = `<!DOCTYPE html>
     #player-controls-right-host .player-icon-btn {
       min-height: 52px;
       padding: 0.52rem 0.3rem;
+    }
+    #player-controls-right-host .player-title-controls {
+      margin-left: auto;
+      justify-content: flex-end;
     }
     #player-controls-left-host .player-controls-row {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -650,6 +757,34 @@ const HTML_APP = `<!DOCTYPE html>
       text-align: center;
       padding: 1.5rem;
       color: var(--text-muted);
+    }
+    .empty-state-panel {
+      height: 100%;
+      min-height: 260px;
+      border: 1px dashed #c7d8ec;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(249,252,255,0.96));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 0.55rem;
+      padding: 1.3rem;
+      color: var(--text-muted);
+    }
+    .empty-state-title {
+      font-size: 1.06rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .empty-state-subtitle {
+      font-size: 0.88rem;
+      max-width: 480px;
+    }
+    .empty-state-action {
+      margin-top: 0.25rem;
+      min-width: 160px;
     }
     .badge {
       display: inline-block;
@@ -879,8 +1014,14 @@ const HTML_APP = `<!DOCTYPE html>
     .history-item {
       margin-bottom: 0.35rem;
     }
-    .version-badge {
+    .rail-footer {
+      position: sticky;
+      bottom: 0;
       margin-top: auto;
+      background: linear-gradient(to bottom, rgba(238,243,250,0), rgba(238,243,250,1) 28%);
+      padding-top: 0.6rem;
+    }
+    .version-badge {
       width: 100%;
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -894,20 +1035,26 @@ const HTML_APP = `<!DOCTYPE html>
     #results-card {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      min-height: 0;
+      height: auto;
       margin-bottom: 0;
     }
     #preview-list {
       flex: 1;
       min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
     #deleted-tab {
-      height: 100%;
+      min-height: 100%;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 0.8rem;
     }
     #deleted-tab .card {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      height: auto;
       min-height: 0;
       margin-bottom: 0;
     }
@@ -920,12 +1067,14 @@ const HTML_APP = `<!DOCTYPE html>
       padding-top: 0.6rem;
     }
     #player-tab {
-      height: 100%;
+      min-height: 100%;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr);
     }
     #player-tab .card {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      height: auto;
       min-height: 0;
       margin-bottom: 0;
     }
@@ -984,16 +1133,22 @@ const HTML_APP = `<!DOCTYPE html>
         overflow: visible;
       }
       .rail-section {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.35rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.26rem;
       }
       .rail-item {
-        margin-bottom: 0;
+        justify-content: center;
+        font-size: 0.85rem;
+        padding: 0.44rem 0.3rem;
       }
       .left-rail .card {
         margin-bottom: 0.55rem;
         padding: 0.85rem;
+      }
+      .rail-footer {
+        position: static;
+        background: transparent;
+        padding-top: 0.45rem;
       }
       .date-row {
         grid-template-columns: 1fr;
@@ -1010,6 +1165,8 @@ const HTML_APP = `<!DOCTYPE html>
       #player-tab,
       .main-inner {
         height: auto;
+        min-height: 0;
+        display: block;
       }
       #deleted-tab .card,
       #player-tab .card {
@@ -1033,13 +1190,7 @@ const HTML_APP = `<!DOCTYPE html>
         width: 24px;
         height: 24px;
       }
-      .rail-section {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.24rem;
-        flex-wrap: nowrap;
-        align-items: stretch;
-      }
+      .rail-section { gap: 0.22rem; }
       .rail-item {
         justify-content: center;
         white-space: nowrap;
@@ -1106,6 +1257,8 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <a class="tab" data-tab="settings" href="/settings" style="display:none" aria-hidden="true">Settings</a>
         <a class="tab" data-tab="about" href="/about" style="display:none" aria-hidden="true">About</a>
+        <div id="cleanup-controls-left-host" class="rail-controls-host"></div>
+        <div id="deleted-controls-left-host" class="rail-controls-host"></div>
         <div id="cleanup-controls" style="display:none"></div>
         <div id="deleted-controls" style="display:none"></div>
         <div id="player-controls-left-host" style="display:none">
@@ -1151,11 +1304,14 @@ const HTML_APP = `<!DOCTYPE html>
           <audio id="player-audio" controls style="width:100%; margin-top: 0.4rem;"></audio>
         </div>
         </div>
-        <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
+        <div class="rail-footer">
+          <button class="version-badge" id="version-badge" title="Open settings and about">&#9881; Settings · v${APP_VERSION}</button>
+        </div>
       </aside>
       <main class="main-pane" id="main-pane">
         <div class="main-inner">
     <div id="cleanup-tab">
+      <div id="cleanup-controls-right-host"></div>
       <div id="cleanup-main-controls" class="card">
         <h2>Find</h2>
         <div class="form-group">
@@ -1238,12 +1394,13 @@ const HTML_APP = `<!DOCTYPE html>
     </div>
 
     <div id="deleted-tab" style="display:none">
-      <div class="card">
+      <div id="deleted-controls-right-host"></div>
+      <div class="card" id="deleted-controls-card">
         <h2>Deleted Items History</h2>
         <p style="color: var(--text-muted); margin-bottom: 0.8rem; font-size: 0.9rem;">
           Restore selected items to Reader or remove them from local history.
         </p>
-        <div class="btn-group" style="margin-top: 0.4rem; margin-bottom: 0.8rem;">
+        <div class="btn-group history-actions-grid" style="margin-top: 0.4rem; margin-bottom: 0.8rem;">
           <button class="btn btn-primary" id="restore-btn" disabled>Restore Selected</button>
           <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove from History</button>
           <button class="btn btn-outline" id="clear-history-btn">Clear History</button>
@@ -1260,6 +1417,8 @@ const HTML_APP = `<!DOCTYPE html>
             </div>
           </div>
         </div>
+      </div>
+      <div class="card">
         <div id="deleted-list"><div class="loading">Loading...</div></div>
       </div>
     </div>
@@ -1516,6 +1675,12 @@ const HTML_APP = `<!DOCTYPE html>
     var saveSettingsBtn = document.getElementById('save-settings-btn');
     var cleanupControlsCard = document.getElementById('cleanup-controls');
     var deletedControlsCard = document.getElementById('deleted-controls');
+    var cleanupMainControlsCard = document.getElementById('cleanup-main-controls');
+    var deletedMainControlsCard = document.getElementById('deleted-controls-card');
+    var cleanupControlsLeftHost = document.getElementById('cleanup-controls-left-host');
+    var deletedControlsLeftHost = document.getElementById('deleted-controls-left-host');
+    var cleanupControlsRightHost = document.getElementById('cleanup-controls-right-host');
+    var deletedControlsRightHost = document.getElementById('deleted-controls-right-host');
     var playerControlsCard = document.getElementById('player-controls');
     var playerControlsLeftHost = document.getElementById('player-controls-left-host');
     var playerControlsRightHost = document.getElementById('player-controls-right-host');
@@ -1728,6 +1893,38 @@ const HTML_APP = `<!DOCTYPE html>
       return railWidth > 0 && railWidth < 380;
     }
 
+    function shouldDockMainControlsLeft() {
+      if (window.innerWidth <= 1024) return false;
+      if (!leftRailEl || !leftRailEl.getBoundingClientRect) return true;
+      var railWidth = leftRailEl.getBoundingClientRect().width || 0;
+      if (railWidth <= 0) return window.innerWidth >= 1180;
+      return railWidth >= 240;
+    }
+
+    function syncMainControlsDock() {
+      var dockLeft = shouldDockMainControlsLeft();
+      if (cleanupMainControlsCard && cleanupControlsLeftHost && cleanupControlsRightHost) {
+        var cleanupTargetHost = dockLeft ? cleanupControlsLeftHost : cleanupControlsRightHost;
+        if (cleanupMainControlsCard.parentElement !== cleanupTargetHost && typeof cleanupTargetHost.appendChild === 'function') {
+          cleanupTargetHost.appendChild(cleanupMainControlsCard);
+        }
+        cleanupMainControlsCard.classList.toggle('rail-docked-control', dockLeft);
+      }
+      if (deletedMainControlsCard && deletedControlsLeftHost && deletedControlsRightHost) {
+        var deletedTargetHost = dockLeft ? deletedControlsLeftHost : deletedControlsRightHost;
+        if (deletedMainControlsCard.parentElement !== deletedTargetHost && typeof deletedTargetHost.appendChild === 'function') {
+          deletedTargetHost.appendChild(deletedMainControlsCard);
+        }
+        deletedMainControlsCard.classList.toggle('rail-docked-control', dockLeft);
+      }
+      if (cleanupControlsLeftHost) {
+        cleanupControlsLeftHost.style.display = currentTabName === 'cleanup' && dockLeft ? 'block' : 'none';
+      }
+      if (deletedControlsLeftHost) {
+        deletedControlsLeftHost.style.display = currentTabName === 'deleted' && dockLeft ? 'block' : 'none';
+      }
+    }
+
     function syncPlayerControlsDock() {
       if (!playerControlsCard || !playerControlsLeftHost || !playerControlsRightHost) return;
       if (typeof playerControlsLeftHost.appendChild !== 'function' || typeof playerControlsRightHost.appendChild !== 'function') return;
@@ -1784,6 +1981,7 @@ const HTML_APP = `<!DOCTYPE html>
         history.pushState({ tab: tabName }, '', targetPath);
       }
       currentTabName = tabName;
+      syncMainControlsDock();
       syncPlayerControlsDock();
       schedulePersistAppState();
     }
@@ -1799,6 +1997,7 @@ const HTML_APP = `<!DOCTYPE html>
       setActiveTab(getTabFromPath(window.location.pathname), { push: false });
     });
     on(window, 'resize', function() {
+      syncMainControlsDock();
       syncPlayerControlsDock();
     });
 
@@ -1929,7 +2128,12 @@ const HTML_APP = `<!DOCTYPE html>
     function renderPreview() {
       var filtered = getSortedFilteredPreviewItems();
       if (filtered.length === 0) {
-        previewList.innerHTML = '<div class="empty">No items match this filter</div>';
+        var emptyBtnLabel = (previewData.length > 0) ? 'Refresh Find' : 'Find Items';
+        previewList.innerHTML = '<div class="empty-state-panel"><div class="empty-state-title">No items match this filter</div><div class="empty-state-subtitle">Adjust search/date/source filters or refresh to pull the latest matching stories.</div><button type="button" class="btn btn-outline empty-state-action" id="preview-empty-find-btn">' + emptyBtnLabel + '</button></div>';
+        var emptyFindBtn = document.getElementById('preview-empty-find-btn');
+        on(emptyFindBtn, 'click', function() {
+          if (previewBtn && !previewBtn.disabled) previewBtn.click();
+        });
         previewBottomControls.style.display = 'none';
         syncPreviewSelectionUI();
         return;
@@ -2800,9 +3004,11 @@ const HTML_APP = `<!DOCTYPE html>
       renderPlayerQueue();
       renderPlayerText();
 
-      var pathTab = getTabFromPath(window.location.pathname);
+      var normalizedPath = normalizePath(window.location.pathname);
+      var hasExplicitRoute = Object.prototype.hasOwnProperty.call(ROUTE_TABS, normalizedPath);
+      var pathTab = hasExplicitRoute ? ROUTE_TABS[normalizedPath] : '';
       var restoredTab = typeof state.tab === 'string' ? state.tab : '';
-      var tabToUse = pathTab !== 'cleanup' ? pathTab : (TAB_ROUTES[restoredTab] ? restoredTab : 'cleanup');
+      var tabToUse = pathTab || (TAB_ROUTES[restoredTab] ? restoredTab : 'cleanup');
       setActiveTab(tabToUse, { push: false, syncPlayerFromSelection: false });
 
       if (state.scroll && typeof state.scroll === 'object') {
@@ -3709,14 +3915,14 @@ const HTML_APP = `<!DOCTYPE html>
 
     function renderDeletedItems() {
       if (deletedItems.length === 0) {
-        deletedList.innerHTML = '<div class="empty">No deleted items in history</div>';
+        deletedList.innerHTML = '<div class="empty-state-panel"><div class="empty-state-title">No deleted items in history</div><div class="empty-state-subtitle">Deleted stories appear here so they can be restored or permanently cleared.</div></div>';
         updateSelectedButtons();
         schedulePersistAppState();
         return;
       }
       var filtered = getFilteredDeletedItems();
       if (filtered.length === 0) {
-        deletedList.innerHTML = '<div class="empty">No deleted items match this filter</div>';
+        deletedList.innerHTML = '<div class="empty-state-panel"><div class="empty-state-title">No deleted items match this filter</div><div class="empty-state-subtitle">Try a different search phrase or date sort option.</div></div>';
         updateSelectedButtons();
         schedulePersistAppState();
         return;
@@ -4116,6 +4322,19 @@ const HTML_APP = `<!DOCTYPE html>
       loadDeletedCount();
       setPlayerPlayPauseButtonState();
       updateRailSelectionBadges();
+      syncMainControlsDock();
+      syncPlayerControlsDock();
+      var deferFrame = (typeof requestAnimationFrame === 'function')
+        ? requestAnimationFrame
+        : function(cb) { return setTimeout(cb, 0); };
+      deferFrame(function() {
+        syncMainControlsDock();
+        syncPlayerControlsDock();
+      });
+      setTimeout(function() {
+        syncMainControlsDock();
+        syncPlayerControlsDock();
+      }, 120);
     }
 
     initializeApp();

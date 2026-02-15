@@ -19,6 +19,14 @@ if (!/#player-queue\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*\}/.test(html)) {
   console.error('Browser smoke failed: missing dedicated player-queue scroll container styles');
   process.exit(1);
 }
+if (!/\.left-rail\s+\.rail-docked-control\s*\{[\s\S]*max-width:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: rail-docked controls must be width-constrained to avoid rail overflow into results pane');
+  process.exit(1);
+}
+if (!/\.rail-controls-host\s*\{[\s\S]*width:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: rail control host must constrain overflow for docked controls');
+  process.exit(1);
+}
 const script = scriptMatch[1];
 const firstChunkMatch = script.match(/var CLIENT_TTS_FIRST_CHUNK_CHARS = (\d+);/);
 const secondChunkMatch = script.match(/var CLIENT_TTS_SECOND_CHUNK_CHARS = (\d+);/);
@@ -244,6 +252,16 @@ globalThis.URLSearchParams = URLSearchParams;
 globalThis.setTimeout = setTimeout;
 globalThis.clearTimeout = clearTimeout;
 globalThis.console = console;
+globalThis.localStorage = {
+  getItem(key) {
+    if (key === 'readwise_cleanup_app_state_v1') {
+      return JSON.stringify({ tab: 'deleted' });
+    }
+    return null;
+  },
+  setItem() {},
+  removeItem() {},
+};
 
 try {
   // eslint-disable-next-line no-new-func
@@ -255,6 +273,17 @@ try {
 }
 
 await new Promise((resolve) => setTimeout(resolve, 0));
+
+const cleanupTabEl = byId.get('cleanup-tab');
+const deletedTabEl = byId.get('deleted-tab');
+if (!cleanupTabEl || !deletedTabEl) {
+  console.error('Browser smoke failed: expected cleanup/deleted tab containers');
+  process.exit(1);
+}
+if (cleanupTabEl.style.display === 'none' || deletedTabEl.style.display !== 'none') {
+  console.error('Browser smoke failed: explicit route "/" should win over restored tab state');
+  process.exit(1);
+}
 
 const toDateInput = byId.get('to-date');
 if (!toDateInput || !toDateInput.value) {

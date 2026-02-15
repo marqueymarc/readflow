@@ -13,8 +13,12 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.2.3';
+const APP_VERSION = '3.2.7';
 const VERSION_HISTORY = [
+  { version: '3.2.7', completedAt: '2026-02-15', note: 'Constrained docked rail control layouts to prevent overflow into the main pane and keep result lists visually anchored in the main content area.' },
+  { version: '3.2.6', completedAt: '2026-02-15', note: 'Fixed initialization-time control docking so Find/History controls reliably move into the left rail on desktop without requiring a manual resize.' },
+  { version: '3.2.5', completedAt: '2026-02-15', note: 'Expanded v3 rail docking so Find/History controls move into the left rail at standard desktop widths with rail-specific card/button sizing.' },
+  { version: '3.2.4', completedAt: '2026-02-15', note: 'Implemented mock-aligned responsive docking so Find and History control cards move into the left rail on wide screens while results stay in the main pane.' },
   { version: '3.2.3', completedAt: '2026-02-15', note: 'Moved Find controls into the main pane as well, making the left rail navigation-only so result workflows stay in the main content area.' },
   { version: '3.2.2', completedAt: '2026-02-15', note: 'Moved History action controls out of the rail into the main Deleted Items History panel so rail stays navigation-focused and results/actions stay together.' },
   { version: '3.2.1', completedAt: '2026-02-15', note: 'Improved v3 layout ergonomics: Deleted History list now has a reliable dedicated scroll container, and Player playlist expands to full available pane height with internal scrolling.' },
