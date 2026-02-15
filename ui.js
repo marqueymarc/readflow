@@ -1669,7 +1669,15 @@ const HTML_APP = `<!DOCTYPE html>
       <div id="cleanup-main-controls" class="card">
         <h2>Find</h2>
         <div class="form-group">
-          <label for="location" class="field-label-with-icon"><span class="field-label-icon source" aria-hidden="true"></span>Source</label>
+          <label for="source-select" class="field-label-with-icon"><span class="field-label-icon source" aria-hidden="true"></span>Source</label>
+          <select id="source-select" class="decor-select">
+            <option value="readwise">Readwise</option>
+            <option value="gmail">Gmail (Hook)</option>
+            <option value="all">Readwise + Gmail</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="location">Readwise Location</label>
           <select id="location" class="decor-select">
             <option value="new">Inbox (New)</option>
             <option value="later">Later</option>
@@ -1779,6 +1787,14 @@ const HTML_APP = `<!DOCTYPE html>
       <div class="card">
         <h2>Settings</h2>
         <div class="form-group">
+          <label for="setting-default-source">Default source</label>
+          <select id="setting-default-source">
+            <option value="readwise">Readwise</option>
+            <option value="gmail">Gmail (Hook)</option>
+            <option value="all">Readwise + Gmail</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label for="setting-default-location">Default location</label>
           <select id="setting-default-location">
             <option value="new">Inbox (New)</option>
@@ -1857,6 +1873,19 @@ const HTML_APP = `<!DOCTYPE html>
         </div>
         <div class="btn-group">
           <button class="btn btn-outline" id="save-token-btn">Save API Key</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
+        <h2 style="font-size:1rem;margin-bottom:0.65rem;">Gmail Source (Hook)</h2>
+        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.6rem;">
+          Gmail hook accepts normalized email items and labels from an external sync job. OAuth sync setup follows in a later 3.3.x step.
+        </p>
+        <p id="gmail-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking Gmail hook status…</p>
+        <div class="form-group">
+          <label for="setting-gmail-labels">Filter labels (comma-separated; optional)</label>
+          <input id="setting-gmail-labels" type="text" autocomplete="off" placeholder="newsletters, priority, longread">
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-outline" id="save-gmail-labels-btn">Save Gmail Labels</button>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
         <h2 style="font-size:1rem;margin-bottom:0.65rem;">OpenAI API Key</h2>
@@ -1957,6 +1986,7 @@ const HTML_APP = `<!DOCTYPE html>
     var lastQuery = null;
     var lastPreviewLoadedAt = 0;
     var settings = {
+      defaultSource: 'readwise',
       defaultLocation: 'new',
       defaultDays: 30,
       previewLimit: 100,
@@ -1967,7 +1997,8 @@ const HTML_APP = `<!DOCTYPE html>
       audioForwardSeconds: 30,
       maxOpenTabs: 5,
       playerAutoNext: true,
-      playerAutoAction: 'none'
+      playerAutoAction: 'none',
+      gmailSelectedLabels: []
     };
     var playerQueue = [];
     var playerIndex = 0;
@@ -2002,6 +2033,7 @@ const HTML_APP = `<!DOCTYPE html>
     var settingsSaveInFlight = false;
     var voicePreviewAudio = null;
 
+    var sourceSelect = document.getElementById('source-select');
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
     var toDateInput = document.getElementById('to-date');
@@ -2070,6 +2102,9 @@ const HTML_APP = `<!DOCTYPE html>
     var saveTokenBtn = document.getElementById('save-token-btn');
     var tokenStatusEl = document.getElementById('token-status');
     var settingsTokenInput = document.getElementById('setting-readwise-token');
+    var gmailStatusEl = document.getElementById('gmail-status');
+    var saveGmailLabelsBtn = document.getElementById('save-gmail-labels-btn');
+    var settingsGmailLabelsInput = document.getElementById('setting-gmail-labels');
     var settingMockTts = document.getElementById('setting-mock-tts');
     var settingTtsVoice = document.getElementById('setting-tts-voice');
     var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
@@ -2109,6 +2144,7 @@ const HTML_APP = `<!DOCTYPE html>
     var playerSpeedSelect = document.getElementById('player-speed');
     var playerShowText = false;
 
+    var settingsDefaultSource = document.getElementById('setting-default-source');
     var settingsDefaultLocation = document.getElementById('setting-default-location');
     var settingsDefaultDays = document.getElementById('setting-default-days');
     var settingsPreviewLimit = document.getElementById('setting-preview-limit');
@@ -2154,6 +2190,9 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function applySettingsToUI() {
+      var effectiveSource = settings.defaultSource || 'readwise';
+      if (sourceSelect) sourceSelect.value = effectiveSource;
+      if (settingsDefaultSource) settingsDefaultSource.value = effectiveSource;
       var hasDefaultLocation = Array.from(locationSelect.options || []).some(function(opt) {
         return opt && opt.value === settings.defaultLocation;
       });
@@ -2183,10 +2222,24 @@ const HTML_APP = `<!DOCTYPE html>
       settingMaxOpenTabs.value = settings.maxOpenTabs;
       settingPlayerAutoNext.checked = !!settings.playerAutoNext;
       settingPlayerAutoAction.value = settings.playerAutoAction || 'none';
+      if (settingsGmailLabelsInput) {
+        settingsGmailLabelsInput.value = Array.isArray(settings.gmailSelectedLabels)
+          ? settings.gmailSelectedLabels.join(', ')
+          : '';
+      }
       var backTextEl = playerBackBtn && playerBackBtn.querySelector ? playerBackBtn.querySelector('.control-text') : null;
       var fwdTextEl = playerForwardBtn && playerForwardBtn.querySelector ? playerForwardBtn.querySelector('.control-text') : null;
       if (backTextEl) backTextEl.textContent = settings.audioBackSeconds + 's';
       if (fwdTextEl) fwdTextEl.textContent = settings.audioForwardSeconds + 's';
+      syncSourceUi();
+    }
+
+    function syncSourceUi() {
+      var src = sourceSelect ? String(sourceSelect.value || 'readwise') : 'readwise';
+      var readwiseOnly = src === 'readwise';
+      if (locationSelect) {
+        locationSelect.disabled = !readwiseOnly && src !== 'all';
+      }
     }
 
     function buildLocationOptionLabel(location) {
@@ -2206,6 +2259,7 @@ const HTML_APP = `<!DOCTYPE html>
       locationSelect.innerHTML = locationHtml;
       settingsDefaultLocation.innerHTML = locationHtml;
       applySettingsToUI();
+      syncSourceUi();
     }
 
     async function loadLocations() {
@@ -2221,6 +2275,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     function buildQueryKey() {
       return [
+        sourceSelect && sourceSelect.value || 'readwise',
         locationSelect.value,
         fromDateInput.value || '',
         toDateInput.value || '',
@@ -2439,6 +2494,7 @@ const HTML_APP = `<!DOCTYPE html>
 
       try {
         var params = new URLSearchParams({
+          source: sourceSelect && sourceSelect.value ? sourceSelect.value : 'readwise',
           location: locationSelect.value,
           to: toDate,
           limit: String(settings.previewLimit || 100)
@@ -2459,7 +2515,7 @@ const HTML_APP = `<!DOCTYPE html>
         updatePreviewButtonLabel();
         updateResultsSummary();
 
-        setFindMeta(currentCount, locationSelect.value);
+        setFindMeta(currentCount, (sourceSelect && sourceSelect.value) || 'readwise');
         if (previewTopToolbar) previewTopToolbar.style.display = previewData.length > 0 ? 'grid' : 'none';
         previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
         showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
@@ -2563,7 +2619,8 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function isArchiveSourceSelected() {
-      return String(locationSelect.value || '') === 'archive';
+      var src = String(sourceSelect && sourceSelect.value || 'readwise');
+      return src === 'readwise' && String(locationSelect.value || '') === 'archive';
     }
 
     function getSecondaryCleanupAction() {
@@ -2774,6 +2831,13 @@ const HTML_APP = `<!DOCTYPE html>
       renderPreview();
     });
     updatePreviewSortButtons();
+    on(sourceSelect, 'change', function() {
+      syncSourceUi();
+      syncPreviewSelectionUI();
+      if (previewData.length > 0) renderPreview();
+      updatePreviewButtonLabel();
+      schedulePersistAppState();
+    });
     on(locationSelect, 'change', function() {
       syncPreviewSelectionUI();
       if (previewData.length > 0) renderPreview();
@@ -3623,6 +3687,8 @@ const HTML_APP = `<!DOCTYPE html>
           searchable: item && item.searchable ? String(item.searchable) : '',
           ttsPreview: item && item.ttsPreview ? String(item.ttsPreview) : '',
           ttsFullText: item && item.ttsFullText ? String(item.ttsFullText).slice(0, 48000) : '',
+          kind: item && item.kind ? String(item.kind) : '',
+          labels: item && Array.isArray(item.labels) ? item.labels.map(function(label) { return String(label || ''); }).filter(Boolean) : [],
         };
       });
     }
@@ -3653,6 +3719,7 @@ const HTML_APP = `<!DOCTYPE html>
       try {
         var payload = {
           tab: currentTabName || 'cleanup',
+          source: sourceSelect && sourceSelect.value ? sourceSelect.value : 'readwise',
           location: locationSelect.value || '',
           fromDate: fromDateInput.value || '',
           toDate: toDateInput.value || '',
@@ -3754,10 +3821,14 @@ const HTML_APP = `<!DOCTYPE html>
 
     function applyRestoredAppState(state) {
       if (!state || typeof state !== 'object') return;
+      if (sourceSelect && (state.source === 'readwise' || state.source === 'gmail' || state.source === 'all')) {
+        sourceSelect.value = state.source;
+      }
       var hasLocation = Array.from(locationSelect.options || []).some(function(opt) {
         return opt && opt.value === state.location;
       });
       if (hasLocation) locationSelect.value = state.location;
+      syncSourceUi();
       if (typeof state.fromDate === 'string') fromDateInput.value = state.fromDate;
       if (typeof state.toDate === 'string') toDateInput.value = state.toDate;
       syncDateInputBounds();
@@ -3823,7 +3894,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
         if (hasSpeed) playerSpeedSelect.value = String(restoredSpeed);
       }
-      setFindMeta(currentCount, locationSelect.value || '-');
+      setFindMeta(currentCount, (sourceSelect && sourceSelect.value) || 'readwise');
       if (previewTopToolbar) previewTopToolbar.style.display = previewData.length > 0 ? 'grid' : 'none';
       previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
       renderPreview();
@@ -4657,7 +4728,9 @@ const HTML_APP = `<!DOCTYPE html>
               savedAt: item.savedAt || '',
               publishedAt: item.publishedAt || null,
               thumbnail: item.thumbnail || null,
-              originalLocation: item.originalLocation || null
+              originalLocation: item.originalLocation || null,
+              kind: item.kind || '',
+              site: item.site || '',
             };
           });
 
@@ -4676,6 +4749,7 @@ const HTML_APP = `<!DOCTYPE html>
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              source: sourceSelect && sourceSelect.value ? sourceSelect.value : 'readwise',
               location: locationSelect.value,
               fromDate: fromDateInput.value || undefined,
               toDate: toDateInput.value || formatInputDate(new Date()),
@@ -4739,14 +4813,14 @@ const HTML_APP = `<!DOCTYPE html>
           selectedPreviewIds.clear();
           lastQuery = null;
           previewPage = 1;
-          setFindMeta(0, locationSelect.value || '-');
+          setFindMeta(0, (sourceSelect && sourceSelect.value) || 'readwise');
           renderPreview();
           if (previewTopToolbar) previewTopToolbar.style.display = 'none';
           previewBottomControls.style.display = 'none';
         } else {
           var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
           if (previewPage > totalPages) previewPage = totalPages;
-          setFindMeta(currentCount, locationSelect.value || '-');
+          setFindMeta(currentCount, (sourceSelect && sourceSelect.value) || 'readwise');
           renderPreview();
           if (previewTopToolbar) previewTopToolbar.style.display = 'grid';
           previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
@@ -5057,7 +5131,15 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     function buildSettingsPayloadFromUI() {
+      var gmailLabels = [];
+      if (settingsGmailLabelsInput && settingsGmailLabelsInput.value) {
+        gmailLabels = settingsGmailLabelsInput.value
+          .split(',')
+          .map(function(label) { return String(label || '').trim(); })
+          .filter(Boolean);
+      }
       return {
+        defaultSource: settingsDefaultSource.value || 'readwise',
         defaultLocation: settingsDefaultLocation.value,
         defaultDays: parseInt(settingsDefaultDays.value, 10),
         previewLimit: parseInt(settingsPreviewLimit.value, 10),
@@ -5068,7 +5150,8 @@ const HTML_APP = `<!DOCTYPE html>
         audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10),
         maxOpenTabs: parseInt(settingMaxOpenTabs.value, 10),
         playerAutoNext: !!settingPlayerAutoNext.checked,
-        playerAutoAction: settingPlayerAutoAction.value
+        playerAutoAction: settingPlayerAutoAction.value,
+        gmailSelectedLabels: gmailLabels,
       };
     }
 
@@ -5153,6 +5236,7 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     [
+      settingsDefaultSource,
       settingsDefaultLocation,
       settingsDefaultDays,
       settingsPreviewLimit,
@@ -5206,6 +5290,20 @@ const HTML_APP = `<!DOCTYPE html>
       }
     }
 
+    async function loadGmailStatus() {
+      if (!gmailStatusEl) return;
+      try {
+        var res = await fetch('/api/gmail/status');
+        var data = await parseApiJson(res);
+        var mode = data.mode ? String(data.mode) : 'hook';
+        var count = Number(data.itemCount || 0);
+        var labels = Array.isArray(data.selectedLabels) ? data.selectedLabels : [];
+        gmailStatusEl.textContent = 'Mode: ' + mode + ' · Synced items: ' + count + (labels.length ? ' · Active labels: ' + labels.join(', ') : '');
+      } catch (err) {
+        gmailStatusEl.textContent = 'Unable to read Gmail status.';
+      }
+    }
+
     on(saveTokenBtn, 'click', async function() {
       var token = (settingsTokenInput.value || '').trim();
       if (!token) {
@@ -5240,6 +5338,33 @@ const HTML_APP = `<!DOCTYPE html>
       } finally {
         saveTokenBtn.disabled = false;
         saveTokenBtn.textContent = originalText;
+      }
+    });
+
+    on(saveGmailLabelsBtn, 'click', async function() {
+      var labels = settingsGmailLabelsInput && settingsGmailLabelsInput.value
+        ? settingsGmailLabelsInput.value.split(',').map(function(label) { return String(label || '').trim(); }).filter(Boolean)
+        : [];
+      saveGmailLabelsBtn.disabled = true;
+      var originalText = saveGmailLabelsBtn.textContent;
+      saveGmailLabelsBtn.innerHTML = '<span class="spinner"></span> Saving...';
+      try {
+        var res = await fetch('/api/gmail/labels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ labels: labels }),
+        });
+        var data = await parseApiJson(res);
+        if (data.error) throw new Error(data.error);
+        settings.gmailSelectedLabels = Array.isArray(data.selectedLabels) ? data.selectedLabels : [];
+        if (settingsGmailLabelsInput) settingsGmailLabelsInput.value = settings.gmailSelectedLabels.join(', ');
+        showToast('Gmail labels saved', 'success');
+        loadGmailStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        saveGmailLabelsBtn.disabled = false;
+        saveGmailLabelsBtn.textContent = originalText;
       }
     });
 
@@ -5350,6 +5475,7 @@ const HTML_APP = `<!DOCTYPE html>
       }
       updatePreviewButtonLabel();
       loadTokenStatus();
+      loadGmailStatus();
       loadOpenAiKeyStatus();
       renderVersionHistory();
       loadDeletedCount();

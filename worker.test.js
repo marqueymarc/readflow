@@ -96,6 +96,7 @@ describe('API Endpoints', () => {
     // Clear KV
     await env.KV.put('deleted_items', JSON.stringify([]));
     await env.KV.put('settings', JSON.stringify({
+      defaultSource: 'readwise',
       defaultLocation: 'new',
       defaultDays: 30,
       previewLimit: 100,
@@ -331,6 +332,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
+      expect(data.settings.defaultSource).toBe('readwise');
       expect(data.settings.defaultLocation).toBe('later');
       expect(data.settings.defaultDays).toBe(45);
       expect(data.settings.previewLimit).toBe(120);
@@ -342,6 +344,7 @@ describe('API Endpoints', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          defaultSource: 'invalid-source',
           defaultLocation: 'invalid-location',
           defaultDays: -10,
           previewLimit: 9999,
@@ -354,6 +357,7 @@ describe('API Endpoints', () => {
 
       expect(res.status).toBe(200);
       expect(data.saved).toBe(true);
+      expect(data.settings.defaultSource).toBe('readwise');
       expect(data.settings.defaultLocation).toBe('invalid-location');
       expect(data.settings.defaultDays).toBe(1);
       expect(data.settings.previewLimit).toBe(500);
@@ -364,6 +368,7 @@ describe('API Endpoints', () => {
       expect(data.settings.maxOpenTabs).toBe(5);
       expect(data.settings.playerAutoNext).toBe(true);
       expect(data.settings.playerAutoAction).toBe('none');
+      expect(data.settings.gmailSelectedLabels).toEqual([]);
     });
   });
 
@@ -373,7 +378,86 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.2.18');
+      expect(data.version).toBe('3.3.0');
+    });
+  });
+
+  describe('Gmail hook settings', () => {
+    it('returns gmail status', async () => {
+      const res = await SELF.fetch('https://example.com/api/gmail/status');
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.enabled).toBe(true);
+      expect(data.mode).toBe('hook');
+      expect(Array.isArray(data.selectedLabels)).toBe(true);
+    });
+
+    it('saves and returns gmail selected labels', async () => {
+      const saveRes = await SELF.fetch('https://example.com/api/gmail/labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labels: ['newsletters', 'priority'] }),
+      });
+      const saveData = await saveRes.json();
+      expect(saveRes.status).toBe(200);
+      expect(saveData.saved).toBe(true);
+      expect(saveData.selectedLabels).toEqual(['newsletters', 'priority']);
+
+      const getRes = await SELF.fetch('https://example.com/api/gmail/labels');
+      const getData = await getRes.json();
+      expect(getRes.status).toBe(200);
+      expect(getData.selectedLabels).toEqual(['newsletters', 'priority']);
+    });
+
+    it('accepts gmail hook item ingestion', async () => {
+      const res = await SELF.fetch('https://example.com/api/gmail/hook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'gmail-1',
+              subject: 'Newsletter test',
+              from: 'sender@example.com',
+              text: 'Body text for gmail test',
+              labels: ['newsletters'],
+              date: '2026-02-14T12:00:00.000Z',
+              url: 'https://mail.google.com/mail/u/0/#inbox/gmail-1',
+            },
+          ],
+        }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.accepted).toBe(1);
+    });
+
+    it('returns gmail hook items in source=gmail preview', async () => {
+      await SELF.fetch('https://example.com/api/gmail/hook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'gmail-preview-1',
+              subject: 'Digest issue',
+              from: 'digest@example.com',
+              text: 'A long-form digest body',
+              labels: ['newsletters'],
+              date: '2026-02-13T09:00:00.000Z',
+              url: 'https://mail.google.com/mail/u/0/#inbox/gmail-preview-1',
+            },
+          ],
+        }),
+      });
+
+      const res = await SELF.fetch('https://example.com/api/preview?source=gmail&location=new&to=2026-02-15');
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.source).toBe('gmail');
+      expect(data.total).toBeGreaterThanOrEqual(1);
+      expect(Array.isArray(data.preview)).toBe(true);
+      expect(data.preview[0].id).toBe('gmail-preview-1');
     });
   });
 
@@ -557,10 +641,12 @@ describe('PWA Serving', () => {
     expect(html).toContain('href="/deleted"');
   });
 
-  it('includes location selector', async () => {
+  it('includes source and location selectors', async () => {
     const res = await SELF.fetch('https://example.com/');
     const html = await res.text();
 
+    expect(html).toContain('source-select');
+    expect(html).toContain('Readwise + Gmail');
     expect(html).toContain('Inbox (New)');
     expect(html).toContain('Later');
     expect(html).toContain('Shortlist');
@@ -633,7 +719,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.2.18');
+    expect(html).toContain('v3.3.0');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -645,6 +731,8 @@ describe('PWA Serving', () => {
     expect(html).toContain('setting-player-auto-action');
     expect(html).toContain('Version History');
     expect(html).toContain('Readwise API Key');
+    expect(html).toContain('Gmail Source (Hook)');
+    expect(html).toContain('save-gmail-labels-btn');
     expect(html).toContain('Save API Key');
     expect(html).toContain('Mock TTS mode');
     expect(html).toContain('OpenAI API Key');

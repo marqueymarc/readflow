@@ -13,8 +13,9 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.2.18';
+const APP_VERSION = '3.3.0';
 const VERSION_HISTORY = [
+  { version: '3.3.0', completedAt: '2026-02-15', note: 'Started Gmail source integration with source-aware query plumbing, Gmail hook/status/labels APIs, and normalized Gmail item ingestion for Find/Player workflows.' },
   { version: '3.2.18', completedAt: '2026-02-15', note: 'Removed non-actionable “playback stopped” status messaging after auto archive/delete transitions so end-of-item automation no longer emits redundant stop feedback in player status.' },
   { version: '3.2.17', completedAt: '2026-02-15', note: 'Improved downloaded-audio persistence visibility across fresh app instances by adding cross-profile (voice/mode aware fallback) manifest/chunk lookup and distinct-chunk hydration, so previously downloaded queue entries reliably show downloaded state and remain playable offline.' },
   { version: '3.2.16', completedAt: '2026-02-15', note: 'Fixed timeline click interception in playlist rows by excluding progress bars from swipe gesture capture, so progress-bar clicks consistently invoke seek behavior instead of row navigation.' },
@@ -110,6 +111,8 @@ const TTS_SYNTH_CHUNK_CHARS = 3200;
 const TTS_FIRST_CHUNK_CHARS = 220;
 const TTS_SECOND_CHUNK_CHARS = 1000;
 const PREVIEW_CACHE_STALE_MS = 15 * 60 * 1000;
+const GMAIL_ITEMS_KEY = 'gmail_items_v1';
+const GMAIL_LABELS_KEY = 'gmail_labels_v1';
 const { HTML_APP, HTML_MOCKUP_V3 } = getUiHtml({
   appVersion: APP_VERSION,
   versionHistory: VERSION_HISTORY,
@@ -181,6 +184,24 @@ export default {
       if (url.pathname === '/api/openai-key') {
         if (request.method === 'POST') {
           return await handleSaveOpenAIKey(request, env, corsHeaders);
+        }
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/api/gmail/status') {
+        return await handleGmailStatus(env, corsHeaders);
+      }
+      if (url.pathname === '/api/gmail/labels') {
+        if (request.method === 'POST') {
+          return await handleSaveGmailLabels(request, env, corsHeaders);
+        }
+        return await handleGetGmailLabels(env, corsHeaders);
+      }
+      if (url.pathname === '/api/gmail/hook') {
+        if (request.method === 'POST') {
+          return await handleGmailHook(request, env, corsHeaders);
         }
         return new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
@@ -280,6 +301,7 @@ async function handleGetLocations(env, corsHeaders) {
 // Count items older than date in specified location
 async function handleGetCount(request, env, corsHeaders) {
   const url = new URL(request.url);
+  const source = normalizeSource(url.searchParams.get('source'));
   const location = url.searchParams.get('location') || 'new';
   const beforeDate = url.searchParams.get('before');
   const fromDate = url.searchParams.get('from');
@@ -292,13 +314,21 @@ async function handleGetCount(request, env, corsHeaders) {
     });
   }
 
-  const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+  const settings = await getSettings(env);
+  const items = await fetchItemsBySource(env, {
+    source,
+    location,
+    beforeDate,
     fromDate,
     toDate,
+    gmailLabels: settings.gmailSelectedLabels || [],
+    limit: 2000,
+    includeHtmlContent: false,
   });
 
   return new Response(JSON.stringify({
-    count: articles.length,
+    count: items.length,
+    source,
     location,
     beforeDate,
     fromDate,
@@ -311,6 +341,7 @@ async function handleGetCount(request, env, corsHeaders) {
 // Preview items that would be affected
 async function handlePreview(request, env, corsHeaders) {
   const url = new URL(request.url);
+  const source = normalizeSource(url.searchParams.get('source'));
   const location = url.searchParams.get('location') || 'new';
   const beforeDate = url.searchParams.get('before');
   const fromDate = url.searchParams.get('from');
@@ -319,7 +350,6 @@ async function handlePreview(request, env, corsHeaders) {
   const previewLimit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100;
   const requestedMaxPages = parseInt(url.searchParams.get('maxPages') || '', 10);
   const previewMaxPages = Number.isFinite(requestedMaxPages) ? Math.max(1, Math.min(200, requestedMaxPages)) : 20;
-  const includeHtmlContent = location !== 'archive';
   const effectivePreviewLimit = location === 'archive' ? Math.min(previewLimit, 50) : previewLimit;
   const effectivePreviewMaxPages = location === 'archive' ? Math.min(previewMaxPages, 5) : previewMaxPages;
 
@@ -330,46 +360,25 @@ async function handlePreview(request, env, corsHeaders) {
     });
   }
 
-  const token = await getReadwiseToken(env);
-  if (!token) {
-    return new Response(JSON.stringify({
-      error: 'Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.',
-    }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-
-  const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
-    token,
-    withHtmlContent: includeHtmlContent,
+  const settings = await getSettings(env);
+  const items = await fetchItemsBySource(env, {
+    source,
+    location,
+    beforeDate,
     fromDate,
     toDate,
+    gmailLabels: settings.gmailSelectedLabels || [],
     limit: effectivePreviewLimit,
     maxPages: effectivePreviewMaxPages,
+    includeHtmlContent: location !== 'archive',
   });
-  const preview = articles.map(a => {
-    const ttsFullText = buildTtsText(a);
-    return {
-      id: a.id,
-      title: a.title || 'Untitled',
-      author: a.author || 'Unknown',
-      url: deriveOpenUrl(a),
-      savedAt: a.saved_at,
-      publishedAt: a.published_date || a.published_at || null,
-      site: extractDomain(a.source_url || a.url),
-      thumbnail: getArticleThumbnail(a),
-      originalLocation: a.original_location || a.previous_location || null,
-      searchable: buildSearchableText(a),
-      ttsFullText,
-      ttsPreview: ttsFullText.slice(0, MAX_TTS_PREVIEW_CHARS),
-    };
-  });
+  const preview = items.map(normalizePreviewItem);
 
   return new Response(JSON.stringify({
-    total: articles.length,
+    total: items.length,
     preview,
     showing: preview.length,
+    source,
     dateRange: { beforeDate, fromDate, toDate },
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -380,6 +389,7 @@ async function handlePreview(request, env, corsHeaders) {
 async function handleCleanup(request, env, corsHeaders) {
   const body = await request.json();
   const { location, beforeDate, fromDate, toDate, action, ids, items } = body;
+  const source = normalizeSource(body.source);
 
   if (!location || !action || (!beforeDate && !toDate && !fromDate)) {
     return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -407,11 +417,18 @@ async function handleCleanup(request, env, corsHeaders) {
   if (Array.isArray(ids)) {
     targetIds = Array.from(new Set(ids.map((id) => String(id))));
   } else {
-    articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+    const settings = await getSettings(env);
+    articles = await fetchItemsBySource(env, {
+      source,
+      location,
+      beforeDate,
       fromDate,
       toDate,
+      gmailLabels: settings.gmailSelectedLabels || [],
+      limit: 2000,
+      includeHtmlContent: false,
     });
-    targetIds = articles.map((article) => String(article.id));
+    targetIds = articles.map((article) => String(article.id || ''));
   }
 
   if (targetIds.length === 0) {
@@ -461,7 +478,30 @@ async function handleCleanup(request, env, corsHeaders) {
   let errors = [];
   let processedIds = [];
 
+  const itemById = new Map(Array.isArray(items) ? items
+    .filter((item) => item && item.id !== undefined && item.id !== null)
+    .map((item) => [String(item.id), item]) : []);
+  const articleById = new Map(articles.map((article) => [String(article.id || ''), article]));
+  const gmailIds = [];
+  const readwiseIds = [];
   for (const id of targetIds) {
+    const item = itemById.get(String(id));
+    const article = articleById.get(String(id));
+    const kind = String((item && item.kind) || (article && article.kind) || '').toLowerCase();
+    const site = String((item && item.site) || (article && article.site) || '').toLowerCase();
+    const isGmail = source === 'gmail' || kind === 'gmail' || site === 'gmail';
+    if (isGmail) gmailIds.push(String(id));
+    else readwiseIds.push(String(id));
+  }
+
+  if (gmailIds.length > 0) {
+    const gmailResult = await processGmailCleanup(env, gmailIds, action);
+    processed += gmailResult.processed;
+    processedIds = processedIds.concat(gmailResult.processedIds);
+    errors = errors.concat(gmailResult.errors);
+  }
+
+  for (const id of readwiseIds) {
     try {
       if (action === 'delete') {
         await deleteArticle(env, id);
@@ -484,6 +524,7 @@ async function handleCleanup(request, env, corsHeaders) {
     processed,
     processedIds,
     errors: errors.length > 0 ? errors : undefined,
+    source,
     action,
     total: targetIds.length
   }), {
@@ -685,6 +726,308 @@ async function handleSaveOpenAIKey(request, env, corsHeaders) {
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+async function handleGmailStatus(env, corsHeaders) {
+  const settings = await getSettings(env);
+  const hasHookSecret = typeof env.GMAIL_HOOK_SECRET === 'string' && env.GMAIL_HOOK_SECRET.length > 0;
+  const items = await getGmailItems(env);
+  const labels = await getKnownGmailLabels(env);
+  return new Response(JSON.stringify({
+    enabled: true,
+    mode: 'hook',
+    hookConfigured: hasHookSecret,
+    itemCount: items.length,
+    selectedLabels: settings.gmailSelectedLabels || [],
+    labels,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleGetGmailLabels(env, corsHeaders) {
+  const settings = await getSettings(env);
+  const labels = await getKnownGmailLabels(env);
+  return new Response(JSON.stringify({
+    labels,
+    selectedLabels: settings.gmailSelectedLabels || [],
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleSaveGmailLabels(request, env, corsHeaders) {
+  const body = await request.json();
+  const labels = Array.isArray(body.labels) ? body.labels : [];
+  const settings = await getSettings(env);
+  const sanitized = sanitizeSettings({ ...settings, gmailSelectedLabels: labels });
+  await env.KV.put('settings', JSON.stringify(sanitized));
+  return new Response(JSON.stringify({
+    saved: true,
+    selectedLabels: sanitized.gmailSelectedLabels,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleGmailHook(request, env, corsHeaders) {
+  const secret = typeof env.GMAIL_HOOK_SECRET === 'string' ? env.GMAIL_HOOK_SECRET : '';
+  if (secret) {
+    const supplied = request.headers.get('x-gmail-hook-secret') || '';
+    if (!supplied || supplied !== secret) {
+      return new Response(JSON.stringify({ error: 'Unauthorized gmail hook request' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+  }
+
+  const body = await request.json();
+  const incoming = Array.isArray(body && body.items) ? body.items : [];
+  if (incoming.length === 0) {
+    return new Response(JSON.stringify({ error: 'No gmail items provided' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const existing = await getGmailItems(env);
+  const byId = new Map(existing.map((item) => [String(item.id), item]));
+  const labelSet = new Set(await getKnownGmailLabels(env));
+  let accepted = 0;
+  for (const raw of incoming) {
+    const normalized = normalizeGmailItem(raw);
+    if (!normalized) continue;
+    byId.set(String(normalized.id), normalized);
+    accepted += 1;
+    for (const label of normalized.labels || []) labelSet.add(label);
+  }
+
+  const nextItems = Array.from(byId.values())
+    .sort((a, b) => Date.parse(b.savedAt || 0) - Date.parse(a.savedAt || 0))
+    .slice(0, 4000);
+  await env.KV.put(GMAIL_ITEMS_KEY, JSON.stringify(nextItems));
+  await env.KV.put(GMAIL_LABELS_KEY, JSON.stringify(Array.from(labelSet).sort()));
+
+  return new Response(JSON.stringify({
+    accepted,
+    total: nextItems.length,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+function normalizeSource(value) {
+  if (value === 'gmail' || value === 'all') return value;
+  return 'readwise';
+}
+
+function normalizePreviewItem(item) {
+  if (!item) return null;
+  if (item.kind === 'gmail') {
+    const ttsFullText = cleanupTtsText(buildTtsText({
+      title: item.title || 'Untitled',
+      author: item.author || '',
+      content: item.textContent || '',
+      summary: item.summary || '',
+      html_content: item.htmlContent || '',
+      source_url: item.url || '',
+      url: item.url || '',
+      site_name: item.site || 'gmail',
+      notes: item.labels && item.labels.length ? `Labels: ${item.labels.join(', ')}` : '',
+    }), { sourceLabel: item.site || 'gmail' });
+    const searchable = normalizeTtsText([item.title, item.author, item.url, item.site, item.textContent, item.summary, (item.labels || []).join(' ')].filter(Boolean).join(' ')).toLowerCase();
+    return {
+      id: item.id,
+      title: item.title || 'Untitled',
+      author: item.author || 'Unknown',
+      url: item.url || '',
+      savedAt: item.savedAt || new Date().toISOString(),
+      publishedAt: item.publishedAt || null,
+      site: item.site || 'gmail',
+      thumbnail: item.thumbnail || null,
+      originalLocation: 'gmail',
+      searchable,
+      ttsFullText,
+      ttsPreview: ttsFullText.slice(0, MAX_TTS_PREVIEW_CHARS),
+      labels: item.labels || [],
+      kind: 'gmail',
+    };
+  }
+
+  const a = item;
+  const ttsFullText = buildTtsText(a);
+  return {
+    id: a.id,
+    title: a.title || 'Untitled',
+    author: a.author || 'Unknown',
+    url: deriveOpenUrl(a),
+    savedAt: a.saved_at,
+    publishedAt: a.published_date || a.published_at || null,
+    site: extractDomain(a.source_url || a.url),
+    thumbnail: getArticleThumbnail(a),
+    originalLocation: a.original_location || a.previous_location || null,
+    searchable: buildSearchableText(a),
+    ttsFullText,
+    ttsPreview: ttsFullText.slice(0, MAX_TTS_PREVIEW_CHARS),
+    kind: 'readwise',
+  };
+}
+
+async function fetchItemsBySource(env, options = {}) {
+  const source = normalizeSource(options.source);
+  const includeReadwise = source === 'readwise' || source === 'all';
+  const includeGmail = source === 'gmail' || source === 'all';
+  const out = [];
+
+  if (includeReadwise) {
+    const token = await getReadwiseToken(env);
+    if (!token && source === 'readwise') {
+      throw new Error('400 Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.');
+    }
+    if (token) {
+      const readwiseItems = await fetchArticlesOlderThan(env, options.location || 'new', options.beforeDate, {
+        token,
+        withHtmlContent: options.includeHtmlContent !== false,
+        fromDate: options.fromDate,
+        toDate: options.toDate,
+        limit: options.limit || 100,
+        maxPages: options.maxPages || 20,
+      });
+      out.push(...readwiseItems);
+    }
+  }
+
+  if (includeGmail) {
+    const gmailItems = await getFilteredGmailItems(env, {
+      fromDate: options.fromDate,
+      toDate: options.toDate || options.beforeDate,
+      labels: options.gmailLabels || [],
+      limit: options.limit || 100,
+    });
+    out.push(...gmailItems);
+  }
+
+  out.sort((a, b) => {
+    const aDate = Date.parse(a.saved_at || a.savedAt || 0);
+    const bDate = Date.parse(b.saved_at || b.savedAt || 0);
+    return bDate - aDate;
+  });
+  return out.slice(0, options.limit || 100);
+}
+
+async function getGmailItems(env) {
+  try {
+    const raw = await env.KV.get(GMAIL_ITEMS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getKnownGmailLabels(env) {
+  try {
+    const raw = await env.KV.get(GMAIL_LABELS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeGmailItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const id = item.id || item.messageId;
+  if (!id) return null;
+  const labels = Array.isArray(item.labels)
+    ? item.labels.map((label) => String(label || '').trim()).filter(Boolean).slice(0, 50)
+    : [];
+  const savedAt = item.savedAt || item.receivedAt || item.date || new Date().toISOString();
+  const savedAtIso = (() => {
+    const ts = Date.parse(savedAt);
+    return Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString();
+  })();
+  const publishedAtIso = (() => {
+    if (!item.publishedAt) return null;
+    const ts = Date.parse(item.publishedAt);
+    return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+  })();
+  return {
+    kind: 'gmail',
+    id: String(id),
+    title: String(item.title || item.subject || 'Untitled'),
+    author: String(item.author || item.from || 'Unknown'),
+    url: cleanOpenUrl(normalizeHttpUrl(String(item.url || item.sourceUrl || ''))),
+    savedAt: savedAtIso,
+    publishedAt: publishedAtIso,
+    site: 'gmail',
+    thumbnail: item.thumbnail ? String(item.thumbnail) : null,
+    labels,
+    summary: normalizeTtsText(item.summary || ''),
+    textContent: normalizeTtsText(item.text || item.textContent || ''),
+    htmlContent: typeof item.htmlContent === 'string' ? item.htmlContent : '',
+  };
+}
+
+async function getFilteredGmailItems(env, options = {}) {
+  const all = await getGmailItems(env);
+  const fromTs = parseDateFloor(options.fromDate);
+  const toTs = parseDateCeil(options.toDate);
+  const selectedLabels = Array.isArray(options.labels) ? options.labels.filter(Boolean) : [];
+  const selectedSet = new Set(selectedLabels);
+  const filtered = all.filter((item) => {
+    const ts = Date.parse(item.savedAt || 0);
+    if (Number.isFinite(fromTs) && ts < fromTs) return false;
+    if (Number.isFinite(toTs) && ts > toTs) return false;
+    if (selectedSet.size > 0) {
+      const labels = Array.isArray(item.labels) ? item.labels : [];
+      if (!labels.some((label) => selectedSet.has(label))) return false;
+    }
+    return true;
+  });
+  filtered.sort((a, b) => Date.parse(b.savedAt || 0) - Date.parse(a.savedAt || 0));
+  return filtered.slice(0, options.limit || 100);
+}
+
+function parseDateFloor(value) {
+  if (!value) return Number.NaN;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  const ts = Number(date.getTime());
+  return Number.isFinite(ts) ? ts : Number.NaN;
+}
+
+function parseDateCeil(value) {
+  if (!value) return Number.NaN;
+  const date = new Date(`${value}T23:59:59.999Z`);
+  const ts = Number(date.getTime());
+  return Number.isFinite(ts) ? ts : Number.NaN;
+}
+
+async function processGmailCleanup(env, targetIds, action) {
+  const ids = new Set(targetIds.map((id) => String(id)));
+  if (action === 'restore') {
+    return {
+      processed: 0,
+      processedIds: [],
+      errors: [{ id: 'gmail', error: 'Restore is not supported for gmail-hook items' }],
+    };
+  }
+  const current = await getGmailItems(env);
+  const keep = [];
+  const removed = [];
+  for (const item of current) {
+    if (ids.has(String(item.id))) removed.push(String(item.id));
+    else keep.push(item);
+  }
+  await env.KV.put(GMAIL_ITEMS_KEY, JSON.stringify(keep));
+  return {
+    processed: removed.length,
+    processedIds: removed,
+    errors: [],
+  };
 }
 
 async function handleAudioTts(request, env, corsHeaders) {

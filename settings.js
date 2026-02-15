@@ -1,4 +1,5 @@
 const DEFAULT_SETTINGS = {
+  defaultSource: 'readwise',
   defaultLocation: 'new',
   defaultDays: 7,
   previewLimit: 100,
@@ -10,6 +11,7 @@ const DEFAULT_SETTINGS = {
   maxOpenTabs: 5,
   playerAutoNext: true,
   playerAutoAction: 'none',
+  gmailSelectedLabels: [],
 };
 
 async function getSettings(env) {
@@ -24,6 +26,9 @@ async function getSettings(env) {
 
 function sanitizeSettings(input) {
   const source = input && typeof input === 'object' ? input : {};
+  const defaultSource = source.defaultSource === 'gmail' || source.defaultSource === 'all'
+    ? source.defaultSource
+    : DEFAULT_SETTINGS.defaultSource;
   const defaultLocation = typeof source.defaultLocation === 'string' && source.defaultLocation.trim()
     ? source.defaultLocation.trim()
     : DEFAULT_SETTINGS.defaultLocation;
@@ -48,8 +53,15 @@ function sanitizeSettings(input) {
   const playerAutoAction = source.playerAutoAction === 'archive' || source.playerAutoAction === 'delete'
     ? source.playerAutoAction
     : DEFAULT_SETTINGS.playerAutoAction;
+  const gmailSelectedLabels = Array.isArray(source.gmailSelectedLabels)
+    ? Array.from(new Set(source.gmailSelectedLabels
+      .map((label) => typeof label === 'string' ? label.trim() : '')
+      .filter(Boolean)))
+        .slice(0, 200)
+    : DEFAULT_SETTINGS.gmailSelectedLabels;
 
   return {
+    defaultSource,
     defaultLocation,
     defaultDays,
     previewLimit,
@@ -61,6 +73,7 @@ function sanitizeSettings(input) {
     maxOpenTabs,
     playerAutoNext,
     playerAutoAction,
+    gmailSelectedLabels,
   };
 }
 
