@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.0.2';
+const APP_VERSION = '3.1.0';
 const VERSION_HISTORY = [
+  { version: '3.1.0', completedAt: '2026-02-14', note: 'Experimental redesign branch kickoff from high-fidelity mocks, focused on UI iteration only with one-of source selection in Settings (no new integrations yet).' },
   { version: '3.0.2', completedAt: '2026-02-14', note: 'Renamed Cleanup workflow to Find, changed primary action label from Preview Items to Find, and reordered top nav tabs so History appears last.' },
   { version: '3.0.1', completedAt: '2026-02-14', note: 'Adaptive player rail compaction: narrowed left rail in player-docked mode and stacked transport controls for cleaner fit while preserving touch usability.' },
   { version: '3.0.0', completedAt: '2026-02-13', note: 'Upgraded to v3 with immediate auto-saved settings, live voice preview, larger player controls, denser header layout, faster first-audio chunking, and improved TTS narration cleanup/preface behavior.' },
@@ -1513,7 +1514,7 @@ const HTML_MOCKUP_V3 = `<!DOCTYPE html>
       <div class="card">
         <h3>Find Controls</h3>
         <div class="stack">
-          <div class="source-row"><span>Source: Inbox + Gmail/Newsletters</span><span class="chip blue">Hybrid</span></div>
+          <div class="source-row"><span>Source: Inbox</span><span class="chip blue">One selected</span></div>
           <div class="controls-grid">
             <div class="pill">From: Last 7 days</div>
             <div class="pill">Sort: Added</div>
@@ -1544,12 +1545,12 @@ const HTML_MOCKUP_V3 = `<!DOCTYPE html>
       <div class="card">
         <h3>Settings Preview</h3>
         <div class="settings-grid">
-          <div class="source-row"><span>Readwise Feed</span><span class="toggle on"></span></div>
-          <div class="source-row"><span>Readwise Archive</span><span class="toggle on"></span></div>
-          <div class="source-row"><span>Gmail: newsletters</span><span class="toggle on"></span></div>
-          <div class="source-row"><span>Gmail: longreads</span><span class="toggle"></span></div>
+          <div class="source-row"><span>Inbox (new)</span><span class="toggle on"></span></div>
+          <div class="source-row"><span>Feed</span><span class="toggle"></span></div>
+          <div class="source-row"><span>Later</span><span class="toggle"></span></div>
+          <div class="source-row"><span>Archive</span><span class="toggle"></span></div>
         </div>
-        <div class="muted" style="margin-top:0.5rem;">Next step mock: Gmail OAuth + one/multi label input sources for Find.</div>
+        <div class="muted" style="margin-top:0.5rem;">UI-only redesign pass: settings currently model one source at a time.</div>
       </div>
 
       <div class="mini-player">
@@ -1573,7 +1574,7 @@ const HTML_MOCKUP_V3 = `<!DOCTYPE html>
           <div class="thumb"></div>
           <div>
             <div class="item-title">The Search for Nancy Grace Roman and Modern Sky Survey Systems</div>
-            <div class="meta">By Ten Tabs • Gmail/newsletters • Added Feb 14</div>
+            <div class="meta">By Ten Tabs • Inbox • Added Feb 14</div>
           </div>
           <div class="actions-inline">
             <span class="chip blue">Add to Player</span>
