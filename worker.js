@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.1.1';
 const VERSION_HISTORY = [
+  { version: '3.1.1', completedAt: '2026-02-15', note: 'Fixed async route error handling by awaiting API handlers in dispatcher, preventing Cloudflare 1101 HTML failures and returning structured JSON errors instead.' },
   { version: '3.1.0', completedAt: '2026-02-14', note: 'Experimental redesign branch kickoff from high-fidelity mocks, focused on UI iteration only with one-of source selection in Settings (no new integrations yet).' },
   { version: '3.0.2', completedAt: '2026-02-14', note: 'Renamed Cleanup workflow to Find, changed primary action label from Preview Items to Find, and reordered top nav tabs so History appears last.' },
   { version: '3.0.1', completedAt: '2026-02-14', note: 'Adaptive player rail compaction: narrowed left rail in player-docked mode and stacked transport controls for cleaner fit while preserving touch usability.' },
@@ -109,38 +110,38 @@ export default {
     try {
       // API Routes
       if (url.pathname === '/api/locations') {
-        return handleGetLocations(env, corsHeaders);
+        return await handleGetLocations(env, corsHeaders);
       }
       if (url.pathname === '/api/count') {
-        return handleGetCount(request, env, corsHeaders);
+        return await handleGetCount(request, env, corsHeaders);
       }
       if (url.pathname === '/api/preview') {
-        return handlePreview(request, env, corsHeaders);
+        return await handlePreview(request, env, corsHeaders);
       }
       if (url.pathname === '/api/cleanup') {
-        return handleCleanup(request, env, corsHeaders);
+        return await handleCleanup(request, env, corsHeaders);
       }
       if (url.pathname === '/api/deleted') {
-        return handleGetDeleted(env, corsHeaders);
+        return await handleGetDeleted(env, corsHeaders);
       }
       if (url.pathname === '/api/restore') {
-        return handleRestore(request, env, corsHeaders);
+        return await handleRestore(request, env, corsHeaders);
       }
       if (url.pathname === '/api/clear-deleted') {
-        return handleClearDeleted(request, env, corsHeaders);
+        return await handleClearDeleted(request, env, corsHeaders);
       }
       if (url.pathname === '/api/settings') {
         if (request.method === 'POST') {
-          return handleSaveSettings(request, env, corsHeaders);
+          return await handleSaveSettings(request, env, corsHeaders);
         }
-        return handleGetSettings(env, corsHeaders);
+        return await handleGetSettings(env, corsHeaders);
       }
       if (url.pathname === '/api/token-status') {
-        return handleTokenStatus(env, corsHeaders);
+        return await handleTokenStatus(env, corsHeaders);
       }
       if (url.pathname === '/api/token') {
         if (request.method === 'POST') {
-          return handleSaveToken(request, env, corsHeaders);
+          return await handleSaveToken(request, env, corsHeaders);
         }
         return new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
@@ -148,11 +149,11 @@ export default {
         });
       }
       if (url.pathname === '/api/openai-key-status') {
-        return handleOpenAIKeyStatus(env, corsHeaders);
+        return await handleOpenAIKeyStatus(env, corsHeaders);
       }
       if (url.pathname === '/api/openai-key') {
         if (request.method === 'POST') {
-          return handleSaveOpenAIKey(request, env, corsHeaders);
+          return await handleSaveOpenAIKey(request, env, corsHeaders);
         }
         return new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
@@ -161,7 +162,7 @@ export default {
       }
       if (url.pathname === '/api/audio/tts') {
         if (request.method === 'POST') {
-          return handleAudioTts(request, env, corsHeaders);
+          return await handleAudioTts(request, env, corsHeaders);
         }
         return new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
@@ -291,7 +292,18 @@ async function handlePreview(request, env, corsHeaders) {
     });
   }
 
+  const token = await getReadwiseToken(env);
+  if (!token) {
+    return new Response(JSON.stringify({
+      error: 'Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.',
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
   const articles = await fetchArticlesOlderThan(env, location, beforeDate, {
+    token,
     withHtmlContent: includeHtmlContent,
     fromDate,
     toDate,
@@ -856,7 +868,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, options.maxPages) : Infinity;
   const token = options.token || await getReadwiseToken(env);
   if (!token) {
-    throw new Error('Readwise token is not configured');
+    throw new Error('Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.');
   }
 
   do {
