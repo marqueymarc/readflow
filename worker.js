@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.2.1';
 const VERSION_HISTORY = [
+  { version: '3.2.1', completedAt: '2026-02-15', note: 'Improved v3 layout ergonomics: Deleted History list now has a reliable dedicated scroll container, and Player playlist expands to full available pane height with internal scrolling.' },
   { version: '3.2.0', completedAt: '2026-02-15', note: 'Established redesign branch baseline versioning at 3.2.x for continued UI iteration.' },
   { version: '3.1.3', completedAt: '2026-02-15', note: 'Removed overly strict Readwise token prefix validation so standard public API tokens are accepted in Settings.' },
   { version: '3.1.2', completedAt: '2026-02-15', note: 'Improved Readwise auth error handling: upstream 401/403 now return clearer actionable messages and preserve HTTP status instead of generic server errors.' },
@@ -2349,6 +2350,40 @@ const HTML_APP = `<!DOCTYPE html>
       flex: 1;
       min-height: 0;
     }
+    #deleted-tab {
+      height: 100%;
+    }
+    #deleted-tab .card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      margin-bottom: 0;
+    }
+    #deleted-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      margin-top: 0.5rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.6rem;
+    }
+    #player-tab {
+      height: 100%;
+    }
+    #player-tab .card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      margin-bottom: 0;
+    }
+    #player-queue {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      margin-top: 0.8rem;
+    }
     @media (max-width: 600px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
       .btn-group { flex-direction: column; }
@@ -2420,8 +2455,18 @@ const HTML_APP = `<!DOCTYPE html>
         font-size: 0.76rem;
       }
       #cleanup-tab,
+      #deleted-tab,
+      #player-tab,
       .main-inner {
         height: auto;
+      }
+      #deleted-tab .card,
+      #player-tab .card {
+        height: auto;
+      }
+      #deleted-list,
+      #player-queue {
+        overflow: visible;
       }
     }
     @media (max-width: 600px) {
@@ -2809,7 +2854,7 @@ const HTML_APP = `<!DOCTYPE html>
             <button type="button" id="player-search-clear" class="search-clear-btn" title="Clear player search" aria-label="Clear player search">×</button>
           </div>
         </div>
-        <div id="player-queue" class="history-list" style="margin-top:0.8rem;"></div>
+        <div id="player-queue" class="history-list"></div>
       </div>
     </div>
         </div>

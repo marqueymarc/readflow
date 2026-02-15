@@ -11,6 +11,14 @@ if (!scriptMatch) {
   console.error('Browser smoke failed: <script> block not found');
   process.exit(1);
 }
+if (!/#deleted-list\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: missing dedicated deleted-list scroll container styles');
+  process.exit(1);
+}
+if (!/#player-queue\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: missing dedicated player-queue scroll container styles');
+  process.exit(1);
+}
 const script = scriptMatch[1];
 const firstChunkMatch = script.match(/var CLIENT_TTS_FIRST_CHUNK_CHARS = (\d+);/);
 const secondChunkMatch = script.match(/var CLIENT_TTS_SECOND_CHUNK_CHARS = (\d+);/);
