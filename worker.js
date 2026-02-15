@@ -3,8 +3,9 @@
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
 
-const APP_VERSION = '3.1.3';
+const APP_VERSION = '3.2.0';
 const VERSION_HISTORY = [
+  { version: '3.2.0', completedAt: '2026-02-15', note: 'Established redesign branch baseline versioning at 3.2.x for continued UI iteration.' },
   { version: '3.1.3', completedAt: '2026-02-15', note: 'Removed overly strict Readwise token prefix validation so standard public API tokens are accepted in Settings.' },
   { version: '3.1.2', completedAt: '2026-02-15', note: 'Improved Readwise auth error handling: upstream 401/403 now return clearer actionable messages and preserve HTTP status instead of generic server errors.' },
   { version: '3.1.1', completedAt: '2026-02-15', note: 'Fixed async route error handling by awaiting API handlers in dispatcher, preventing Cloudflare 1101 HTML failures and returning structured JSON errors instead.' },
