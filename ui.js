@@ -2460,6 +2460,18 @@ const HTML_APP = `<!DOCTYPE html>
       syncMainControlsDock();
       syncPlayerControlsDock();
     });
+    on(window, 'message', function(evt) {
+      if (!evt || !evt.data || evt.origin !== window.location.origin) return;
+      var payload = evt.data;
+      if (payload.type !== 'gmail-oauth-result') return;
+      if (payload.status === 'connected') {
+        showToast('Gmail connected', 'success');
+      } else {
+        var reason = payload.reason ? (': ' + String(payload.reason)) : '';
+        showToast('Gmail OAuth ' + String(payload.status || 'error') + reason, 'warning');
+      }
+      loadGmailStatus();
+    });
 
     on(floatingPlayerToggleBtn, 'click', function() {
       if (!playerAudio || !playerAudio.src) {
@@ -5382,7 +5394,20 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     on(connectGmailBtn, 'click', function() {
-      window.location.href = '/api/gmail/connect';
+      var popup = null;
+      try {
+        popup = window.open('/api/gmail/connect?popup=1', 'gmail_oauth_popup', 'popup=yes,width=560,height=720');
+      } catch (err) {}
+      if (!popup) {
+        window.location.href = '/api/gmail/connect';
+        return;
+      }
+      var popupPoll = setInterval(function() {
+        if (!popup || popup.closed) {
+          clearInterval(popupPoll);
+          loadGmailStatus();
+        }
+      }, 350);
     });
 
     on(syncGmailBtn, 'click', async function() {

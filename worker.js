@@ -13,8 +13,9 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.3.2';
 const VERSION_HISTORY = [
+  { version: '3.3.2', completedAt: '2026-02-15', note: 'Added popup-based Gmail OAuth UX so Connect opens a permission dialog window and returns result to Settings via postMessage/auto-close without full-page navigation.' },
   { version: '3.3.1', completedAt: '2026-02-15', note: 'Extended Gmail integration with OAuth connect/callback/disconnect flow, token refresh support, direct Gmail sync endpoint, and Settings controls to connect/sync/disconnect without manual hook payload posting.' },
   { version: '3.3.0', completedAt: '2026-02-15', note: 'Started Gmail source integration with source-aware query plumbing, Gmail hook/status/labels APIs, and normalized Gmail item ingestion for Find/Player workflows.' },
   { version: '3.2.18', completedAt: '2026-02-15', note: 'Removed non-actionable “playback stopped” status messaging after auto archive/delete transitions so end-of-item automation no longer emits redundant stop feedback in player status.' },
@@ -780,7 +781,10 @@ async function handleGmailStatus(env, corsHeaders) {
 
 async function handleGmailConnect(request, env) {
   const config = getGmailOauthConfig(request, env);
+  const requestUrl = new URL(request.url);
+  const popupMode = requestUrl.searchParams.get('popup') === '1';
   if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    if (popupMode) return createGmailOauthPopupResultPage(config.origin, 'missing_config', 'missing_config');
     const fallback = `${config.origin}/settings?gmail_oauth=missing_config`;
     return Response.redirect(fallback, 302);
   }
@@ -788,6 +792,7 @@ async function handleGmailConnect(request, env) {
   await env.KV.put(GMAIL_OAUTH_STATE_KEY, JSON.stringify({
     state,
     createdAt: Date.now(),
+    popupMode,
   }), { expirationTtl: 10 * 60 });
   const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   auth.searchParams.set('client_id', config.clientId);
@@ -824,7 +829,9 @@ async function handleGmailOauthCallback(request, env) {
   if (!savedState || savedState.state !== state) {
     return Response.redirect(`${redirectBase}?gmail_oauth=state_mismatch`, 302);
   }
+  const popupMode = !!savedState.popupMode;
   if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    if (popupMode) return createGmailOauthPopupResultPage(config.origin, 'missing_config', 'missing_config');
     return Response.redirect(`${redirectBase}?gmail_oauth=missing_config`, 302);
   }
 
@@ -843,6 +850,7 @@ async function handleGmailOauthCallback(request, env) {
     const data = await tokenRes.json();
     if (!tokenRes.ok || !data || !data.access_token) {
       const reason = data && (data.error_description || data.error) ? String(data.error_description || data.error) : `token_${tokenRes.status}`;
+      if (popupMode) return createGmailOauthPopupResultPage(config.origin, 'token_error', reason);
       return Response.redirect(`${redirectBase}?gmail_oauth=token_error&reason=${encodeURIComponent(reason)}`, 302);
     }
     const now = Date.now();
@@ -856,8 +864,10 @@ async function handleGmailOauthCallback(request, env) {
       updatedAt: new Date(now).toISOString(),
     };
     await saveGmailOauthToken(env, next);
+    if (popupMode) return createGmailOauthPopupResultPage(config.origin, 'connected', '');
     return Response.redirect(`${redirectBase}?gmail_oauth=connected`, 302);
   } catch (error) {
+    if (popupMode) return createGmailOauthPopupResultPage(config.origin, 'token_exception', error.message || 'unknown');
     return Response.redirect(`${redirectBase}?gmail_oauth=token_exception&reason=${encodeURIComponent(error.message || 'unknown')}`, 302);
   }
 }
@@ -1140,6 +1150,26 @@ function getGmailOauthConfig(request, env) {
     ? env.GMAIL_REDIRECT_URI.trim()
     : `${origin}/api/gmail/oauth/callback`;
   return { origin, clientId, clientSecret, redirectUri };
+}
+
+function createGmailOauthPopupResultPage(origin, status, reason) {
+  const safeOrigin = JSON.stringify(String(origin || ''));
+  const safeStatus = JSON.stringify(String(status || 'unknown'));
+  const safeReason = JSON.stringify(String(reason || ''));
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Gmail OAuth</title></head><body><script>
+  (function () {
+    var payload = { type: 'gmail-oauth-result', status: ${safeStatus}, reason: ${safeReason} };
+    try {
+      if (window.opener && window.opener.postMessage) {
+        window.opener.postMessage(payload, ${safeOrigin});
+      }
+    } catch (e) {}
+    setTimeout(function () { window.close(); }, 60);
+  })();
+  </script><p style="font-family:sans-serif;color:#334155">You can close this window.</p></body></html>`;
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
 }
 
 async function getGmailOauthToken(env) {

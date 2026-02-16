@@ -378,7 +378,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.1');
+      expect(data.version).toBe('3.3.2');
     });
   });
 
@@ -465,6 +465,15 @@ describe('API Endpoints', () => {
       const res = await SELF.fetch('https://example.com/api/gmail/connect', { redirect: 'manual' });
       expect(res.status).toBe(302);
       expect(res.headers.get('location')).toContain('/settings?gmail_oauth=missing_config');
+    });
+
+    it('returns popup oauth result page when popup connect config is missing', async () => {
+      const res = await SELF.fetch('https://example.com/api/gmail/connect?popup=1');
+      const html = await res.text();
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/html');
+      expect(html).toContain('gmail-oauth-result');
+      expect(html).toContain('window.opener.postMessage');
     });
 
     it('disconnect endpoint clears oauth token', async () => {
@@ -746,7 +755,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.1');
+    expect(html).toContain('v3.3.2');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -763,6 +772,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('connect-gmail-btn');
     expect(html).toContain('sync-gmail-btn');
     expect(html).toContain('disconnect-gmail-btn');
+    expect(html).toContain('/api/gmail/connect?popup=1');
     expect(html).toContain('Save API Key');
     expect(html).toContain('Mock TTS mode');
     expect(html).toContain('OpenAI API Key');
