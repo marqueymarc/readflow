@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-import { extractDomain, buildTtsText } from './worker.js';
+import { extractDomain, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl } from './worker.js';
 
 describe('extractDomain', () => {
   it('extracts domain from valid URL', () => {
@@ -88,6 +88,44 @@ describe('buildTtsText', () => {
     const text = buildTtsText(article);
     expect(text).toContain('Image caption: A lighthouse at dawn');
     expect(text).toContain('Image caption: Harbor traffic before sunrise');
+  });
+
+  it('strips gmail newsletter boilerplate while keeping core body text', () => {
+    const article = {
+      site_name: 'gmail',
+      title: 'Daily Brief',
+      content: 'View in browser. If you are having trouble viewing this email click here. Main market update: earnings season is broadening. Manage your preferences. Unsubscribe here.',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Main market update: earnings season is broadening.');
+    expect(text).not.toMatch(/view in browser/i);
+    expect(text).not.toMatch(/manage your preferences/i);
+    expect(text).not.toMatch(/unsubscribe/i);
+  });
+
+  it('removes email header fields in gmail content', () => {
+    const article = {
+      site_name: 'gmail',
+      content: 'From: Team Example Subject: Morning Note Date: Tue, 17 Feb 2026 Here is the actual analysis paragraph you should hear.',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Here is the actual analysis paragraph you should hear.');
+    expect(text).not.toMatch(/\bFrom:/i);
+    expect(text).not.toMatch(/\bSubject:/i);
+  });
+});
+
+describe('gmail extraction helpers', () => {
+  it('prefers newsletter content links over unsubscribe links', () => {
+    const html = '<a href="https://example.com/unsubscribe?u=1">Unsubscribe</a><a href="https://news.example.com/p/market-wrap">Read story</a>';
+    const openUrl = pickBestGmailOpenUrl({ htmlContent: html, fallbackUrl: 'https://mail.google.com/mail/u/0/#all/abc', subject: 'Daily digest' });
+    expect(openUrl).toBe('https://news.example.com/p/market-wrap');
+  });
+
+  it('extracts non-tracker thumbnail from html images', () => {
+    const html = '<img src="https://cdn.example.com/pixel.gif"><img src="https://cdn.example.com/header.jpg">';
+    const thumb = pickBestGmailThumbnailUrl(html);
+    expect(thumb).toBe('https://cdn.example.com/header.jpg');
   });
 });
 
@@ -317,6 +355,32 @@ describe('API Endpoints', () => {
       expect(parsed).toHaveLength(2);
       expect(parsed.find((item) => item.url === 'https://example.com/2')).toBeFalsy();
     });
+
+    it('clears only selected entries when keys are provided', async () => {
+      const items = [
+        { id: 'same', url: 'https://example.com/shared', title: 'A', deletedAt: '2026-02-17T10:00:00.000Z', savedAt: '2026-02-10T10:00:00.000Z' },
+        { id: 'same', url: 'https://example.com/shared', title: 'B', deletedAt: '2026-02-17T11:00:00.000Z', savedAt: '2026-02-10T10:00:00.000Z' },
+      ];
+      await env.KV.put('deleted_items', JSON.stringify(items));
+      const key = ['same', 'https://example.com/shared', '2026-02-17T10:00:00.000Z', '2026-02-10T10:00:00.000Z', 'A'].join('|');
+
+      const res = await SELF.fetch('https://example.com/api/clear-deleted', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: [key] }),
+      });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.cleared).toBe(true);
+      expect(data.scope).toBe('selected');
+      expect(data.removed).toBe(1);
+
+      const stored = await env.KV.get('deleted_items');
+      const parsed = JSON.parse(stored);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].title).toBe('B');
+    });
   });
 
   describe('GET/POST /api/settings', () => {
@@ -378,7 +442,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.2');
+      expect(data.version).toBe('3.3.11');
     });
   });
 
@@ -397,17 +461,28 @@ describe('API Endpoints', () => {
       const saveRes = await SELF.fetch('https://example.com/api/gmail/labels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ labels: ['newsletters', 'priority'] }),
+        body: JSON.stringify({ labels: [] }),
       });
       const saveData = await saveRes.json();
       expect(saveRes.status).toBe(200);
       expect(saveData.saved).toBe(true);
-      expect(saveData.selectedLabels).toEqual(['newsletters', 'priority']);
+      expect(saveData.selectedLabels).toEqual([]);
 
       const getRes = await SELF.fetch('https://example.com/api/gmail/labels');
       const getData = await getRes.json();
       expect(getRes.status).toBe(200);
-      expect(getData.selectedLabels).toEqual(['newsletters', 'priority']);
+      expect(getData.selectedLabels).toEqual([]);
+    });
+
+    it('rejects gmail label selection when oauth is not connected', async () => {
+      const saveRes = await SELF.fetch('https://example.com/api/gmail/labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labels: ['newsletters'] }),
+      });
+      const saveData = await saveRes.json();
+      expect(saveRes.status).toBe(400);
+      expect(saveData.error).toContain('Connect Gmail');
     });
 
     it('accepts gmail hook item ingestion', async () => {
@@ -494,6 +569,13 @@ describe('API Endpoints', () => {
       const data = await res.json();
       expect(res.status).toBe(400);
       expect(data.error).toContain('Gmail is not connected');
+    });
+
+    it('gmail status reports oauth config readiness flag', async () => {
+      const res = await SELF.fetch('https://example.com/api/gmail/status');
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(typeof data.oauthConfigReady).toBe('boolean');
     });
   });
 
@@ -755,7 +837,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.2');
+    expect(html).toContain('v3.3.11');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -767,11 +849,10 @@ describe('PWA Serving', () => {
     expect(html).toContain('setting-player-auto-action');
     expect(html).toContain('Version History');
     expect(html).toContain('Readwise API Key');
-    expect(html).toContain('Gmail Source (Hook)');
+    expect(html).toContain('Gmail Source (OAuth)');
     expect(html).toContain('save-gmail-labels-btn');
     expect(html).toContain('connect-gmail-btn');
     expect(html).toContain('sync-gmail-btn');
-    expect(html).toContain('disconnect-gmail-btn');
     expect(html).toContain('/api/gmail/connect?popup=1');
     expect(html).toContain('Save API Key');
     expect(html).toContain('Mock TTS mode');

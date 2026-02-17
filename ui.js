@@ -172,6 +172,85 @@ const HTML_MOCKUP_V3 = `<!DOCTYPE html>
 </body>
 </html>`;
 
+const HTML_MOCKUP_IPHONE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Read Flow - iPhone Mock Concepts</title>
+  <style>
+    :root {
+      --bg: #f2f4f8;
+      --card: #ffffff;
+      --line: #d6dde8;
+      --text: #1b2330;
+      --muted: #6a778d;
+      --accent: #ff9800;
+      --accent-soft: #fff2df;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+    h1 { margin: 0 0 0.4rem; font-size: 1.25rem; }
+    .intro { margin: 0 0 0.9rem; color: var(--muted); font-size: 0.9rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem; }
+    .card { border: 1px solid var(--line); border-radius: 18px; background: var(--card); padding: 0.7rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .title { font-weight: 700; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: #0f4f9e; margin-bottom: 0.45rem; }
+    .phone { border: 1px solid var(--line); border-radius: 15px; background: linear-gradient(180deg,#fff,#f8fbff); padding: 0.5rem; min-height: 430px; display: flex; flex-direction: column; gap: 0.5rem; }
+    .row { display: grid; grid-template-columns: 52px minmax(0,1fr) 36px; gap: 0.5rem; align-items: center; }
+    .thumb { width: 52px; height: 52px; border-radius: 10px; background: #d8e6fa; }
+    .line { height: 10px; border-radius: 999px; background: #cfdaea; margin-bottom: 0.34rem; }
+    .line.short { width: 60%; margin-bottom: 0; }
+    .chev { width: 36px; height: 36px; border: 2px solid var(--accent); border-radius: 999px; }
+    .active { background: var(--accent-soft); border-radius: 12px; padding: 0.25rem; }
+    .bar { margin-top: auto; border-radius: 14px; background: var(--accent); padding: 0.4rem; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 0.22rem; }
+    .bar-btn { border: 2px solid rgba(255,255,255,0.92); color: #fff; border-radius: 999px; min-height: 34px; display: flex; align-items: center; justify-content: center; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0 0.25rem; text-align: center; line-height: 1; }
+    .inline-actions { margin-top: 0.26rem; display: flex; flex-wrap: wrap; gap: 0.24rem; }
+    .inline-action { border: 1px solid #ffb74d; background: #fff8ef; color: #9a5a00; border-radius: 999px; padding: 0.12rem 0.42rem; font-size: 0.58rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+    .note { margin-top: 0.45rem; color: var(--muted); font-size: 0.8rem; }
+    .linkback { margin-top: 0.85rem; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      .wrap { padding: 0.6rem; }
+      .phone { min-height: 470px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Read Flow iPhone Mock Concepts</h1>
+    <p class="intro">Preview-only CSS concepts for larger touch targets and reduced clutter. This route does not change app behavior.</p>
+    <section class="grid">
+      <article class="card">
+        <div class="title">Concept B: Expanded Active Item</div>
+        <div class="phone">
+          <div class="row"><div class="thumb"></div><div><div class="line"></div><div class="line short"></div></div><div class="chev"></div></div>
+          <div class="row active"><div class="thumb"></div><div><div class="line"></div><div class="line short"></div><div class="inline-actions"><span class="inline-action">Play</span><span class="inline-action">Open</span><span class="inline-action">Queue</span><span class="inline-action">Archive</span><span class="inline-action">Delete</span></div></div><div class="chev"></div></div>
+          <div class="row"><div class="thumb"></div><div><div class="line"></div><div class="line short"></div></div><div class="chev"></div></div>
+        </div>
+        <div class="note">Only selected row expands with larger inline controls; no persistent global action shelf.</div>
+      </article>
+      <article class="card">
+        <div class="title">Concept A+B: Hybrid Shelf + Expanded Item</div>
+        <div class="phone">
+          <div class="row"><div class="thumb"></div><div><div class="line"></div><div class="line short"></div></div><div class="chev"></div></div>
+          <div class="row active"><div class="thumb"></div><div><div class="line"></div><div class="line short"></div><div class="inline-actions"><span class="inline-action">Play</span><span class="inline-action">Open</span><span class="inline-action">More</span></div></div><div class="chev"></div></div>
+          <div class="row"><div class="thumb"></div><div><div class="line"></div><div class="line short"></div></div><div class="chev"></div></div>
+          <div class="bar">
+            <div class="bar-btn">Play Sel</div>
+            <div class="bar-btn">Open Sel</div>
+            <div class="bar-btn">Queue</div>
+            <div class="bar-btn">Archive</div>
+            <div class="bar-btn">Delete</div>
+          </div>
+        </div>
+        <div class="note">Persistent bottom shelf for primary actions, plus active-row expansion for secondary actions.</div>
+      </article>
+    </section>
+    <div class="linkback">Main app: <a href="/">/</a> · Desktop mock: <a href="/mockup-v3">/mockup-v3</a></div>
+  </main>
+</body>
+</html>`;
+
 const HTML_APP = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1672,9 +1751,12 @@ const HTML_APP = `<!DOCTYPE html>
           <label for="source-select" class="field-label-with-icon"><span class="field-label-icon source" aria-hidden="true"></span>Source</label>
           <select id="source-select" class="decor-select">
             <option value="readwise">Readwise</option>
-            <option value="gmail">Gmail (Hook)</option>
-            <option value="all">Readwise + Gmail</option>
+            <option value="gmail">Gmail</option>
           </select>
+          <label class="checkbox-label" style="margin-top:0.45rem;">
+            <input id="include-gmail-toggle" type="checkbox">
+            Include Gmail results
+          </label>
         </div>
         <div class="form-group">
           <label for="location">Readwise Location</label>
@@ -1790,7 +1872,7 @@ const HTML_APP = `<!DOCTYPE html>
           <label for="setting-default-source">Default source</label>
           <select id="setting-default-source">
             <option value="readwise">Readwise</option>
-            <option value="gmail">Gmail (Hook)</option>
+            <option value="gmail">Gmail</option>
             <option value="all">Readwise + Gmail</option>
           </select>
         </div>
@@ -1875,19 +1957,19 @@ const HTML_APP = `<!DOCTYPE html>
           <button class="btn btn-outline" id="save-token-btn">Save API Key</button>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;">
-        <h2 style="font-size:1rem;margin-bottom:0.65rem;">Gmail Source (Hook)</h2>
+        <h2 style="font-size:1rem;margin-bottom:0.65rem;">Gmail Source (OAuth)</h2>
         <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.6rem;">
-          Gmail hook accepts normalized email items and labels from an external sync job. OAuth sync setup follows in a later 3.3.x step.
+          Connect Gmail, select one or more labels, and use Find to pull matching newsletters into the queue.
         </p>
         <p id="gmail-status" style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">Checking Gmail hook status…</p>
         <div class="btn-group" style="margin-bottom:0.6rem;">
           <button class="btn btn-outline" id="connect-gmail-btn">Connect Gmail</button>
           <button class="btn btn-outline" id="sync-gmail-btn">Sync Gmail</button>
-          <button class="btn btn-outline" id="disconnect-gmail-btn">Disconnect</button>
         </div>
         <div class="form-group">
-          <label for="setting-gmail-labels">Filter labels (comma-separated; optional)</label>
-          <input id="setting-gmail-labels" type="text" autocomplete="off" placeholder="newsletters, priority, longread">
+          <label for="setting-gmail-labels">Filter labels (optional)</label>
+          <select id="setting-gmail-labels" multiple size="8"></select>
+          <p style="color:var(--text-muted);font-size:0.8rem;margin-top:0.35rem;">Select labels to include in Gmail sync and Find.</p>
         </div>
         <div class="btn-group">
           <button class="btn btn-outline" id="save-gmail-labels-btn">Save Gmail Labels</button>
@@ -2005,6 +2087,10 @@ const HTML_APP = `<!DOCTYPE html>
       playerAutoAction: 'none',
       gmailSelectedLabels: []
     };
+    var gmailConnected = false;
+    var gmailOauthReady = false;
+    var gmailKnownLabels = [];
+    var lastGmailSyncAt = 0;
     var playerQueue = [];
     var playerIndex = 0;
     var playerEnabledIds = new Set();
@@ -2039,6 +2125,7 @@ const HTML_APP = `<!DOCTYPE html>
     var voicePreviewAudio = null;
 
     var sourceSelect = document.getElementById('source-select');
+    var includeGmailToggle = document.getElementById('include-gmail-toggle');
     var locationSelect = document.getElementById('location');
     var fromDateInput = document.getElementById('from-date');
     var toDateInput = document.getElementById('to-date');
@@ -2109,10 +2196,9 @@ const HTML_APP = `<!DOCTYPE html>
     var settingsTokenInput = document.getElementById('setting-readwise-token');
     var gmailStatusEl = document.getElementById('gmail-status');
     var saveGmailLabelsBtn = document.getElementById('save-gmail-labels-btn');
-    var settingsGmailLabelsInput = document.getElementById('setting-gmail-labels');
+    var settingsGmailLabelsSelect = document.getElementById('setting-gmail-labels');
     var connectGmailBtn = document.getElementById('connect-gmail-btn');
     var syncGmailBtn = document.getElementById('sync-gmail-btn');
-    var disconnectGmailBtn = document.getElementById('disconnect-gmail-btn');
     var settingMockTts = document.getElementById('setting-mock-tts');
     var settingTtsVoice = document.getElementById('setting-tts-voice');
     var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
@@ -2197,9 +2283,59 @@ const HTML_APP = `<!DOCTYPE html>
       if (fromDateInput) fromDateInput.max = toVal || '';
     }
 
+    function getEffectiveSource() {
+      var base = sourceSelect ? String(sourceSelect.value || 'readwise') : 'readwise';
+      if (base === 'gmail') return 'gmail';
+      return includeGmailToggle && includeGmailToggle.checked ? 'all' : 'readwise';
+    }
+
+    function setSourceControlsFromValue(value) {
+      var normalized = (value === 'gmail' || value === 'all') ? value : 'readwise';
+      if (!sourceSelect) return;
+      if (normalized === 'gmail') {
+        sourceSelect.value = 'gmail';
+        if (includeGmailToggle) {
+          includeGmailToggle.checked = false;
+          includeGmailToggle.disabled = true;
+        }
+        return;
+      }
+      sourceSelect.value = 'readwise';
+      if (includeGmailToggle) {
+        includeGmailToggle.disabled = false;
+        includeGmailToggle.checked = normalized === 'all';
+      }
+    }
+
+    function renderGmailLabelOptions() {
+      if (!settingsGmailLabelsSelect) return;
+      if (typeof settingsGmailLabelsSelect.appendChild !== 'function' || typeof document === 'undefined' || !document.createElement) {
+        settingsGmailLabelsSelect.value = Array.isArray(settings.gmailSelectedLabels) ? settings.gmailSelectedLabels.join(', ') : '';
+        return;
+      }
+      var selected = new Set(Array.isArray(settings.gmailSelectedLabels) ? settings.gmailSelectedLabels : []);
+      settingsGmailLabelsSelect.innerHTML = '';
+      var labels = Array.isArray(gmailKnownLabels) ? gmailKnownLabels.slice() : [];
+      if (!labels.length) {
+        var emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = gmailConnected ? 'No labels available' : 'Connect Gmail to load labels';
+        emptyOption.disabled = true;
+        settingsGmailLabelsSelect.appendChild(emptyOption);
+        return;
+      }
+      labels.forEach(function(label) {
+        var opt = document.createElement('option');
+        opt.value = label;
+        opt.textContent = label;
+        if (selected.has(label)) opt.selected = true;
+        settingsGmailLabelsSelect.appendChild(opt);
+      });
+    }
+
     function applySettingsToUI() {
       var effectiveSource = settings.defaultSource || 'readwise';
-      if (sourceSelect) sourceSelect.value = effectiveSource;
+      setSourceControlsFromValue(effectiveSource);
       if (settingsDefaultSource) settingsDefaultSource.value = effectiveSource;
       var hasDefaultLocation = Array.from(locationSelect.options || []).some(function(opt) {
         return opt && opt.value === settings.defaultLocation;
@@ -2230,11 +2366,7 @@ const HTML_APP = `<!DOCTYPE html>
       settingMaxOpenTabs.value = settings.maxOpenTabs;
       settingPlayerAutoNext.checked = !!settings.playerAutoNext;
       settingPlayerAutoAction.value = settings.playerAutoAction || 'none';
-      if (settingsGmailLabelsInput) {
-        settingsGmailLabelsInput.value = Array.isArray(settings.gmailSelectedLabels)
-          ? settings.gmailSelectedLabels.join(', ')
-          : '';
-      }
+      renderGmailLabelOptions();
       var backTextEl = playerBackBtn && playerBackBtn.querySelector ? playerBackBtn.querySelector('.control-text') : null;
       var fwdTextEl = playerForwardBtn && playerForwardBtn.querySelector ? playerForwardBtn.querySelector('.control-text') : null;
       if (backTextEl) backTextEl.textContent = settings.audioBackSeconds + 's';
@@ -2245,8 +2377,9 @@ const HTML_APP = `<!DOCTYPE html>
     function syncSourceUi() {
       var src = sourceSelect ? String(sourceSelect.value || 'readwise') : 'readwise';
       var readwiseOnly = src === 'readwise';
+      if (includeGmailToggle) includeGmailToggle.disabled = src === 'gmail';
       if (locationSelect) {
-        locationSelect.disabled = !readwiseOnly && src !== 'all';
+        locationSelect.disabled = !readwiseOnly;
       }
     }
 
@@ -2283,7 +2416,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     function buildQueryKey() {
       return [
-        sourceSelect && sourceSelect.value || 'readwise',
+        getEffectiveSource(),
         locationSelect.value,
         fromDateInput.value || '',
         toDateInput.value || '',
@@ -2513,8 +2646,17 @@ const HTML_APP = `<!DOCTYPE html>
       previewBtn.innerHTML = '<span class="spinner"></span> Loading...';
 
       try {
+        var selectedSource = getEffectiveSource();
+        if (selectedSource === 'gmail' || selectedSource === 'all') {
+          try {
+            await runGmailSync({ force: false });
+            loadGmailStatus();
+          } catch (syncErr) {
+            showToast('Gmail sync failed, using cached Gmail items: ' + syncErr.message, 'warning');
+          }
+        }
         var params = new URLSearchParams({
-          source: sourceSelect && sourceSelect.value ? sourceSelect.value : 'readwise',
+          source: selectedSource,
           location: locationSelect.value,
           to: toDate,
           limit: String(settings.previewLimit || 100)
@@ -2535,7 +2677,7 @@ const HTML_APP = `<!DOCTYPE html>
         updatePreviewButtonLabel();
         updateResultsSummary();
 
-        setFindMeta(currentCount, (sourceSelect && sourceSelect.value) || 'readwise');
+        setFindMeta(currentCount, selectedSource);
         if (previewTopToolbar) previewTopToolbar.style.display = previewData.length > 0 ? 'grid' : 'none';
         previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
         showToast('Loaded preview for ' + currentCount + ' items', currentCount ? 'success' : 'warning');
@@ -2639,7 +2781,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function isArchiveSourceSelected() {
-      var src = String(sourceSelect && sourceSelect.value || 'readwise');
+      var src = getEffectiveSource();
       return src === 'readwise' && String(locationSelect.value || '') === 'archive';
     }
 
@@ -2670,6 +2812,15 @@ const HTML_APP = `<!DOCTYPE html>
       if (playerFeedback) playerFeedback.textContent = '';
     }
 
+    function getPreviewSourceLabel(article) {
+      if (!article) return '';
+      var isGmail = String(article.kind || '').toLowerCase() === 'gmail' || String(article.site || '').toLowerCase() === 'gmail';
+      if (!isGmail) return String(article.site || '');
+      var labels = Array.isArray(article.labels) ? article.labels : [];
+      var firstLabel = labels.length > 0 ? String(labels[0] || '').trim() : '';
+      return firstLabel ? ('gmail/' + firstLabel) : 'gmail';
+    }
+
     function renderPreview() {
       var filtered = getSortedFilteredPreviewItems();
       if (filtered.length === 0) {
@@ -2695,6 +2846,7 @@ const HTML_APP = `<!DOCTYPE html>
       pageItems.forEach(function(article) {
         var articleId = String(article.id);
         var checked = selectedPreviewIds.has(articleId) ? ' checked' : '';
+        var openUrl = getItemOpenUrl(article);
         html += '<div class="swipe-item" data-article-id="' + escapeHtml(articleId) + '">';
         html += '<div class="swipe-bg right">Delete</div>';
         html += '<div class="swipe-bg left">' + (isArchiveSourceSelected() ? 'Restore' : 'Archive') + '</div>';
@@ -2713,10 +2865,10 @@ const HTML_APP = `<!DOCTYPE html>
         var activeDateValue = previewSortMode === 'published' ? article.publishedAt : article.savedAt;
         var activeDateLabel = previewSortMode === 'published' ? 'Published' : 'Added';
         html += '<div class="title-row">';
-        html += '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(article.url || '#') + '" target="_blank" rel="noopener" data-open-url="' + escapeHtml(article.url || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
+        html += '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span><a class="article-link preview-open-link" href="' + escapeHtml(openUrl || '#') + '" target="_blank" rel="noopener" data-open-url="' + escapeHtml(openUrl || '') + '"><div class="article-title">' + escapeHtml(article.title) + '</div></a></div>';
         html += '<span class="article-date-right">' + escapeHtml(activeDateLabel) + ' ' + escapeHtml(formatDate(activeDateValue || article.savedAt)) + '</span>';
         html += '</div>';
-        html += '<div class="article-meta"><span class="article-site">' + escapeHtml(article.site) + '</span>';
+        html += '<div class="article-meta"><span class="article-site">' + escapeHtml(getPreviewSourceLabel(article)) + '</span>';
         html += '<button type="button" class="text-preview-toggle icon-btn play-preview-btn" data-article-id="' + escapeHtml(articleId) + '" title="Play in Player" aria-label="Play in Player">▶</button>';
         if (article.author) {
           html += ' by ' + escapeHtml(article.author);
@@ -2852,6 +3004,13 @@ const HTML_APP = `<!DOCTYPE html>
     });
     updatePreviewSortButtons();
     on(sourceSelect, 'change', function() {
+      syncSourceUi();
+      syncPreviewSelectionUI();
+      if (previewData.length > 0) renderPreview();
+      updatePreviewButtonLabel();
+      schedulePersistAppState();
+    });
+    on(includeGmailToggle, 'change', function() {
       syncSourceUi();
       syncPreviewSelectionUI();
       if (previewData.length > 0) renderPreview();
@@ -3014,6 +3173,14 @@ const HTML_APP = `<!DOCTYPE html>
     }
     window.openPreviewUrl = openPreviewUrl;
 
+    function getItemOpenUrl(item) {
+      if (!item) return '';
+      if (item.openUrl) return String(item.openUrl);
+      if (item.url) return String(item.url);
+      if (item.gmailUrl) return String(item.gmailUrl);
+      return '';
+    }
+
     async function parseApiJson(res) {
       var text = await res.text();
       var contentType = (res.headers.get('content-type') || '').toLowerCase();
@@ -3033,8 +3200,9 @@ const HTML_APP = `<!DOCTYPE html>
       var selected = previewData.filter(function(item) { return activeIds.has(String(item.id)); });
       var maxTabs = Number(settings.maxOpenTabs || 5);
       selected.slice(0, maxTabs).forEach(function(item) {
-        if (item.url) {
-          window.open(item.url, '_blank');
+        var openUrl = getItemOpenUrl(item);
+        if (openUrl) {
+          window.open(openUrl, '_blank');
         }
       });
       if (selected.length > maxTabs) {
@@ -3701,6 +3869,8 @@ const HTML_APP = `<!DOCTYPE html>
           author: item && item.author ? String(item.author) : '',
           site: item && item.site ? String(item.site) : '',
           url: item && item.url ? String(item.url) : '',
+          openUrl: item && item.openUrl ? String(item.openUrl) : '',
+          gmailUrl: item && item.gmailUrl ? String(item.gmailUrl) : '',
           thumbnail: item && item.thumbnail ? String(item.thumbnail) : '',
           savedAt: item && item.savedAt ? String(item.savedAt) : '',
           publishedAt: item && item.publishedAt ? String(item.publishedAt) : '',
@@ -3722,6 +3892,8 @@ const HTML_APP = `<!DOCTYPE html>
           author: item && item.author ? String(item.author) : '',
           site: item && item.site ? String(item.site) : '',
           url: item && item.url ? String(item.url) : '',
+          openUrl: item && item.openUrl ? String(item.openUrl) : '',
+          gmailUrl: item && item.gmailUrl ? String(item.gmailUrl) : '',
           thumbnail: item && item.thumbnail ? String(item.thumbnail) : '',
           savedAt: item && item.savedAt ? String(item.savedAt) : '',
           publishedAt: item && item.publishedAt ? String(item.publishedAt) : '',
@@ -3739,7 +3911,7 @@ const HTML_APP = `<!DOCTYPE html>
       try {
         var payload = {
           tab: currentTabName || 'cleanup',
-          source: sourceSelect && sourceSelect.value ? sourceSelect.value : 'readwise',
+          source: getEffectiveSource(),
           location: locationSelect.value || '',
           fromDate: fromDateInput.value || '',
           toDate: toDateInput.value || '',
@@ -3841,8 +4013,8 @@ const HTML_APP = `<!DOCTYPE html>
 
     function applyRestoredAppState(state) {
       if (!state || typeof state !== 'object') return;
-      if (sourceSelect && (state.source === 'readwise' || state.source === 'gmail' || state.source === 'all')) {
-        sourceSelect.value = state.source;
+      if (state.source === 'readwise' || state.source === 'gmail' || state.source === 'all') {
+        setSourceControlsFromValue(state.source);
       }
       var hasLocation = Array.from(locationSelect.options || []).some(function(opt) {
         return opt && opt.value === state.location;
@@ -3914,7 +4086,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
         if (hasSpeed) playerSpeedSelect.value = String(restoredSpeed);
       }
-      setFindMeta(currentCount, (sourceSelect && sourceSelect.value) || 'readwise');
+      setFindMeta(currentCount, getEffectiveSource());
       if (previewTopToolbar) previewTopToolbar.style.display = previewData.length > 0 ? 'grid' : 'none';
       previewBottomControls.style.display = previewData.length > previewPageSize ? 'flex' : 'none';
       renderPreview();
@@ -4282,7 +4454,7 @@ const HTML_APP = `<!DOCTYPE html>
           '<div class="title-left"><span class="webpage-icon" aria-hidden="true">🌐</span>' +
           '<button type="button" class="text-preview-toggle player-queue-jump" data-queue-idx="' + idx + '" style="text-align:left; width:100%;">' + escapeHtml(prefix + (item.title || 'Untitled')) + (isCurrent ? '<span class="now-playing-badge">Now Playing</span>' : '') + '</button>' +
           '<div class="player-row-actions">' +
-          '<button type="button" class="text-preview-toggle icon-btn player-row-action-btn player-queue-open" data-open-url="' + escapeHtml(item.url || '') + '" title="Open story" aria-label="Open story">↗</button>' +
+          '<button type="button" class="text-preview-toggle icon-btn player-row-action-btn player-queue-open" data-open-url="' + escapeHtml(getItemOpenUrl(item) || '') + '" title="Open story" aria-label="Open story">↗</button>' +
           '<button type="button" class="text-preview-toggle icon-btn player-row-action-btn player-queue-download' + downloadClass + '" data-queue-idx="' + idx + '" title="Download audio" aria-label="Download audio">' + downloadSymbol + '</button>' +
           '</div>' +
           '</div>' +
@@ -4769,7 +4941,7 @@ const HTML_APP = `<!DOCTYPE html>
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              source: sourceSelect && sourceSelect.value ? sourceSelect.value : 'readwise',
+              source: getEffectiveSource(),
               location: locationSelect.value,
               fromDate: fromDateInput.value || undefined,
               toDate: toDateInput.value || formatInputDate(new Date()),
@@ -4818,29 +4990,26 @@ const HTML_APP = `<!DOCTYPE html>
         }
 
         if (successfulIds.size > 0) {
-          var removedFromPlayer = syncPlayerQueueAfterProcessedIds(Array.from(successfulIds));
+          syncPlayerQueueAfterProcessedIds(Array.from(successfulIds));
           previewData = previewData.filter(function(item) {
             return !successfulIds.has(String(item.id));
           });
           successfulIds.forEach(function(id) { selectedPreviewIds.delete(String(id)); });
           currentCount = Math.max(0, currentCount - successfulIds.size);
-          if (removedFromPlayer) {
-            showToast('Stopped playback because current item was ' + action + 'd', 'warning');
-          }
         }
 
         if (previewData.length === 0) {
           selectedPreviewIds.clear();
           lastQuery = null;
           previewPage = 1;
-          setFindMeta(0, (sourceSelect && sourceSelect.value) || 'readwise');
+          setFindMeta(0, getEffectiveSource());
           renderPreview();
           if (previewTopToolbar) previewTopToolbar.style.display = 'none';
           previewBottomControls.style.display = 'none';
         } else {
           var totalPages = Math.max(1, Math.ceil(getFilteredPreviewItems().length / previewPageSize));
           if (previewPage > totalPages) previewPage = totalPages;
-          setFindMeta(currentCount, (sourceSelect && sourceSelect.value) || 'readwise');
+          setFindMeta(currentCount, getEffectiveSource());
           renderPreview();
           if (previewTopToolbar) previewTopToolbar.style.display = 'grid';
           previewBottomControls.style.display = totalPages > 1 ? 'flex' : 'none';
@@ -4897,8 +5066,8 @@ const HTML_APP = `<!DOCTYPE html>
     window.toggleRestoreItem = toggleRestoreItem;
 
     function getDeletedItemKey(item) {
-      if (item && item.id !== undefined && item.id !== null) return String(item.id);
       return [
+        item && item.id !== undefined && item.id !== null ? String(item.id) : '',
         item && item.url ? item.url : '',
         item && item.deletedAt ? item.deletedAt : '',
         item && item.savedAt ? item.savedAt : '',
@@ -5084,13 +5253,14 @@ const HTML_APP = `<!DOCTYPE html>
       var activeSelectedItems = getActiveSelectedDeletedItems();
       if (activeSelectedItems.length === 0) return;
       var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
+      var activeSelectedKeys = activeSelectedItems.map(function(item) { return getDeletedItemKey(item); }).filter(Boolean);
       restoreBtn.disabled = true;
       restoreBtn.innerHTML = '<span class="spinner"></span> Restoring...';
       try {
         var res = await fetch('/api/restore', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: activeSelectedUrls })
+          body: JSON.stringify({ urls: activeSelectedUrls, keys: activeSelectedKeys })
         });
         var data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -5118,11 +5288,12 @@ const HTML_APP = `<!DOCTYPE html>
       if (activeSelectedItems.length === 0) return;
       if (!window.confirm('Delete ' + activeSelectedItems.length + ' items from history? This cannot be undone.')) return;
       var activeSelectedUrls = activeSelectedItems.map(function(item) { return item.url; }).filter(Boolean);
+      var activeSelectedKeys = activeSelectedItems.map(function(item) { return getDeletedItemKey(item); }).filter(Boolean);
       try {
         var res = await fetch('/api/clear-deleted', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: activeSelectedUrls })
+          body: JSON.stringify({ urls: activeSelectedUrls, keys: activeSelectedKeys })
         });
         var data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -5152,10 +5323,14 @@ const HTML_APP = `<!DOCTYPE html>
 
     function buildSettingsPayloadFromUI() {
       var gmailLabels = [];
-      if (settingsGmailLabelsInput && settingsGmailLabelsInput.value) {
-        gmailLabels = settingsGmailLabelsInput.value
+      if (settingsGmailLabelsSelect && settingsGmailLabelsSelect.selectedOptions) {
+        gmailLabels = Array.from(settingsGmailLabelsSelect.selectedOptions)
+          .map(function(opt) { return String(opt && opt.value || '').trim(); })
+          .filter(Boolean);
+      } else if (settingsGmailLabelsSelect && settingsGmailLabelsSelect.value) {
+        gmailLabels = String(settingsGmailLabelsSelect.value)
           .split(',')
-          .map(function(label) { return String(label || '').trim(); })
+          .map(function(v) { return String(v || '').trim(); })
           .filter(Boolean);
       }
       return {
@@ -5318,15 +5493,46 @@ const HTML_APP = `<!DOCTYPE html>
         var mode = data.mode ? String(data.mode) : 'hook';
         var count = Number(data.itemCount || 0);
         var labels = Array.isArray(data.selectedLabels) ? data.selectedLabels : [];
+        var availableLabels = Array.isArray(data.labels) ? data.labels : [];
         var connected = !!data.connected;
-        gmailStatusEl.textContent = 'Mode: ' + mode + ' · Connected: ' + (connected ? 'yes' : 'no') + ' · Synced items: ' + count + (labels.length ? ' · Active labels: ' + labels.join(', ') : '');
-        if (disconnectGmailBtn) disconnectGmailBtn.disabled = !connected;
+        var oauthReady = !!data.oauthConfigReady;
+        gmailConnected = connected;
+        gmailOauthReady = oauthReady;
+        gmailKnownLabels = availableLabels.slice();
+        var oauthHint = oauthReady ? '' : ' · OAuth not configured (set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in Worker env)';
+        gmailStatusEl.textContent = 'Mode: ' + mode + ' · Connected: ' + (connected ? 'yes' : 'no') + ' · Synced items: ' + count + (labels.length ? ' · Active labels: ' + labels.join(', ') : '') + oauthHint;
+        if (connectGmailBtn) {
+          connectGmailBtn.disabled = connected ? false : !oauthReady;
+          connectGmailBtn.textContent = connected ? 'Disconnect Gmail' : 'Connect Gmail';
+        }
         if (syncGmailBtn) syncGmailBtn.disabled = !connected;
+        renderGmailLabelOptions();
       } catch (err) {
+        gmailConnected = false;
+        gmailOauthReady = false;
+        gmailKnownLabels = [];
         gmailStatusEl.textContent = 'Unable to read Gmail status.';
-        if (disconnectGmailBtn) disconnectGmailBtn.disabled = true;
+        if (connectGmailBtn) {
+          connectGmailBtn.disabled = false;
+          connectGmailBtn.textContent = 'Connect Gmail';
+        }
         if (syncGmailBtn) syncGmailBtn.disabled = true;
+        renderGmailLabelOptions();
       }
+    }
+
+    async function runGmailSync(opts) {
+      opts = opts || {};
+      if (!gmailConnected) return { skipped: true, reason: 'disconnected' };
+      if (!opts.force) {
+        var elapsed = Date.now() - lastGmailSyncAt;
+        if (elapsed >= 0 && elapsed < 45000) return { skipped: true, reason: 'throttled' };
+      }
+      var res = await fetch('/api/gmail/sync', { method: 'POST' });
+      var data = await parseApiJson(res);
+      if (data.error) throw new Error(data.error);
+      lastGmailSyncAt = Date.now();
+      return data;
     }
 
     on(saveTokenBtn, 'click', async function() {
@@ -5367,9 +5573,17 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     on(saveGmailLabelsBtn, 'click', async function() {
-      var labels = settingsGmailLabelsInput && settingsGmailLabelsInput.value
-        ? settingsGmailLabelsInput.value.split(',').map(function(label) { return String(label || '').trim(); }).filter(Boolean)
-        : [];
+      var labels = [];
+      if (settingsGmailLabelsSelect && settingsGmailLabelsSelect.selectedOptions) {
+        labels = Array.from(settingsGmailLabelsSelect.selectedOptions).map(function(opt) {
+          return String(opt && opt.value || '').trim();
+        }).filter(Boolean);
+      } else if (settingsGmailLabelsSelect && settingsGmailLabelsSelect.value) {
+        labels = String(settingsGmailLabelsSelect.value)
+          .split(',')
+          .map(function(v) { return String(v || '').trim(); })
+          .filter(Boolean);
+      }
       saveGmailLabelsBtn.disabled = true;
       var originalText = saveGmailLabelsBtn.textContent;
       saveGmailLabelsBtn.innerHTML = '<span class="spinner"></span> Saving...';
@@ -5382,7 +5596,7 @@ const HTML_APP = `<!DOCTYPE html>
         var data = await parseApiJson(res);
         if (data.error) throw new Error(data.error);
         settings.gmailSelectedLabels = Array.isArray(data.selectedLabels) ? data.selectedLabels : [];
-        if (settingsGmailLabelsInput) settingsGmailLabelsInput.value = settings.gmailSelectedLabels.join(', ');
+        renderGmailLabelOptions();
         showToast('Gmail labels saved', 'success');
         loadGmailStatus();
       } catch (err) {
@@ -5394,6 +5608,27 @@ const HTML_APP = `<!DOCTYPE html>
     });
 
     on(connectGmailBtn, 'click', function() {
+      if (gmailConnected) {
+        if (!window.confirm('Disconnect Gmail and remove stored OAuth token?')) return;
+        connectGmailBtn.disabled = true;
+        var disconnectText = connectGmailBtn.textContent;
+        connectGmailBtn.innerHTML = '<span class="spinner"></span> Disconnecting...';
+        (async function() {
+          try {
+            var disconnectRes = await fetch('/api/gmail/disconnect', { method: 'POST' });
+            var disconnectData = await parseApiJson(disconnectRes);
+            if (disconnectData.error) throw new Error(disconnectData.error);
+            showToast('Gmail disconnected', 'success');
+            loadGmailStatus();
+          } catch (disconnectErr) {
+            showToast(disconnectErr.message, 'error');
+          } finally {
+            connectGmailBtn.disabled = false;
+            connectGmailBtn.textContent = disconnectText;
+          }
+        })();
+        return;
+      }
       var popup = null;
       try {
         popup = window.open('/api/gmail/connect?popup=1', 'gmail_oauth_popup', 'popup=yes,width=560,height=720');
@@ -5415,9 +5650,7 @@ const HTML_APP = `<!DOCTYPE html>
       var originalText = syncGmailBtn.textContent;
       syncGmailBtn.innerHTML = '<span class="spinner"></span> Syncing...';
       try {
-        var res = await fetch('/api/gmail/sync', { method: 'POST' });
-        var data = await parseApiJson(res);
-        if (data.error) throw new Error(data.error);
+        var data = await runGmailSync({ force: true });
         showToast('Gmail sync complete (' + Number(data.synced || 0) + ' updates)', 'success');
         loadGmailStatus();
       } catch (err) {
@@ -5425,25 +5658,6 @@ const HTML_APP = `<!DOCTYPE html>
       } finally {
         syncGmailBtn.disabled = false;
         syncGmailBtn.textContent = originalText;
-      }
-    });
-
-    on(disconnectGmailBtn, 'click', async function() {
-      if (!window.confirm('Disconnect Gmail and remove stored OAuth token?')) return;
-      disconnectGmailBtn.disabled = true;
-      var originalText = disconnectGmailBtn.textContent;
-      disconnectGmailBtn.innerHTML = '<span class="spinner"></span> Disconnecting...';
-      try {
-        var res = await fetch('/api/gmail/disconnect', { method: 'POST' });
-        var data = await parseApiJson(res);
-        if (data.error) throw new Error(data.error);
-        showToast('Gmail disconnected', 'success');
-        loadGmailStatus();
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        disconnectGmailBtn.disabled = false;
-        disconnectGmailBtn.textContent = originalText;
       }
     });
 
@@ -5598,7 +5812,7 @@ const HTML_APP = `<!DOCTYPE html>
 </body>
 </html>`;
 
-  return { HTML_APP, HTML_MOCKUP_V3 };
+  return { HTML_APP, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE };
 }
 
 export function getUiHtml(config) {

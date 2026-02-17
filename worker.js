@@ -13,8 +13,17 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.2';
+const APP_VERSION = '3.3.11';
 const VERSION_HISTORY = [
+  { version: '3.3.11', completedAt: '2026-02-17', note: 'Refined dedicated iPhone mock concepts with explicit action labeling: active-row controls now show concrete per-item actions and hybrid shelf mock shows batch action labels for selection workflows.' },
+  { version: '3.3.10', completedAt: '2026-02-17', note: 'Refined dedicated iPhone mock route to focus on two candidate interaction models only: B (expanded active item) and A+B hybrid (persistent action shelf plus expanded active item), removing unrelated mock variants from the preview set.' },
+  { version: '3.3.9', completedAt: '2026-02-17', note: 'Removed the non-actionable current-item stopped toast after Find delete/archive actions, and added non-active iPhone-focused CSS mock concepts in About to evaluate larger touch targets, collapsed secondary controls, and bottom action ergonomics before implementation.' },
+  { version: '3.3.8', completedAt: '2026-02-17', note: 'Enabled real Gmail mailbox actions for Gmail-source cleanup (archive/delete via Gmail API with oauth modify scope), improved Gmail newsletter extraction by preferring canonical content links and image thumbnails from email HTML, and preserved Gmail deep-link fallback when no newsletter URL is available.' },
+  { version: '3.3.7', completedAt: '2026-02-17', note: 'Updated Find preview source labeling for Gmail items to display label-aware origin (for example gmail/Subscription) instead of generic site text.' },
+  { version: '3.3.6', completedAt: '2026-02-17', note: 'Improved Gmail source UX and reliability: Settings now supports validated label selection against live Gmail labels, and Find-triggered Gmail sync uses selected labels with safer incremental fetch behavior before previewing Gmail results.' },
+  { version: '3.3.5', completedAt: '2026-02-17', note: 'Hardened Gmail OAuth sync reliability by capping per-run full-message fetch volume to stay within Cloudflare Worker subrequest limits for larger mailboxes, preventing sync failures with "Too many subrequests".' },
+  { version: '3.3.4', completedAt: '2026-02-17', note: 'Improved Gmail sync diagnostics and label handling: removed forced inbox-only query, validate/resolve selected labels against live Gmail labels, and return explicit guidance when configured labels do not match any Gmail label names.' },
+  { version: '3.3.3', completedAt: '2026-02-15', note: 'Improved Gmail OAuth readiness UX: status now reports OAuth config readiness and disables Connect with clear guidance when client credentials are missing, avoiding opaque connect errors.' },
   { version: '3.3.2', completedAt: '2026-02-15', note: 'Added popup-based Gmail OAuth UX so Connect opens a permission dialog window and returns result to Settings via postMessage/auto-close without full-page navigation.' },
   { version: '3.3.1', completedAt: '2026-02-15', note: 'Extended Gmail integration with OAuth connect/callback/disconnect flow, token refresh support, direct Gmail sync endpoint, and Settings controls to connect/sync/disconnect without manual hook payload posting.' },
   { version: '3.3.0', completedAt: '2026-02-15', note: 'Started Gmail source integration with source-aware query plumbing, Gmail hook/status/labels APIs, and normalized Gmail item ingestion for Find/Player workflows.' },
@@ -118,9 +127,10 @@ const GMAIL_LABELS_KEY = 'gmail_labels_v1';
 const GMAIL_OAUTH_TOKEN_KEY = 'gmail_oauth_token_v1';
 const GMAIL_OAUTH_STATE_KEY = 'gmail_oauth_state_v1';
 const GMAIL_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.modify',
 ];
-const { HTML_APP, HTML_MOCKUP_V3 } = getUiHtml({
+const GMAIL_SYNC_MAX_MESSAGE_FETCH = 40;
+const { HTML_APP, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE } = getUiHtml({
   appVersion: APP_VERSION,
   versionHistory: VERSION_HISTORY,
   maxTtsPreviewChars: MAX_TTS_PREVIEW_CHARS,
@@ -262,6 +272,11 @@ export default {
       }
       if (url.pathname === '/mockup-v3') {
         return new Response(HTML_MOCKUP_V3, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/mockup-iphone') {
+        return new Response(HTML_MOCKUP_IPHONE, {
           headers: { 'Content-Type': 'text/html', ...corsHeaders },
         });
       }
@@ -574,11 +589,25 @@ async function handleGetDeleted(env, corsHeaders) {
 // Restore selected items
 async function handleRestore(request, env, corsHeaders) {
   const body = await request.json();
-  const { urls } = body;
+  const urls = Array.isArray(body.urls) ? body.urls : [];
+  const keys = Array.isArray(body.keys) ? body.keys.map((key) => String(key || '')).filter(Boolean) : [];
 
-  if (!urls || !Array.isArray(urls) || urls.length === 0) {
+  if (urls.length === 0 && keys.length === 0) {
     return new Response(JSON.stringify({ error: 'No URLs provided' }), {
       status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const deletedItems = await getDeletedItems(env);
+  const keySet = new Set(keys);
+  const selectedItems = keySet.size > 0
+    ? deletedItems.filter((item) => keySet.has(getDeletedItemKey(item)))
+    : deletedItems.filter((item) => urls.includes(item.url));
+  const selectedUrls = Array.from(new Set(selectedItems.map((item) => item.url).filter(Boolean)));
+
+  if (selectedUrls.length === 0) {
+    return new Response(JSON.stringify({ restored: 0, errors: undefined }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
@@ -586,7 +615,7 @@ async function handleRestore(request, env, corsHeaders) {
   let restored = 0;
   let errors = [];
 
-  for (const url of urls) {
+  for (const url of selectedUrls) {
     try {
       await addToReadwise(env, url);
       restored++;
@@ -597,8 +626,14 @@ async function handleRestore(request, env, corsHeaders) {
 
   // Remove restored items from deleted list
   if (restored > 0) {
-    const deletedItems = await getDeletedItems(env);
-    const remaining = deletedItems.filter(item => !urls.includes(item.url));
+    const restoredUrlSet = new Set(selectedUrls);
+    const selectedKeySet = new Set(selectedItems.map((item) => getDeletedItemKey(item)));
+    const remaining = deletedItems.filter((item) => {
+      const itemKey = getDeletedItemKey(item);
+      if (selectedKeySet.has(itemKey)) return false;
+      if (keySet.size === 0 && restoredUrlSet.has(item.url)) return false;
+      return true;
+    });
     await env.KV.put('deleted_items', JSON.stringify(remaining));
   }
 
@@ -613,6 +648,7 @@ async function handleRestore(request, env, corsHeaders) {
 // Clear all deleted items history or a selected subset by URL
 async function handleClearDeleted(request, env, corsHeaders) {
   let urls = null;
+  let keys = null;
   try {
     const bodyText = await request.text();
     if (bodyText) {
@@ -620,14 +656,24 @@ async function handleClearDeleted(request, env, corsHeaders) {
       if (Array.isArray(body.urls)) {
         urls = body.urls;
       }
+      if (Array.isArray(body.keys)) {
+        keys = body.keys.map((key) => String(key || '')).filter(Boolean);
+      }
     }
   } catch {
     urls = null;
+    keys = null;
   }
 
   const deletedItems = await getDeletedItems(env);
-  if (urls && urls.length > 0) {
-    const remaining = deletedItems.filter((item) => !urls.includes(item.url));
+  if ((keys && keys.length > 0) || (urls && urls.length > 0)) {
+    const keySet = new Set(Array.isArray(keys) ? keys : []);
+    const urlSet = new Set(Array.isArray(urls) ? urls : []);
+    const remaining = deletedItems.filter((item) => {
+      if (keySet.size > 0 && keySet.has(getDeletedItemKey(item))) return false;
+      if (keySet.size === 0 && urlSet.size > 0 && urlSet.has(item.url)) return false;
+      return true;
+    });
     await env.KV.put('deleted_items', JSON.stringify(remaining));
     return new Response(JSON.stringify({
       cleared: true,
@@ -648,6 +694,15 @@ async function handleClearDeleted(request, env, corsHeaders) {
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+function getDeletedItemKey(item) {
+  const id = item && item.id !== undefined && item.id !== null ? String(item.id) : '';
+  const url = item && item.url ? String(item.url) : '';
+  const deletedAt = item && item.deletedAt ? String(item.deletedAt) : '';
+  const savedAt = item && item.savedAt ? String(item.savedAt) : '';
+  const title = item && item.title ? String(item.title) : '';
+  return [id, url, deletedAt, savedAt, title].join('|');
 }
 
 async function handleGetSettings(env, corsHeaders) {
@@ -762,12 +817,25 @@ async function handleSaveOpenAIKey(request, env, corsHeaders) {
 async function handleGmailStatus(env, corsHeaders) {
   const settings = await getSettings(env);
   const hasHookSecret = typeof env.GMAIL_HOOK_SECRET === 'string' && env.GMAIL_HOOK_SECRET.length > 0;
+  const oauthConfigReady = typeof env.GMAIL_CLIENT_ID === 'string'
+    && env.GMAIL_CLIENT_ID.trim().length > 0
+    && typeof env.GMAIL_CLIENT_SECRET === 'string'
+    && env.GMAIL_CLIENT_SECRET.trim().length > 0;
   const token = await getGmailOauthToken(env);
+  const validAccessToken = token ? await getValidGmailAccessToken(env) : '';
   const items = await getGmailItems(env);
-  const labels = await getKnownGmailLabels(env);
+  let labels = await getKnownGmailLabels(env);
+  if (validAccessToken) {
+    const live = await fetchGmailLabelsCatalog(validAccessToken);
+    if (live.names.length > 0) {
+      labels = live.names;
+      await env.KV.put(GMAIL_LABELS_KEY, JSON.stringify(labels));
+    }
+  }
   return new Response(JSON.stringify({
     enabled: true,
     mode: token ? 'oauth' : 'hook',
+    oauthConfigReady,
     hookConfigured: hasHookSecret,
     connected: !!token,
     tokenExpiresAt: token && token.expiresAt ? token.expiresAt : null,
@@ -894,7 +962,29 @@ async function handleGetGmailLabels(env, corsHeaders) {
 
 async function handleSaveGmailLabels(request, env, corsHeaders) {
   const body = await request.json();
-  const labels = Array.isArray(body.labels) ? body.labels : [];
+  let labels = Array.isArray(body.labels) ? body.labels : [];
+  labels = labels.map((label) => String(label || '').trim()).filter(Boolean);
+  if (labels.length > 0) {
+    const token = await getValidGmailAccessToken(env);
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'Connect Gmail before saving label filters.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    const resolution = await resolveGmailLabelSelection(token, labels);
+    if (resolution.unmatchedNames.length > 0) {
+      return new Response(JSON.stringify({
+        error: `Unknown Gmail labels: ${resolution.unmatchedNames.join(', ')}`,
+        unknownLabels: resolution.unmatchedNames,
+        availableLabels: resolution.availableNames,
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    labels = resolution.matchedNames;
+  }
   const settings = await getSettings(env);
   const sanitized = sanitizeSettings({ ...settings, gmailSelectedLabels: labels });
   await env.KV.put('settings', JSON.stringify(sanitized));
@@ -963,15 +1053,22 @@ async function handleGmailSync(env, corsHeaders) {
   }
   const settings = await getSettings(env);
   const selectedLabels = Array.isArray(settings.gmailSelectedLabels) ? settings.gmailSelectedLabels : [];
-  const gmailLabelIds = await fetchGmailLabelsByName(token, selectedLabels);
-  const queryParts = ['in:inbox'];
-  if (selectedLabels.length > 0) {
-    queryParts.push(selectedLabels.map((label) => `label:"${label.replace(/"/g, '\\"')}"`).join(' OR '));
+  const labelResolution = await resolveGmailLabelSelection(token, selectedLabels);
+  if (selectedLabels.length > 0 && labelResolution.matchedIds.length === 0) {
+    return new Response(JSON.stringify({
+      error: `No matching Gmail labels found for selection: ${selectedLabels.join(', ')}`,
+      selectedLabels,
+      availableLabels: labelResolution.availableNames,
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
   }
-  const q = queryParts.join(' ');
+  const gmailLabelIds = labelResolution.matchedIds;
+  const q = '';
   const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
-  listUrl.searchParams.set('maxResults', '100');
-  listUrl.searchParams.set('q', q);
+  listUrl.searchParams.set('maxResults', String(GMAIL_SYNC_MAX_MESSAGE_FETCH));
+  if (q) listUrl.searchParams.set('q', q);
   for (const labelId of gmailLabelIds) {
     listUrl.searchParams.append('labelIds', labelId);
   }
@@ -986,7 +1083,7 @@ async function handleGmailSync(env, corsHeaders) {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
-  const messages = Array.isArray(listData.messages) ? listData.messages.slice(0, 100) : [];
+  const messages = Array.isArray(listData.messages) ? listData.messages.slice(0, GMAIL_SYNC_MAX_MESSAGE_FETCH) : [];
   const items = [];
   for (const message of messages) {
     const id = String(message && message.id || '');
@@ -1015,6 +1112,10 @@ async function handleGmailSync(env, corsHeaders) {
   return new Response(JSON.stringify({
     synced: items.length,
     total: nextItems.length,
+    selectedLabels,
+    matchedLabelIds: gmailLabelIds,
+    unmatchedLabels: labelResolution.unmatchedNames,
+    syncFetchLimit: GMAIL_SYNC_MAX_MESSAGE_FETCH,
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -1044,7 +1145,9 @@ function normalizePreviewItem(item) {
       id: item.id,
       title: item.title || 'Untitled',
       author: item.author || 'Unknown',
-      url: item.url || '',
+      url: item.openUrl || item.url || '',
+      openUrl: item.openUrl || item.url || '',
+      gmailUrl: item.gmailUrl || '',
       savedAt: item.savedAt || new Date().toISOString(),
       publishedAt: item.publishedAt || null,
       site: item.site || 'gmail',
@@ -1266,6 +1369,82 @@ function extractPlainTextFromPayload(payload) {
   return '';
 }
 
+function extractHtmlFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const mimeType = String(payload.mimeType || '').toLowerCase();
+  const bodyData = payload.body && payload.body.data ? decodeBase64Url(payload.body.data) : '';
+  if (mimeType === 'text/html' && bodyData) return bodyData;
+  if (Array.isArray(payload.parts)) {
+    for (const part of payload.parts) {
+      const html = extractHtmlFromPayload(part);
+      if (html) return html;
+    }
+  }
+  return '';
+}
+
+function extractCandidateHttpUrlsFromHtml(html) {
+  if (!html || typeof html !== 'string') return [];
+  const out = [];
+  const re = /href\s*=\s*["']([^"']+)["']/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const raw = normalizeHttpUrl(m[1]);
+    if (!raw) continue;
+    const cleaned = cleanOpenUrl(raw);
+    if (!cleaned) continue;
+    out.push(cleaned);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
+function isLikelyNewsletterContentUrl(url, subject = '') {
+  if (!url) return false;
+  const value = String(url).toLowerCase();
+  const badHints = [
+    'unsubscribe',
+    'preferences',
+    'viewinbrowser',
+    'manage-preferences',
+    'privacy',
+    'mailto:',
+    'support.',
+    'help.',
+    'track',
+    'pixel',
+    'doubleclick',
+    'googleadservices',
+  ];
+  if (badHints.some((hint) => value.includes(hint))) return false;
+  const goodHints = ['newsletter', '/p/', '/articles/', '/story', '/post', 'substack', 'medium.com'];
+  if (goodHints.some((hint) => value.includes(hint))) return true;
+  if (subject && subject.length > 0) return true;
+  return false;
+}
+
+function pickBestGmailOpenUrl({ htmlContent, fallbackUrl, subject }) {
+  const links = extractCandidateHttpUrlsFromHtml(htmlContent);
+  for (const candidate of links) {
+    if (isLikelyNewsletterContentUrl(candidate, subject)) return candidate;
+  }
+  return fallbackUrl || '';
+}
+
+function pickBestGmailThumbnailUrl(htmlContent) {
+  if (!htmlContent) return '';
+  const re = /<img[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let m;
+  while ((m = re.exec(htmlContent))) {
+    const src = normalizeHttpUrl(m[1]);
+    if (!src) continue;
+    const lower = src.toLowerCase();
+    if (lower.includes('pixel') || lower.includes('track') || lower.includes('doubleclick')) continue;
+    return src;
+  }
+  return '';
+}
+
 function normalizeGmailMessageFromApi(message, selectedLabels = []) {
   if (!message || typeof message !== 'object') return null;
   const id = String(message.id || '');
@@ -1281,29 +1460,62 @@ function normalizeGmailMessageFromApi(message, selectedLabels = []) {
   const labelIds = Array.isArray(message.labelIds) ? message.labelIds.map((v) => String(v || '')).filter(Boolean) : [];
   const labels = selectedLabels && selectedLabels.length > 0 ? selectedLabels : labelIds;
   const textBody = extractPlainTextFromPayload(payload);
+  const htmlContent = extractHtmlFromPayload(payload);
+  const gmailUrl = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(id)}`;
+  const openUrl = pickBestGmailOpenUrl({ htmlContent, fallbackUrl: gmailUrl, subject });
+  const thumbnail = pickBestGmailThumbnailUrl(htmlContent);
   return normalizeGmailItem({
     id,
     subject,
     from,
     text: textBody,
+    htmlContent,
     labels,
     date: savedAt,
-    url: `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(id)}`,
+    url: openUrl,
+    openUrl,
+    gmailUrl,
+    thumbnail,
   });
 }
 
-async function fetchGmailLabelsByName(accessToken, names) {
-  const selected = Array.isArray(names) ? names.map((v) => String(v || '').trim()).filter(Boolean) : [];
-  if (selected.length === 0) return [];
+async function fetchGmailLabelsCatalog(accessToken) {
   const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const data = await res.json();
-  if (!res.ok || !data || !Array.isArray(data.labels)) return [];
-  const byName = new Map(data.labels.map((label) => [String(label.name || '').toLowerCase(), String(label.id || '')]));
-  return selected
-    .map((name) => byName.get(name.toLowerCase()) || '')
-    .filter(Boolean);
+  if (!res.ok || !data || !Array.isArray(data.labels)) return { names: [], byName: new Map(), canonicalByLower: new Map() };
+  const names = [];
+  const byName = new Map();
+  const canonicalByLower = new Map();
+  for (const label of data.labels) {
+    const name = String(label && label.name || '').trim();
+    if (!name) continue;
+    const lower = name.toLowerCase();
+    const id = String(label.id || '');
+    if (id) byName.set(lower, id);
+    if (!canonicalByLower.has(lower)) canonicalByLower.set(lower, name);
+    names.push(name);
+  }
+  return { names: Array.from(new Set(names)).sort(), byName, canonicalByLower };
+}
+
+async function resolveGmailLabelSelection(accessToken, names) {
+  const selected = Array.isArray(names) ? names.map((v) => String(v || '').trim()).filter(Boolean) : [];
+  if (selected.length === 0) return { matchedIds: [], matchedNames: [], unmatchedNames: [], availableNames: [] };
+  const catalog = await fetchGmailLabelsCatalog(accessToken);
+  const matchedIds = [];
+  const matchedNames = [];
+  const unmatchedNames = [];
+  for (const name of selected) {
+    const id = catalog.byName.get(name.toLowerCase());
+    if (id) {
+      matchedIds.push(id);
+      matchedNames.push(catalog.canonicalByLower.get(name.toLowerCase()) || name);
+    }
+    else unmatchedNames.push(name);
+  }
+  return { matchedIds, matchedNames, unmatchedNames, availableNames: catalog.names };
 }
 
 function normalizeGmailItem(item) {
@@ -1328,7 +1540,9 @@ function normalizeGmailItem(item) {
     id: String(id),
     title: String(item.title || item.subject || 'Untitled'),
     author: String(item.author || item.from || 'Unknown'),
-    url: cleanOpenUrl(normalizeHttpUrl(String(item.url || item.sourceUrl || ''))),
+    url: cleanOpenUrl(normalizeHttpUrl(String(item.url || item.openUrl || item.sourceUrl || ''))),
+    openUrl: cleanOpenUrl(normalizeHttpUrl(String(item.openUrl || item.url || item.sourceUrl || ''))),
+    gmailUrl: cleanOpenUrl(normalizeHttpUrl(String(item.gmailUrl || `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(String(id))}`))),
     savedAt: savedAtIso,
     publishedAt: publishedAtIso,
     site: 'gmail',
@@ -1383,18 +1597,60 @@ async function processGmailCleanup(env, targetIds, action) {
       errors: [{ id: 'gmail', error: 'Restore is not supported for gmail-hook items' }],
     };
   }
+  const token = await getValidGmailAccessToken(env);
+  if (!token) {
+    return {
+      processed: 0,
+      processedIds: [],
+      errors: [{ id: 'gmail', error: 'Gmail is not connected. Connect Gmail in Settings before delete/archive actions.' }],
+    };
+  }
   const current = await getGmailItems(env);
   const keep = [];
   const removed = [];
+  const errors = [];
   for (const item of current) {
-    if (ids.has(String(item.id))) removed.push(String(item.id));
-    else keep.push(item);
+    const id = String(item.id || '');
+    if (!ids.has(id)) {
+      keep.push(item);
+      continue;
+    }
+    try {
+      if (action === 'delete') {
+        const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/trash`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(body || `gmail_delete_${res.status}`);
+        }
+      } else {
+        const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/modify`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ removeLabelIds: ['INBOX'] }),
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(body || `gmail_archive_${res.status}`);
+        }
+      }
+      removed.push(id);
+    } catch (error) {
+      keep.push(item);
+      const msg = String(error && error.message ? error.message : 'gmail_action_failed');
+      errors.push({ id, error: msg.includes('insufficientPermissions') ? 'Gmail token lacks modify scope. Reconnect Gmail after enabling gmail.modify.' : msg });
+    }
   }
   await env.KV.put(GMAIL_ITEMS_KEY, JSON.stringify(keep));
   return {
     processed: removed.length,
     processedIds: removed,
-    errors: [],
+    errors,
   };
 }
 
@@ -1902,6 +2158,7 @@ function buildSearchableText(article) {
 
 function buildTtsText(article) {
   const sourceLabel = normalizeTtsText(article.site_name || extractDomain(article.source_url || article.url));
+  const isEmailSource = /^gmail\b/i.test(sourceLabel);
   const dateLabel = article.published_date || article.published_at || article.saved_at || '';
   const parsedDate = Date.parse(dateLabel || '');
   const spokenDate = Number.isFinite(parsedDate)
@@ -1937,7 +2194,7 @@ function buildTtsText(article) {
   pushUnique(article.author ? `By ${article.author}` : '');
   pushUnique(article.summary);
   pushUnique(article.content);
-  pushUnique(article.notes);
+  if (!isEmailSource) pushUnique(article.notes);
 
   if (typeof article.html_content === 'string' && article.html_content.length > 0) {
     const captions = extractImageCaptionsFromHtml(article.html_content);
@@ -1956,6 +2213,7 @@ function buildTtsText(article) {
     author: article.author,
     sourceLabel,
     spokenDate,
+    isEmailSource,
   });
 }
 
@@ -1970,6 +2228,10 @@ function normalizeTtsText(value) {
 function cleanupTtsText(text, context = {}) {
   let cleaned = normalizeTtsText(text);
   if (!cleaned) return '';
+  const isEmailSource = !!context.isEmailSource || /^gmail\b/i.test(normalizeTtsText(context.sourceLabel || ''));
+  if (isEmailSource) {
+    cleaned = cleanupEmailNewsletterText(cleaned);
+  }
   cleaned = cleaned
     .replace(/\bhttps?:\/\/[^\s)]+/gi, ' ')
     .replace(/\bwww\.[^\s)]+/gi, ' ')
@@ -1979,8 +2241,6 @@ function cleanupTtsText(text, context = {}) {
     .replace(/\bOpen in browser\b[:\s-]*/gi, ' ')
     .replace(/\bRead online\b[:\s-]*/gi, ' ')
     .replace(/\bProgramming note\b[:\s-]*/gi, ' ')
-    .replace(/\bSubscribe\b.*$/gi, ' ')
-    .replace(/\bUnsubscribe\b.*$/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -2045,6 +2305,44 @@ function cleanupTtsText(text, context = {}) {
   return result;
 }
 
+function cleanupEmailNewsletterText(text) {
+  let out = normalizeTtsText(text);
+  if (!out) return '';
+  out = out
+    .replace(/\bfrom:\s*[^:]{0,120}(?=\b(?:to|cc|bcc|subject|date|sent|reply-to):)/gi, ' ')
+    .replace(/\bto:\s*[^:]{0,120}(?=\b(?:cc|bcc|subject|date|sent|reply-to):)/gi, ' ')
+    .replace(/\bcc:\s*[^:]{0,120}(?=\b(?:bcc|subject|date|sent|reply-to):)/gi, ' ')
+    .replace(/\bbcc:\s*[^:]{0,120}(?=\b(?:subject|date|sent|reply-to):)/gi, ' ')
+    .replace(/\bsubject:\s*[^:]{0,160}(?=\b(?:date|sent|reply-to):)/gi, ' ')
+    .replace(/\breply-to:\s*[^\s]{0,120}(?=\b[A-Z][a-z]+\b|\bHere\b|\bToday\b|\bIn\b)/gi, ' ')
+    .replace(/\b(?:view(?:ing)? (?:this )?email in your browser|view in browser|read online|open in browser)\b[^.?!]{0,220}[.?!]?/gi, ' ')
+    .replace(/\b(?:manage (?:your )?preferences|update your preferences|email preferences|privacy policy|terms of service)\b[^.?!]{0,220}[.?!]?/gi, ' ')
+    .replace(/\b(?:unsubscribe(?: here)?|opt out|stop receiving these emails|no longer wish to receive)\b[^.?!]{0,260}[.?!]?/gi, ' ')
+    .replace(/\b(?:if you (?:are|re) having trouble viewing this email)\b[^.?!]{0,260}[.?!]?/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const tailWindowStart = Math.max(0, out.length - 3200);
+  const tail = out.slice(tailWindowStart);
+  const footerMarkers = [
+    /\bunsubscribe\b/i,
+    /\bmanage (?:your )?preferences\b/i,
+    /\bprivacy policy\b/i,
+    /\bterms of service\b/i,
+    /\ball rights reserved\b/i,
+  ];
+  let cutAt = -1;
+  for (const marker of footerMarkers) {
+    const match = tail.match(marker);
+    if (match && typeof match.index === 'number') {
+      const abs = tailWindowStart + match.index;
+      cutAt = cutAt < 0 ? abs : Math.min(cutAt, abs);
+    }
+  }
+  if (cutAt > 0) out = out.slice(0, cutAt).trim();
+  return out;
+}
+
 function startOfDay(dateValue) {
   const d = new Date(dateValue);
   d.setHours(0, 0, 0, 0);
@@ -2059,4 +2357,4 @@ function endOfDay(dateValue) {
 
 
 // Export helpers for testing
-export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText };
+export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl };
