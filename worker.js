@@ -2,6 +2,8 @@
 // Bulk delete/archive old Readwise Reader items with restoration support
 
 import { MOCK_TTS_WAV_BASE64 } from './mock-tts-audio.js';
+import { Readability } from '@mozilla/readability';
+import { parseHTML } from 'linkedom';
 import { getUiHtml } from './ui.js';
 import { getSettings, sanitizeSettings } from './settings.js';
 import {
@@ -13,8 +15,19 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.11';
+const APP_VERSION = '3.3.22';
 const VERSION_HISTORY = [
+  { version: '3.3.22', completedAt: '2026-02-21', note: 'Improved audio download failure diagnostics by surfacing explicit OpenAI TTS quota/auth/upstream error details through the API and player feedback/toast messaging instead of generic download failure text.' },
+  { version: '3.3.21', completedAt: '2026-02-18', note: 'Integrated open-source article extraction for HTML newsletters/content using Mozilla Readability with linkedom DOM parsing, tightened Gmail MIME handling to avoid treating HTML parts as plain text, and improved TTS text assembly to prefer extracted readable body/excerpt/byline content while preventing raw HTML leakage.' },
+  { version: '3.3.20', completedAt: '2026-02-17', note: 'Fixed Find full-width preview scrolling by preserving tab grid display semantics and enforcing main cleanup pane height constraints; removed redundant Remove action from Deleted History; aligned Player/History summary chips onto header row like Find; and fixed Gmail newsletter TTS extraction so HTML-only messages are converted to readable text instead of leaking raw markup.' },
+  { version: '3.3.19', completedAt: '2026-02-17', note: 'Kept native date widgets but removed programmatic min/max constraint mutation to avoid iOS segmented day-entry digit coercion (for example 16 becoming 06); range validation remains enforced at Find submit.' },
+  { version: '3.3.18', completedAt: '2026-02-17', note: 'Added top informational summary chips to Player and Deleted History views to mirror Find (filtered count, selected count, and total queue/history context) with live updates during search and selection.' },
+  { version: '3.3.17', completedAt: '2026-02-17', note: 'Restored native calendar date widgets in Find and fixed iPhone segmented day-entry regression by deferring date min/max constraint updates until change/blur (instead of input), avoiding live constraint mutation while typing.' },
+  { version: '3.3.16', completedAt: '2026-02-17', note: 'Reworked Find date range inputs to text-based ISO entry with normalization/validation so day typing behaves predictably on iPhone keyboards (for example typing 16 remains 16 instead of segmented 01/06 behavior).' },
+  { version: '3.3.15', completedAt: '2026-02-17', note: 'Fixed Readwise inbox forwarded-email behavior by preventing arbitrary first-link open-url fallback for email-like items, and extended email boilerplate TTS cleanup heuristics beyond Gmail-source-only metadata so forwarded newsletters read cleaner body content.' },
+  { version: '3.3.14', completedAt: '2026-02-17', note: 'Fixed mobile Find preview scrolling by restoring page-level vertical scrolling under tablet/phone breakpoints where main-pane switches to auto/visible overflow.' },
+  { version: '3.3.13', completedAt: '2026-02-17', note: 'Fixed iPhone Find preview scroll regression by improving swipe gesture intent detection: preview rows now capture pointer only for clear horizontal swipes, preserving vertical list scrolling while keeping swipe archive/delete actions.' },
+  { version: '3.3.12', completedAt: '2026-02-17', note: 'Added functional alternate /v4 UI route with mobile-first expanded-active-item interaction: larger touch targets, active-row emphasis for preview/player controls, preserved swipe archive/delete behavior, and unchanged default / experience.' },
   { version: '3.3.11', completedAt: '2026-02-17', note: 'Refined dedicated iPhone mock concepts with explicit action labeling: active-row controls now show concrete per-item actions and hybrid shelf mock shows batch action labels for selection workflows.' },
   { version: '3.3.10', completedAt: '2026-02-17', note: 'Refined dedicated iPhone mock route to focus on two candidate interaction models only: B (expanded active item) and A+B hybrid (persistent action shelf plus expanded active item), removing unrelated mock variants from the preview set.' },
   { version: '3.3.9', completedAt: '2026-02-17', note: 'Removed the non-actionable current-item stopped toast after Find delete/archive actions, and added non-active iPhone-focused CSS mock concepts in About to evaluate larger touch targets, collapsed secondary controls, and bottom action ergonomics before implementation.' },
@@ -130,7 +143,7 @@ const GMAIL_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
 ];
 const GMAIL_SYNC_MAX_MESSAGE_FETCH = 40;
-const { HTML_APP, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE } = getUiHtml({
+const { HTML_APP, HTML_APP_V4, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE } = getUiHtml({
   appVersion: APP_VERSION,
   versionHistory: VERSION_HISTORY,
   maxTtsPreviewChars: MAX_TTS_PREVIEW_CHARS,
@@ -272,6 +285,11 @@ export default {
       }
       if (url.pathname === '/mockup-v3') {
         return new Response(HTML_MOCKUP_V3, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/v4') {
+        return new Response(HTML_APP_V4, {
           headers: { 'Content-Type': 'text/html', ...corsHeaders },
         });
       }
@@ -1346,6 +1364,56 @@ function decodeBase64Url(input) {
   }
 }
 
+function looksLikeHtmlMarkup(value) {
+  if (!value || typeof value !== 'string') return false;
+  if (value.length < 20) return false;
+  return /<!doctype|<html\b|<body\b|<article\b|<main\b|<table\b|<[a-z][^>]*>/i.test(value);
+}
+
+function htmlToPlainText(html) {
+  if (!html || typeof html !== 'string') return '';
+  return normalizeTtsText(
+    decodeHtmlEntities(html)
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<!DOCTYPE[^>]*>/gi, ' ')
+      .replace(/<\/?(html|head|body|table|tr|td|th|div|section|article|header|footer|nav|p|br|li|ul|ol|h[1-6]|span)[^>]*>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+  );
+}
+
+function extractReadableArticleFromHtml(html, options = {}) {
+  if (!looksLikeHtmlMarkup(html)) return null;
+  try {
+    const { document } = parseHTML(decodeHtmlEntities(String(html)));
+    const reader = new Readability(document, {
+      charThreshold: Number.isFinite(options.charThreshold) ? options.charThreshold : 220,
+      keepClasses: false,
+      disableJSONLD: false,
+    });
+    const parsed = reader.parse();
+    if (!parsed) return null;
+    const textContent = normalizeTtsText(parsed.textContent || '');
+    if (!textContent || textContent.length < 80) return null;
+    return {
+      textContent,
+      title: normalizeTtsText(parsed.title || ''),
+      byline: normalizeTtsText(parsed.byline || ''),
+      excerpt: normalizeTtsText(parsed.excerpt || ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function htmlToReadableText(html, options = {}) {
+  const readable = extractReadableArticleFromHtml(html, options);
+  if (readable && readable.textContent) return readable.textContent;
+  return htmlToPlainText(html);
+}
+
 function extractMessageHeaders(payload) {
   const headers = Array.isArray(payload && payload.headers) ? payload.headers : [];
   const byName = new Map(headers
@@ -1365,7 +1433,6 @@ function extractPlainTextFromPayload(payload) {
       if (text) return text;
     }
   }
-  if (bodyData && mimeType.indexOf('text/') === 0) return bodyData;
   return '';
 }
 
@@ -1463,12 +1530,18 @@ function normalizeGmailMessageFromApi(message, selectedLabels = []) {
   const htmlContent = extractHtmlFromPayload(payload);
   const gmailUrl = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(id)}`;
   const openUrl = pickBestGmailOpenUrl({ htmlContent, fallbackUrl: gmailUrl, subject });
+  const readable = extractReadableArticleFromHtml(htmlContent, {
+    charThreshold: 120,
+    url: openUrl || gmailUrl,
+  });
+  const readableBody = textBody || (readable && readable.textContent) || htmlToPlainText(htmlContent);
   const thumbnail = pickBestGmailThumbnailUrl(htmlContent);
   return normalizeGmailItem({
     id,
-    subject,
-    from,
-    text: textBody,
+    subject: normalizeTtsText(subject) || (readable && readable.title) || 'Untitled',
+    from: normalizeTtsText(from) || (readable && readable.byline) || 'Unknown',
+    summary: (readable && readable.excerpt) || '',
+    text: readableBody,
     htmlContent,
     labels,
     date: savedAt,
@@ -1737,7 +1810,25 @@ async function handleAudioTts(request, env, corsHeaders) {
       }),
     });
     if (!openaiRes.ok) {
-      throw new Error(`OpenAI TTS failed: ${openaiRes.status}`);
+      let upstreamMessage = '';
+      try {
+        const errJson = await openaiRes.json();
+        upstreamMessage = String(
+          (errJson && errJson.error && (errJson.error.message || errJson.error.code))
+          || ''
+        ).trim();
+      } catch {
+        try {
+          upstreamMessage = String(await openaiRes.text() || '').trim();
+        } catch {}
+      }
+      if (openaiRes.status === 429) {
+        throw new Error(`OpenAI TTS rate-limited or quota exceeded (429). Check OpenAI billing/quota, then retry. ${upstreamMessage}`.trim());
+      }
+      if (openaiRes.status === 401 || openaiRes.status === 403) {
+        throw new Error(`OpenAI TTS unauthorized (${openaiRes.status}). Verify saved OpenAI API key in Settings. ${upstreamMessage}`.trim());
+      }
+      throw new Error(`OpenAI TTS failed (${openaiRes.status}). ${upstreamMessage}`.trim());
     }
     contentType = openaiRes.headers.get('content-type') || 'audio/mpeg';
     audioBytes = new Uint8Array(await openaiRes.arrayBuffer());
@@ -2002,20 +2093,55 @@ function getArticleThumbnail(article) {
 }
 
 function deriveOpenUrl(article) {
+  const emailLike = looksLikeEmailLikeArticle(article);
   const sourceUrl = cleanOpenUrl(normalizeHttpUrl(decodeHtmlEntities(article.source_url)));
   const readwiseUrl = cleanOpenUrl(normalizeHttpUrl(decodeHtmlEntities(article.url)));
   const htmlUrl = extractFirstHttpUrlFromHtml(article.html_content);
 
-  if (sourceUrl && !looksLikeEmailAddress(sourceUrl)) {
+  if (sourceUrl && !looksLikeEmailAddress(sourceUrl) && !isReadwiseDomain(sourceUrl)) {
     return sourceUrl;
   }
+  // For forwarded/email-like Readwise items, avoid jumping to arbitrary first link.
+  if (emailLike) {
+    return readwiseUrl || sourceUrl || '';
+  }
   if (htmlUrl && !isReadwiseDomain(htmlUrl)) {
-    return htmlUrl;
+    if (isLikelyNewsletterContentUrl(htmlUrl, article.title || '')) return htmlUrl;
   }
   if (readwiseUrl) {
     return readwiseUrl;
   }
+  if (htmlUrl && !isReadwiseDomain(htmlUrl)) {
+    return htmlUrl;
+  }
   return sourceUrl || htmlUrl || readwiseUrl || '';
+}
+
+function looksLikeEmailLikeArticle(article) {
+  if (!article || typeof article !== 'object') return false;
+  const title = normalizeTtsText(article.title || '').toLowerCase();
+  const source = normalizeTtsText(article.site_name || article.site || '').toLowerCase();
+  const content = normalizeTtsText(article.content || article.text || '').toLowerCase();
+  const html = normalizeTtsText(typeof article.html_content === 'string' ? article.html_content.replace(/<[^>]+>/g, ' ') : '').toLowerCase();
+  if (/^(fwd:|fw:|re:)/i.test(title)) return true;
+  if (source.startsWith('gmail')) return true;
+  const corpus = `${title} ${content} ${html}`;
+  const markers = [
+    'begin forwarded message',
+    'forwarded message',
+    'unsubscribe',
+    'manage your preferences',
+    'view in browser',
+    'from:',
+    'subject:',
+    'reply-to:',
+    'sent:',
+  ];
+  let hits = 0;
+  for (const marker of markers) {
+    if (corpus.includes(marker)) hits += 1;
+  }
+  return hits >= 2;
 }
 
 function normalizeHttpUrl(value) {
@@ -2158,7 +2284,13 @@ function buildSearchableText(article) {
 
 function buildTtsText(article) {
   const sourceLabel = normalizeTtsText(article.site_name || extractDomain(article.source_url || article.url));
-  const isEmailSource = /^gmail\b/i.test(sourceLabel);
+  const isEmailSource = /^gmail\b/i.test(sourceLabel) || looksLikeEmailLikeArticle(article);
+  const readableFromHtml = (typeof article.html_content === 'string' && article.html_content.length > 0)
+    ? extractReadableArticleFromHtml(article.html_content, {
+      charThreshold: isEmailSource ? 120 : 220,
+      url: article.source_url || article.url || '',
+    })
+    : null;
   const dateLabel = article.published_date || article.published_at || article.saved_at || '';
   const parsedDate = Date.parse(dateLabel || '');
   const spokenDate = Number.isFinite(parsedDate)
@@ -2186,24 +2318,24 @@ function buildTtsText(article) {
   const prefaceParts = [];
   if (article.title) prefaceParts.push(article.title);
   if (article.author) prefaceParts.push(`By ${article.author}`);
+  else if (readableFromHtml && readableFromHtml.byline) prefaceParts.push(`By ${readableFromHtml.byline}`);
   if (sourceLabel && sourceLabel !== 'Unknown') prefaceParts.push(`From ${sourceLabel}`);
   if (spokenDate) prefaceParts.push(`Written on ${spokenDate}`);
   pushUnique(prefaceParts.join('. ') + (prefaceParts.length ? '.' : ''));
 
   pushUnique(article.title);
-  pushUnique(article.author ? `By ${article.author}` : '');
+  pushUnique(article.author ? `By ${article.author}` : (readableFromHtml && readableFromHtml.byline ? `By ${readableFromHtml.byline}` : ''));
   pushUnique(article.summary);
-  pushUnique(article.content);
+  pushUnique(isEmailSource ? (htmlToReadableText(article.content || '', { charThreshold: 120 }) || article.content) : article.content);
   if (!isEmailSource) pushUnique(article.notes);
+  if (readableFromHtml && readableFromHtml.excerpt) pushUnique(readableFromHtml.excerpt);
 
   if (typeof article.html_content === 'string' && article.html_content.length > 0) {
     const captions = extractImageCaptionsFromHtml(article.html_content);
     captions.forEach((caption) => pushUnique(`Image caption: ${caption}`));
-    const plain = normalizeTtsText(article.html_content
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' '));
+    const plain = (readableFromHtml && readableFromHtml.textContent)
+      ? readableFromHtml.textContent
+      : htmlToReadableText(article.html_content);
     // Keep full readable body text whenever available so TTS can cover the complete story.
     if (plain) pushUnique(plain);
   }
@@ -2228,11 +2360,14 @@ function normalizeTtsText(value) {
 function cleanupTtsText(text, context = {}) {
   let cleaned = normalizeTtsText(text);
   if (!cleaned) return '';
-  const isEmailSource = !!context.isEmailSource || /^gmail\b/i.test(normalizeTtsText(context.sourceLabel || ''));
+  const isEmailSource = !!context.isEmailSource
+    || /^gmail\b/i.test(normalizeTtsText(context.sourceLabel || ''))
+    || looksLikeEmailBoilerplateText(cleaned);
   if (isEmailSource) {
     cleaned = cleanupEmailNewsletterText(cleaned);
   }
   cleaned = cleaned
+    .replace(/<[^>]+>/g, ' ')
     .replace(/\bhttps?:\/\/[^\s)]+/gi, ' ')
     .replace(/\bwww\.[^\s)]+/gi, ' ')
     .replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi, ' ')
@@ -2262,6 +2397,7 @@ function cleanupTtsText(text, context = {}) {
     deduped.push(sentence);
   }
   let result = deduped.join(' ').trim();
+  result = result.replace(/\s+([,.;:!?])/g, '$1').trim();
 
   // Trim common trailing podcast/newsletter boilerplate sections.
   const tailWindowStart = Math.max(0, result.length - 2600);
@@ -2305,15 +2441,46 @@ function cleanupTtsText(text, context = {}) {
   return result;
 }
 
+function looksLikeEmailBoilerplateText(text) {
+  const value = normalizeTtsText(text).toLowerCase();
+  if (!value) return false;
+  const strongMarkers = [
+    'begin forwarded message',
+    'forwarded message',
+  ];
+  if (strongMarkers.some((m) => value.includes(m))) return true;
+  const weakMarkers = [
+    'unsubscribe',
+    'manage your preferences',
+    'view in browser',
+    'if you are having trouble viewing this email',
+    'from:',
+    'to:',
+    'cc:',
+    'subject:',
+    'reply-to:',
+    'sent:',
+  ];
+  let weakHits = 0;
+  for (const marker of weakMarkers) {
+    if (value.includes(marker)) weakHits += 1;
+    if (weakHits >= 2) return true;
+  }
+  return false;
+}
+
 function cleanupEmailNewsletterText(text) {
   let out = normalizeTtsText(text);
   if (!out) return '';
   out = out
+    .replace(/\bbegin forwarded message:?\b/gi, ' ')
+    .replace(/\bforwarded message:?\b/gi, ' ')
     .replace(/\bfrom:\s*[^:]{0,120}(?=\b(?:to|cc|bcc|subject|date|sent|reply-to):)/gi, ' ')
     .replace(/\bto:\s*[^:]{0,120}(?=\b(?:cc|bcc|subject|date|sent|reply-to):)/gi, ' ')
     .replace(/\bcc:\s*[^:]{0,120}(?=\b(?:bcc|subject|date|sent|reply-to):)/gi, ' ')
     .replace(/\bbcc:\s*[^:]{0,120}(?=\b(?:subject|date|sent|reply-to):)/gi, ' ')
     .replace(/\bsubject:\s*[^:]{0,160}(?=\b(?:date|sent|reply-to):)/gi, ' ')
+    .replace(/\bsubject:\s*.{0,140}?(?=\s+[A-Z][A-Za-z]+(?:\s+[A-Za-z]+){0,2}:|\s*$)/gi, ' ')
     .replace(/\breply-to:\s*[^\s]{0,120}(?=\b[A-Z][a-z]+\b|\bHere\b|\bToday\b|\bIn\b)/gi, ' ')
     .replace(/\b(?:view(?:ing)? (?:this )?email in your browser|view in browser|read online|open in browser)\b[^.?!]{0,220}[.?!]?/gi, ' ')
     .replace(/\b(?:manage (?:your )?preferences|update your preferences|email preferences|privacy policy|terms of service)\b[^.?!]{0,220}[.?!]?/gi, ' ')
@@ -2357,4 +2524,4 @@ function endOfDay(dateValue) {
 
 
 // Export helpers for testing
-export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl };
+export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl, deriveOpenUrl };

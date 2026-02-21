@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-import { extractDomain, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl } from './worker.js';
+import { extractDomain, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl, deriveOpenUrl } from './worker.js';
 
 describe('extractDomain', () => {
   it('extracts domain from valid URL', () => {
@@ -113,6 +113,42 @@ describe('buildTtsText', () => {
     expect(text).not.toMatch(/\bFrom:/i);
     expect(text).not.toMatch(/\bSubject:/i);
   });
+
+  it('strips raw html scaffolding when email content is html-heavy', () => {
+    const article = {
+      site_name: 'gmail',
+      title: 'DealBook: Game on for Paramount',
+      author: 'Andrew Ross Sorkin',
+      content: '<!DOCTYPE html><html><head><style>.x{}</style></head><body><div>DealBook: Game on for Paramount.</div><table><tr><td>Also, Goldman Sachs backtrack on D.E.I.</td></tr></table></body></html>',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('DealBook: Game on for Paramount.');
+    expect(text).toContain('Also, Goldman Sachs backtrack on D.E.I.');
+    expect(text).not.toMatch(/<!DOCTYPE|<html|<head|<table|<tr|<td/i);
+  });
+
+  it('uses article-body extraction for html newsletters/readwise pages', () => {
+    const article = {
+      site_name: 'readwise',
+      title: 'Morning Brief',
+      html_content: `
+        <!DOCTYPE html>
+        <html><body>
+          <header>Home Markets Opinion</header>
+          <nav>Menu About Contact</nav>
+          <article>
+            <h1>Morning Brief</h1>
+            <p>Core insight paragraph one about macro conditions.</p>
+            <p>Core insight paragraph two with portfolio implications.</p>
+          </article>
+          <footer>Unsubscribe | Manage preferences</footer>
+        </body></html>`,
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Core insight paragraph one about macro conditions.');
+    expect(text).toContain('Core insight paragraph two with portfolio implications.');
+    expect(text).not.toMatch(/<!DOCTYPE|<html|<nav|<footer/i);
+  });
 });
 
 describe('gmail extraction helpers', () => {
@@ -126,6 +162,29 @@ describe('gmail extraction helpers', () => {
     const html = '<img src="https://cdn.example.com/pixel.gif"><img src="https://cdn.example.com/header.jpg">';
     const thumb = pickBestGmailThumbnailUrl(html);
     expect(thumb).toBe('https://cdn.example.com/header.jpg');
+  });
+});
+
+describe('readwise email-like handling', () => {
+  it('avoids arbitrary first-link fallback for forwarded email-like readwise items', () => {
+    const article = {
+      title: 'Fwd: IrregEx update',
+      url: 'https://read.readwise.io/read/abc123',
+      html_content: '<p>Begin forwarded message:</p><a href=\"https://en.wikipedia.org/wiki/Everything_Everywhere_All_at_Once\">wiki</a>',
+    };
+    expect(deriveOpenUrl(article)).toBe('https://read.readwise.io/read/abc123');
+  });
+
+  it('applies email boilerplate cleanup even when source is not gmail', () => {
+    const article = {
+      title: 'Fwd: Portfolio update',
+      content: 'Begin forwarded message: From: Partner Subject: Fund update Main thesis: portfolio companies are growing with solid net retention. Manage your preferences. Unsubscribe here.',
+      site_name: '',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Main thesis: portfolio companies are growing with solid net retention.');
+    expect(text).not.toMatch(/begin forwarded message/i);
+    expect(text).not.toMatch(/unsubscribe/i);
   });
 });
 
@@ -442,7 +501,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.11');
+      expect(data.version).toBe('3.3.22');
     });
   });
 
@@ -837,7 +896,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.11');
+    expect(html).toContain('v3.3.22');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');

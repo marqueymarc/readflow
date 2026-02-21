@@ -314,10 +314,12 @@ const HTML_APP = `<!DOCTYPE html>
     .main-inner {
       max-width: none;
       margin: 0;
-      min-height: 100%;
+      height: 100%;
+      min-height: 0;
     }
     #cleanup-tab {
-      min-height: 100%;
+      height: 100%;
+      min-height: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
       gap: 0.8rem;
@@ -1373,7 +1375,7 @@ const HTML_APP = `<!DOCTYPE html>
     }
     #deleted-controls-card .history-actions-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 0.55rem;
       margin-top: 0.5rem;
       margin-bottom: 0;
@@ -1500,7 +1502,7 @@ const HTML_APP = `<!DOCTYPE html>
       #deleted-controls-card .history-actions-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
-      #deleted-controls-card .history-actions-grid .btn:nth-child(4) {
+      #deleted-controls-card .history-actions-grid .btn:nth-child(3) {
         grid-column: 1 / -1;
       }
       #deleted-top-controls {
@@ -1531,6 +1533,9 @@ const HTML_APP = `<!DOCTYPE html>
       }
     }
     @media (max-width: 1024px) {
+      body {
+        overflow-y: auto;
+      }
       .app-shell {
         grid-template-columns: 1fr;
       }
@@ -1839,7 +1844,14 @@ const HTML_APP = `<!DOCTYPE html>
     <div id="deleted-tab" style="display:none">
       <div id="deleted-controls-main-host">
         <div class="card" id="deleted-controls-card">
-          <h2>Deleted Items History</h2>
+          <div class="results-top">
+            <h2 style="margin-bottom:0;">Deleted Items History</h2>
+            <div class="results-summary" id="deleted-results-summary" style="display:none">
+              <span class="results-pill" id="deleted-results-summary-filtered">All (filtered): 0</span>
+              <span class="results-pill" id="deleted-results-summary-selected">Selected: 0</span>
+              <span class="results-pill" id="deleted-results-summary-total">History total: 0</span>
+            </div>
+          </div>
           <div id="deleted-top-toolbar">
             <div class="preview-top-controls" id="deleted-top-controls">
               <label class="checkbox-label"><input id="select-all-deleted" type="checkbox"> All (filtered)</label>
@@ -1855,7 +1867,6 @@ const HTML_APP = `<!DOCTYPE html>
             </div>
             <div class="btn-group history-actions-grid">
               <button class="btn btn-primary" id="restore-btn" disabled>Restore</button>
-              <button class="btn btn-outline" id="remove-selected-btn" disabled>Remove</button>
               <button class="btn btn-danger" id="delete-selected-history-btn" disabled>Delete</button>
               <button class="btn btn-outline" id="clear-history-btn">Clear All</button>
             </div>
@@ -2014,7 +2025,14 @@ const HTML_APP = `<!DOCTYPE html>
     <div id="player-tab" style="display:none">
       <div id="player-controls-right-host" style="display:none"></div>
       <div class="card">
-        <h2>Playlist</h2>
+        <div class="results-top">
+          <h2 style="margin-bottom:0;">Playlist</h2>
+          <div class="results-summary" id="player-results-summary" style="display:none">
+            <span class="results-pill" id="player-results-summary-filtered">All (filtered): 0</span>
+            <span class="results-pill" id="player-results-summary-selected">Selected: 0</span>
+            <span class="results-pill" id="player-results-summary-total">Player queue: 0</span>
+          </div>
+        </div>
         <div class="preview-top-controls" style="margin-top:0.7rem;">
           <label class="checkbox-label" style="font-size:0.85rem; margin:0;">
             <input id="player-select-all" type="checkbox">
@@ -2154,7 +2172,6 @@ const HTML_APP = `<!DOCTYPE html>
     var previewPageLabel = document.getElementById('preview-page-label');
     var deletedList = document.getElementById('deleted-list');
     var restoreBtn = document.getElementById('restore-btn');
-    var removeSelectedBtn = document.getElementById('remove-selected-btn');
     var deleteSelectedHistoryBtn = document.getElementById('delete-selected-history-btn');
     var clearHistoryBtn = document.getElementById('clear-history-btn');
     var selectAllDeleted = document.getElementById('select-all-deleted');
@@ -2182,6 +2199,14 @@ const HTML_APP = `<!DOCTYPE html>
     var resultsSummaryFiltered = document.getElementById('results-summary-filtered');
     var resultsSummarySelected = document.getElementById('results-summary-selected');
     var resultsSummaryQueue = document.getElementById('results-summary-queue');
+    var deletedResultsSummary = document.getElementById('deleted-results-summary');
+    var deletedResultsSummaryFiltered = document.getElementById('deleted-results-summary-filtered');
+    var deletedResultsSummarySelected = document.getElementById('deleted-results-summary-selected');
+    var deletedResultsSummaryTotal = document.getElementById('deleted-results-summary-total');
+    var playerResultsSummary = document.getElementById('player-results-summary');
+    var playerResultsSummaryFiltered = document.getElementById('player-results-summary-filtered');
+    var playerResultsSummarySelected = document.getElementById('player-results-summary-selected');
+    var playerResultsSummaryTotal = document.getElementById('player-results-summary-total');
     var floatingPlayerHover = document.getElementById('floating-player-hover');
     var floatingPlayerStatus = document.getElementById('floating-player-status');
     var floatingPlayerDot = document.getElementById('floating-player-dot');
@@ -2277,10 +2302,9 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function syncDateInputBounds() {
-      var fromVal = fromDateInput && fromDateInput.value ? fromDateInput.value : '';
-      var toVal = toDateInput && toDateInput.value ? toDateInput.value : '';
-      if (toDateInput) toDateInput.min = fromVal || '';
-      if (fromDateInput) fromDateInput.max = toVal || '';
+      // iOS/Safari segmented date entry can mis-handle typed day digits when min/max
+      // constraints are present; keep native picker UX but validate range on Find submit.
+      return;
     }
 
     function getEffectiveSource() {
@@ -2457,7 +2481,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     on(toDateWrap, 'pointerdown', function() { setDateShortcutTarget('to'); });
     on(fromDateWrap, 'pointerdown', function() { setDateShortcutTarget('from'); });
-    ['input', 'change'].forEach(function(evtName) {
+    ['change', 'blur'].forEach(function(evtName) {
       on(toDateInput, evtName, syncDateInputBounds);
       on(fromDateInput, evtName, syncDateInputBounds);
     });
@@ -2551,11 +2575,11 @@ const HTML_APP = `<!DOCTYPE html>
         activeTabEl.classList.add('active');
       });
 
-      document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? 'block' : 'none';
-      document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? 'block' : 'none';
-      document.getElementById('settings-tab').style.display = tabName === 'settings' ? 'block' : 'none';
-      document.getElementById('about-tab').style.display = tabName === 'about' ? 'block' : 'none';
-      document.getElementById('player-tab').style.display = tabName === 'player' ? 'block' : 'none';
+      document.getElementById('cleanup-tab').style.display = tabName === 'cleanup' ? '' : 'none';
+      document.getElementById('deleted-tab').style.display = tabName === 'deleted' ? '' : 'none';
+      document.getElementById('settings-tab').style.display = tabName === 'settings' ? '' : 'none';
+      document.getElementById('about-tab').style.display = tabName === 'about' ? '' : 'none';
+      document.getElementById('player-tab').style.display = tabName === 'player' ? '' : 'none';
       cleanupControlsCard.style.display = tabName === 'cleanup' ? 'block' : 'none';
       if (deletedControlsCard) deletedControlsCard.style.display = tabName === 'deleted' ? 'block' : 'none';
       if (playerControlsCard) playerControlsCard.style.display = tabName === 'player' ? 'block' : 'none';
@@ -2565,7 +2589,7 @@ const HTML_APP = `<!DOCTYPE html>
         loadDeletedItems();
       }
       if (tabName === 'player' && syncPlayerFromSelection) {
-        refreshPlayerQueueFromPreviewSelection({ autoplay: true });
+        refreshPlayerQueueFromPreviewSelection({ autoplay: false });
       }
 
       var targetPath = TAB_ROUTES[tabName] || '/';
@@ -2755,6 +2779,42 @@ const HTML_APP = `<!DOCTYPE html>
       resultsSummarySelected.textContent = 'Selected: ' + selectedCount;
       resultsSummaryQueue.textContent = 'Player queue: ' + queueCount;
       resultsSummary.style.display = 'inline-flex';
+    }
+
+    function updateDeletedResultsSummary() {
+      if (!deletedResultsSummary || !deletedResultsSummaryFiltered || !deletedResultsSummarySelected || !deletedResultsSummaryTotal) return;
+      if (deletedItems.length === 0) {
+        deletedResultsSummary.style.display = 'none';
+        return;
+      }
+      var filtered = getFilteredDeletedItems();
+      var selected = getActiveSelectedDeletedItems().length;
+      deletedResultsSummaryFiltered.textContent = 'All (filtered): ' + filtered.length;
+      deletedResultsSummarySelected.textContent = 'Selected: ' + selected;
+      deletedResultsSummaryTotal.textContent = 'History total: ' + deletedItems.length;
+      deletedResultsSummary.style.display = 'inline-flex';
+    }
+
+    function updatePlayerResultsSummary(filteredCount, selectedCount) {
+      if (!playerResultsSummary || !playerResultsSummaryFiltered || !playerResultsSummarySelected || !playerResultsSummaryTotal) return;
+      if (playerQueue.length === 0) {
+        playerResultsSummary.style.display = 'none';
+        return;
+      }
+      var filtered = Number.isFinite(filteredCount) ? filteredCount : getFilteredPlayerIndices().length;
+      var selected;
+      if (Number.isFinite(selectedCount)) {
+        selected = selectedCount;
+      } else {
+        var filteredIndices = getFilteredPlayerIndices();
+        selected = filteredIndices.filter(function(idx) {
+          return playerEnabledIds.has(getPlayerQueueId(playerQueue[idx], idx));
+        }).length;
+      }
+      playerResultsSummaryFiltered.textContent = 'All (filtered): ' + filtered;
+      playerResultsSummarySelected.textContent = 'Selected: ' + selected;
+      playerResultsSummaryTotal.textContent = 'Player queue: ' + playerQueue.length;
+      playerResultsSummary.style.display = 'inline-flex';
     }
 
     function updateFloatingPlayerHover() {
@@ -3059,11 +3119,8 @@ const HTML_APP = `<!DOCTYPE html>
       }
       var parent = element.parentElement;
       var articleId = parent.dataset.articleId;
-      swipeStateById[articleId] = { startX: evt.clientX, deltaX: 0, pointerId: evt.pointerId };
+      swipeStateById[articleId] = { startX: evt.clientX, startY: evt.clientY, deltaX: 0, pointerId: evt.pointerId, captured: false };
       element.style.transition = 'none';
-      if (element.setPointerCapture) {
-        element.setPointerCapture(evt.pointerId);
-      }
     }
     window.handlePreviewPointerDown = handlePreviewPointerDown;
 
@@ -3073,7 +3130,24 @@ const HTML_APP = `<!DOCTYPE html>
       var state = swipeStateById[articleId];
       if (!state) return;
       if (state.pointerId !== evt.pointerId) return;
-      state.deltaX = evt.clientX - state.startX;
+      var dx = evt.clientX - state.startX;
+      var dy = evt.clientY - state.startY;
+      if (!state.captured) {
+        if (Math.abs(dy) > Math.abs(dx) + 4) {
+          delete swipeStateById[articleId];
+          element.style.transform = 'translateX(0px)';
+          return;
+        }
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) + 2) {
+          state.captured = true;
+          if (element.setPointerCapture) {
+            element.setPointerCapture(evt.pointerId);
+          }
+        } else {
+          return;
+        }
+      }
+      state.deltaX = dx;
       element.style.transform = 'translateX(' + Math.max(-120, Math.min(120, state.deltaX)) + 'px)';
     }
     window.handlePreviewPointerMove = handlePreviewPointerMove;
@@ -3261,6 +3335,7 @@ const HTML_APP = `<!DOCTYPE html>
       renderPlayerQueue();
       renderPlayerText();
       if (autoplay) loadPlayerIndex(playerIndex);
+      else loadPlayerIndex(playerIndex, { autoplay: false });
     }
 
     function getPlayerItemId(item, idx) {
@@ -3767,6 +3842,9 @@ const HTML_APP = `<!DOCTYPE html>
               if (errText) errMsg = errText;
             } catch (e2) {}
           }
+          if (typeof errMsg === 'string') {
+            errMsg = errMsg.replace(/\s+/g, ' ').trim();
+          }
           throw new Error(errMsg);
         }
         var blob = await res.blob();
@@ -3850,7 +3928,10 @@ const HTML_APP = `<!DOCTYPE html>
         try {
           await downloadItemAudio(item);
         } catch (err) {
-          showToast('Download failed for "' + (item.title || 'Untitled') + '"', 'warning');
+          var reason = (err && err.message) ? String(err.message) : 'Unknown error';
+          reason = reason.replace(/\s+/g, ' ').trim();
+          setPlayerStatus('Download failed: ' + reason, true);
+          showToast('Download failed for "' + (item.title || 'Untitled') + '": ' + reason, 'warning');
         }
       }
       playerDownloadInFlight = false;
@@ -4370,6 +4451,7 @@ const HTML_APP = `<!DOCTYPE html>
         playerSelectAll.disabled = true;
         updateRailSelectionBadges();
         updateResultsSummary();
+        updatePlayerResultsSummary(0, 0);
         updatePlayerDownloadStatus();
         schedulePersistAppState();
         return;
@@ -4400,6 +4482,7 @@ const HTML_APP = `<!DOCTYPE html>
         playerSelectAll.indeterminate = false;
         updateRailSelectionBadges();
         updateResultsSummary();
+        updatePlayerResultsSummary(0, 0);
         updatePlayerDownloadStatus();
         schedulePersistAppState();
         return;
@@ -4544,6 +4627,7 @@ const HTML_APP = `<!DOCTYPE html>
       });
       updateRailSelectionBadges();
       updateResultsSummary();
+      updatePlayerResultsSummary(filteredIndices.length, filteredSelected);
       updatePlayerDownloadStatus();
       schedulePersistAppState();
     }
@@ -5039,10 +5123,8 @@ const HTML_APP = `<!DOCTYPE html>
       var displayCount = filteredSelected;
 
       restoreBtn.disabled = activeSelectedItems.length === 0;
-      removeSelectedBtn.disabled = activeSelectedItems.length === 0;
       if (deleteSelectedHistoryBtn) deleteSelectedHistoryBtn.disabled = activeSelectedItems.length === 0;
       restoreBtn.textContent = displayCount > 0 ? 'Restore (' + displayCount + ')' : 'Restore';
-      removeSelectedBtn.textContent = displayCount > 0 ? 'Remove (' + displayCount + ')' : 'Remove';
       if (deleteSelectedHistoryBtn) {
         deleteSelectedHistoryBtn.textContent = displayCount > 0 ? 'Delete (' + displayCount + ')' : 'Delete';
       }
@@ -5050,10 +5132,12 @@ const HTML_APP = `<!DOCTYPE html>
       if (deletedItems.length === 0 || filtered.length === 0) {
         selectAllDeleted.checked = false;
         selectAllDeleted.indeterminate = false;
+        updateDeletedResultsSummary();
         return;
       }
       selectAllDeleted.checked = filteredSelected > 0 && filteredSelected === filtered.length;
       selectAllDeleted.indeterminate = filteredSelected > 0 && filteredSelected < filtered.length;
+      updateDeletedResultsSummary();
     }
 
     function toggleRestoreItem(checkbox) {
@@ -5202,6 +5286,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (deletedItems.length === 0) {
         deletedList.innerHTML = '<div class="empty-state-panel"><div class="empty-state-title">No deleted items in history</div><div class="empty-state-subtitle">Deleted stories appear here so they can be restored or permanently cleared.</div></div>';
         updateSelectedButtons();
+        updateDeletedResultsSummary();
         schedulePersistAppState();
         return;
       }
@@ -5209,6 +5294,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (filtered.length === 0) {
         deletedList.innerHTML = '<div class="empty-state-panel"><div class="empty-state-title">No deleted items match this filter</div><div class="empty-state-subtitle">Try a different search phrase or date sort option.</div></div>';
         updateSelectedButtons();
+        updateDeletedResultsSummary();
         schedulePersistAppState();
         return;
       }
@@ -5246,6 +5332,7 @@ const HTML_APP = `<!DOCTYPE html>
         });
       });
       updateSelectedButtons();
+      updateDeletedResultsSummary();
       schedulePersistAppState();
     }
 
@@ -5272,15 +5359,6 @@ const HTML_APP = `<!DOCTYPE html>
       } finally {
         restoreBtn.innerHTML = 'Restore';
       }
-    });
-
-    on(removeSelectedBtn, 'click', function() {
-      var activeSelectedItems = getActiveSelectedDeletedItems();
-      if (activeSelectedItems.length === 0) return;
-      activeSelectedItems.forEach(function(item) { selectedDeletedIds.delete(getDeletedItemKey(item)); });
-      updateSelectedButtons();
-      schedulePersistAppState();
-      showToast('Removed ' + activeSelectedItems.length + ' from selection', 'success');
     });
 
     on(deleteSelectedHistoryBtn, 'click', async function() {
@@ -5812,7 +5890,70 @@ const HTML_APP = `<!DOCTYPE html>
 </body>
 </html>`;
 
-  return { HTML_APP, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE };
+  const V4_CSS = `
+  <style id="v4-style-overrides">
+    @media (max-width: 900px) {
+      body.v4-mode .main-pane { padding: 0.45rem 0.45rem 5rem; }
+      body.v4-mode #cleanup-main-controls { margin-bottom: 0.55rem; }
+      body.v4-mode #cleanup-main-controls .btn { min-height: 44px; font-size: 0.95rem; }
+      body.v4-mode .article-item { min-height: 86px; align-items: center; }
+      body.v4-mode .preview-thumb,
+      body.v4-mode .preview-thumb-fallback { width: 68px; height: 68px; flex-basis: 68px; border-radius: 12px; }
+      body.v4-mode .article-title { font-size: 1.08rem; line-height: 1.25; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+      body.v4-mode .article-meta { font-size: 0.9rem; opacity: 0.92; }
+      body.v4-mode #preview-list .play-preview-btn,
+      body.v4-mode .player-row-actions { display: none; }
+      body.v4-mode #preview-list .swipe-item.v4-active .play-preview-btn,
+      body.v4-mode .swipe-item.v4-active .player-row-actions { display: inline-flex; }
+      body.v4-mode #preview-list .swipe-item.v4-active .swipe-content,
+      body.v4-mode #player-queue .swipe-item.v4-active .swipe-content {
+        background: #fff4e6;
+        border-left: 4px solid #ff9800;
+      }
+      body.v4-mode #preview-list .swipe-item.v4-active .article-meta::after {
+        content: "  •  swipe \u2190 delete, \u2192 archive";
+        color: #9a5a00;
+        font-weight: 600;
+      }
+      body.v4-mode .player-controls-row .btn { min-height: 56px; }
+      body.v4-mode .player-icon-btn .control-icon { font-size: 1.4rem; }
+      body.v4-mode .player-icon-btn .control-text { font-size: 0.82rem; }
+      body.v4-mode .player-row-action-btn { min-width: 2.3rem; min-height: 2rem; font-size: 0.94rem; }
+    }
+  </style>`;
+
+  const V4_SCRIPT = `
+  <script id="v4-behavior-script">
+  (function () {
+    document.body.classList.add('v4-mode');
+    function shouldIgnoreActivate(evt) {
+      var t = evt && evt.target;
+      if (!t || !t.closest) return false;
+      return !!(t.closest('a') || t.closest('button') || t.closest('input') || t.closest('label'));
+    }
+    function wireActiveRows(containerId) {
+      var root = document.getElementById(containerId);
+      if (!root || !root.addEventListener) return;
+      root.addEventListener('click', function (evt) {
+        if (shouldIgnoreActivate(evt)) return;
+        var row = evt.target && evt.target.closest ? evt.target.closest('.swipe-item') : null;
+        if (!row || !root.contains(row)) return;
+        root.querySelectorAll('.swipe-item.v4-active').forEach(function (n) {
+          if (n !== row) n.classList.remove('v4-active');
+        });
+        row.classList.toggle('v4-active');
+      });
+    }
+    wireActiveRows('preview-list');
+    wireActiveRows('player-queue');
+  })();
+  </script>`;
+
+  const HTML_APP_V4 = HTML_APP
+    .replace('</head>', `${V4_CSS}\n</head>`)
+    .replace('</body>', `${V4_SCRIPT}\n</body>`);
+
+  return { HTML_APP, HTML_APP_V4, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE };
 }
 
 export function getUiHtml(config) {

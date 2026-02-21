@@ -1,6 +1,6 @@
 {
   "name": "readwise-cleanup",
-  "version": "3.3.11",
+  "version": "3.3.22",
   "description": "Bulk delete/archive old Readwise Reader items with restoration support",
   "scripts": {
     "test:bootstrap": "node scripts/ensure-birpc-entry.mjs",
@@ -15,5 +15,9 @@
     "@cloudflare/workers-types": "^4.20241022.0",
     "vitest": "2.1.8",
     "wrangler": "^4.65.0"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.12"
   }
 }
