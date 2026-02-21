@@ -15,8 +15,9 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.22';
+const APP_VERSION = '3.3.23';
 const VERSION_HISTORY = [
+  { version: '3.3.23', completedAt: '2026-02-21', note: 'Added persistent Recent errors/warnings log in Settings (with clear action and timestamps) so transient toast/player failures remain visible after fade-out, and added mobile-web-app-capable meta to address browser deprecation warning.' },
   { version: '3.3.22', completedAt: '2026-02-21', note: 'Improved audio download failure diagnostics by surfacing explicit OpenAI TTS quota/auth/upstream error details through the API and player feedback/toast messaging instead of generic download failure text.' },
   { version: '3.3.21', completedAt: '2026-02-18', note: 'Integrated open-source article extraction for HTML newsletters/content using Mozilla Readability with linkedom DOM parsing, tightened Gmail MIME handling to avoid treating HTML parts as plain text, and improved TTS text assembly to prefer extracted readable body/excerpt/byline content while preventing raw HTML leakage.' },
   { version: '3.3.20', completedAt: '2026-02-17', note: 'Fixed Find full-width preview scrolling by preserving tab grid display semantics and enforcing main cleanup pane height constraints; removed redundant Remove action from Deleted History; aligned Player/History summary chips onto header row like Find; and fixed Gmail newsletter TTS extraction so HTML-only messages are converted to readable text instead of leaking raw markup.' },

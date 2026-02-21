@@ -256,6 +256,7 @@ const HTML_APP = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#0284c7">
   <title>Read Flow</title>
@@ -1024,6 +1025,47 @@ const HTML_APP = `<!DOCTYPE html>
     .toast.success { background: var(--success); }
     .toast.error { background: var(--danger); }
     .toast.warning { background: var(--warning); }
+    .recent-errors-wrap {
+      margin-top: 1rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.9rem;
+    }
+    .recent-errors-list {
+      margin-top: 0.6rem;
+      max-height: 240px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .recent-error-item {
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.83rem;
+      line-height: 1.35;
+    }
+    .recent-error-item:last-child { border-bottom: none; }
+    .recent-error-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.18rem;
+      color: var(--text-muted);
+      font-size: 0.74rem;
+    }
+    .recent-error-tag {
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--danger);
+    }
+    .recent-error-tag.warning { color: #b45309; }
+    .recent-errors-empty {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      padding: 0.75rem 0.2rem 0.1rem;
+    }
     @keyframes slideUp {
       from { transform: translate(-50%, 100%); opacity: 0; }
       to { transform: translate(-50%, 0); opacity: 1; }
@@ -1998,6 +2040,17 @@ const HTML_APP = `<!DOCTYPE html>
         <div class="btn-group">
           <button class="btn btn-outline" id="save-openai-key-btn">Save OpenAI Key</button>
         </div>
+        <div class="recent-errors-wrap">
+          <details id="recent-errors-details">
+            <summary style="cursor:pointer;font-weight:600;">Recent errors and warnings</summary>
+            <p style="color:var(--text-muted);font-size:0.8rem;margin:0.45rem 0 0.4rem;">Keeps the latest 12 warning/error messages after toast popups fade.</p>
+            <div class="btn-group" style="margin:0.3rem 0 0.2rem;">
+              <button class="btn btn-outline" id="clear-recent-errors-btn">Clear Recent</button>
+            </div>
+            <div class="recent-errors-list" id="recent-errors-list"></div>
+            <div class="recent-errors-empty" id="recent-errors-empty" style="display:none;">No recent errors.</div>
+          </details>
+        </div>
       </div>
     </div>
 
@@ -2137,10 +2190,13 @@ const HTML_APP = `<!DOCTYPE html>
     var playerChunkBlobByKey = {};
     var PLAYER_STATE_STORAGE_KEY = 'readwise_cleanup_player_state_v1';
     var APP_STATE_STORAGE_KEY = 'readwise_cleanup_app_state_v1';
+    var RECENT_ERROR_LOG_STORAGE_KEY = 'readwise_cleanup_recent_errors_v1';
+    var RECENT_ERROR_LOG_MAX = 12;
     var appStatePersistTimer = null;
     var settingsSaveTimer = null;
     var settingsSaveInFlight = false;
     var voicePreviewAudio = null;
+    var recentErrorLog = [];
 
     var sourceSelect = document.getElementById('source-select');
     var includeGmailToggle = document.getElementById('include-gmail-toggle');
@@ -2234,6 +2290,10 @@ const HTML_APP = `<!DOCTYPE html>
     var openAiKeyStatusEl = document.getElementById('openai-key-status');
     var saveOpenAiKeyBtn = document.getElementById('save-openai-key-btn');
     var settingsOpenAiKeyInput = document.getElementById('setting-openai-key');
+    var recentErrorsDetails = document.getElementById('recent-errors-details');
+    var clearRecentErrorsBtn = document.getElementById('clear-recent-errors-btn');
+    var recentErrorsListEl = document.getElementById('recent-errors-list');
+    var recentErrorsEmptyEl = document.getElementById('recent-errors-empty');
     var playerAudio = document.getElementById('player-audio');
     var playerStatus = document.getElementById('player-status');
     var playerFeedback = document.getElementById('player-feedback');
@@ -5796,6 +5856,9 @@ const HTML_APP = `<!DOCTYPE html>
 
     function showToast(message, type) {
       type = type || 'success';
+      if (type === 'warning' || type === 'error') {
+        addRecentErrorLog(message, type);
+      }
       var existing = document.querySelector('.toast');
       if (existing) existing.remove();
       var toast = document.createElement('div');
@@ -5803,6 +5866,82 @@ const HTML_APP = `<!DOCTYPE html>
       toast.textContent = message;
       document.body.appendChild(toast);
       setTimeout(function() { toast.remove(); }, 3000);
+    }
+
+    function persistRecentErrorLog() {
+      try {
+        localStorage.setItem(RECENT_ERROR_LOG_STORAGE_KEY, JSON.stringify(recentErrorLog));
+      } catch (err) {}
+    }
+
+    function renderRecentErrorLog() {
+      if (!recentErrorsListEl || !recentErrorsEmptyEl) return;
+      if (!recentErrorLog.length) {
+        recentErrorsListEl.innerHTML = '';
+        recentErrorsEmptyEl.style.display = 'block';
+        return;
+      }
+      recentErrorsEmptyEl.style.display = 'none';
+      recentErrorsListEl.innerHTML = recentErrorLog.map(function(entry) {
+        var when = Number(entry && entry.ts || 0);
+        var stamp = when > 0
+          ? new Date(when).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })
+          : '';
+        var level = String(entry && entry.level || 'error');
+        return '<div class="recent-error-item">' +
+          '<div class="recent-error-meta"><span class="recent-error-tag ' + escapeHtml(level) + '">' + escapeHtml(level) + '</span><span>' + escapeHtml(stamp) + '</span></div>' +
+          '<div>' + escapeHtml(String(entry && entry.message || '')) + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    function loadRecentErrorLog() {
+      try {
+        var raw = localStorage.getItem(RECENT_ERROR_LOG_STORAGE_KEY);
+        if (!raw) {
+          recentErrorLog = [];
+          renderRecentErrorLog();
+          return;
+        }
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          recentErrorLog = parsed
+            .filter(function(entry) { return entry && typeof entry.message === 'string' && entry.message.trim(); })
+            .map(function(entry) {
+              return {
+                message: String(entry.message || '').slice(0, 1200),
+                level: String(entry.level || 'error') === 'warning' ? 'warning' : 'error',
+                ts: Number(entry.ts || 0) || Date.now(),
+              };
+            })
+            .slice(0, RECENT_ERROR_LOG_MAX);
+        } else {
+          recentErrorLog = [];
+        }
+      } catch (err) {
+        recentErrorLog = [];
+      }
+      renderRecentErrorLog();
+    }
+
+    function addRecentErrorLog(message, level) {
+      var msg = String(message || '').replace(/\s+/g, ' ').trim();
+      if (!msg) return;
+      var normalizedLevel = String(level || 'error') === 'warning' ? 'warning' : 'error';
+      var now = Date.now();
+      var latest = recentErrorLog[0];
+      if (latest && latest.message === msg && latest.level === normalizedLevel && (now - Number(latest.ts || 0)) < 10000) {
+        latest.ts = now;
+      } else {
+        recentErrorLog.unshift({
+          message: msg.slice(0, 1200),
+          level: normalizedLevel,
+          ts: now,
+        });
+      }
+      if (recentErrorLog.length > RECENT_ERROR_LOG_MAX) recentErrorLog = recentErrorLog.slice(0, RECENT_ERROR_LOG_MAX);
+      persistRecentErrorLog();
+      renderRecentErrorLog();
     }
 
     function escapeHtml(str) {
@@ -5849,6 +5988,7 @@ const HTML_APP = `<!DOCTYPE html>
 
     async function initializeApp() {
       restorePlayerState();
+      loadRecentErrorLog();
       var restoredState = restoreAppState();
       await loadSettings();
       await loadLocations();
@@ -5886,6 +6026,15 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     initializeApp();
+
+    on(clearRecentErrorsBtn, 'click', function() {
+      recentErrorLog = [];
+      persistRecentErrorLog();
+      renderRecentErrorLog();
+      if (recentErrorsDetails && recentErrorsDetails.open) {
+        showToast('Recent error log cleared', 'success');
+      }
+    });
   </script>
 </body>
 </html>`;
