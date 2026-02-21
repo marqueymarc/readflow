@@ -15,8 +15,9 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.23';
+const APP_VERSION = '3.3.24';
 const VERSION_HISTORY = [
+  { version: '3.3.24', completedAt: '2026-02-21', note: 'Improved story open-url selection so podcast/feed links no longer outrank article links when both are present (Gmail link picking and Readwise HTML-derived fallback), fixing cases where player open action jumped to podcast pages instead of the article.' },
   { version: '3.3.23', completedAt: '2026-02-21', note: 'Added persistent Recent errors/warnings log in Settings (with clear action and timestamps) so transient toast/player failures remain visible after fade-out, and added mobile-web-app-capable meta to address browser deprecation warning.' },
   { version: '3.3.22', completedAt: '2026-02-21', note: 'Improved audio download failure diagnostics by surfacing explicit OpenAI TTS quota/auth/upstream error details through the API and player feedback/toast messaging instead of generic download failure text.' },
   { version: '3.3.21', completedAt: '2026-02-18', note: 'Integrated open-source article extraction for HTML newsletters/content using Mozilla Readability with linkedom DOM parsing, tightened Gmail MIME handling to avoid treating HTML parts as plain text, and improved TTS text assembly to prefer extracted readable body/excerpt/byline content while preventing raw HTML leakage.' },
@@ -1494,6 +1495,9 @@ function isLikelyNewsletterContentUrl(url, subject = '') {
 function pickBestGmailOpenUrl({ htmlContent, fallbackUrl, subject }) {
   const links = extractCandidateHttpUrlsFromHtml(htmlContent);
   for (const candidate of links) {
+    if (!isPodcastLikeUrl(candidate) && isLikelyNewsletterContentUrl(candidate, subject)) return candidate;
+  }
+  for (const candidate of links) {
     if (isLikelyNewsletterContentUrl(candidate, subject)) return candidate;
   }
   return fallbackUrl || '';
@@ -2097,9 +2101,15 @@ function deriveOpenUrl(article) {
   const emailLike = looksLikeEmailLikeArticle(article);
   const sourceUrl = cleanOpenUrl(normalizeHttpUrl(decodeHtmlEntities(article.source_url)));
   const readwiseUrl = cleanOpenUrl(normalizeHttpUrl(decodeHtmlEntities(article.url)));
-  const htmlUrl = extractFirstHttpUrlFromHtml(article.html_content);
+  const htmlUrl = extractFirstHttpUrlFromHtml(article.html_content, {
+    title: article.title || '',
+    preferNonPodcast: true,
+  });
 
   if (sourceUrl && !looksLikeEmailAddress(sourceUrl) && !isReadwiseDomain(sourceUrl)) {
+    if (isPodcastLikeUrl(sourceUrl) && htmlUrl && !isPodcastLikeUrl(htmlUrl)) {
+      return htmlUrl;
+    }
     return sourceUrl;
   }
   // For forwarded/email-like Readwise items, avoid jumping to arbitrary first link.
@@ -2190,6 +2200,33 @@ function isReadwiseDomain(url) {
   }
 }
 
+function isPodcastLikeUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const value = `${host}${path}`;
+    const hints = [
+      '/podcast',
+      '/podcasts',
+      'podcast.',
+      'audioboom.com/channels',
+      'player.fm',
+      'overcast.fm',
+      'spotify.com/show',
+      'apple.com/podcasts',
+      'soundcloud.com',
+      '/feed',
+      '/feeds',
+      '/rss',
+    ];
+    return hints.some((hint) => value.includes(hint));
+  } catch {
+    return false;
+  }
+}
+
 function looksLikeEmailAddress(value) {
   return typeof value === 'string' && /^[^/\s@]+@[^/\s@]+\.[^/\s@]+$/.test(value);
 }
@@ -2229,25 +2266,35 @@ function extractImageCaptionsFromHtml(html) {
   return Array.from(new Set(out)).slice(0, 20);
 }
 
-function extractFirstHttpUrlFromHtml(html) {
+function extractFirstHttpUrlFromHtml(html, options = {}) {
   if (!html || typeof html !== 'string') return null;
   const decodedHtml = decodeHtmlEntities(html);
+  const preferNonPodcast = options && options.preferNonPodcast !== false;
   const canonicalMatch = decodedHtml.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
     || decodedHtml.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i);
   if (canonicalMatch && canonicalMatch[1]) {
     const canonical = cleanOpenUrl(normalizeHttpUrl(canonicalMatch[1]));
-    if (canonical) return canonical;
+    if (canonical && (!preferNonPodcast || !isPodcastLikeUrl(canonical))) return canonical;
   }
 
   const hrefMatches = decodedHtml.match(/href=["']([^"']+)["']/ig) || [];
+  let fallback = null;
   for (const raw of hrefMatches) {
     const extracted = raw.replace(/^href=["']|["']$/g, '');
     const normalized = cleanOpenUrl(normalizeHttpUrl(extracted));
     if (!normalized) continue;
     if (isReadwiseDomain(normalized)) continue;
+    if (preferNonPodcast && isPodcastLikeUrl(normalized)) {
+      if (!fallback) fallback = normalized;
+      continue;
+    }
     return normalized;
   }
-  return null;
+  if (canonicalMatch && canonicalMatch[1]) {
+    const canonical = cleanOpenUrl(normalizeHttpUrl(canonicalMatch[1]));
+    if (canonical) return canonical;
+  }
+  return fallback;
 }
 
 function decodeHtmlEntities(value) {

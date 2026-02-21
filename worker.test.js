@@ -158,6 +158,17 @@ describe('gmail extraction helpers', () => {
     expect(openUrl).toBe('https://news.example.com/p/market-wrap');
   });
 
+  it('prefers non-podcast article links when podcast links appear first', () => {
+    const html = '<a href="https://www.economist.com/podcasts/2026/02/20/does-ai-have-a-zero-sum-problem">Listen</a>'
+      + '<a href="https://www.economist.com/finance-and-economics/2026/02/20/does-ai-have-a-zero-sum-problem">Read</a>';
+    const openUrl = pickBestGmailOpenUrl({
+      htmlContent: html,
+      fallbackUrl: 'https://mail.google.com/mail/u/0/#all/abc',
+      subject: 'Does AI have a zero sum problem?',
+    });
+    expect(openUrl).toBe('https://www.economist.com/finance-and-economics/2026/02/20/does-ai-have-a-zero-sum-problem');
+  });
+
   it('extracts non-tracker thumbnail from html images', () => {
     const html = '<img src="https://cdn.example.com/pixel.gif"><img src="https://cdn.example.com/header.jpg">';
     const thumb = pickBestGmailThumbnailUrl(html);
@@ -185,6 +196,16 @@ describe('readwise email-like handling', () => {
     expect(text).toContain('Main thesis: portfolio companies are growing with solid net retention.');
     expect(text).not.toMatch(/begin forwarded message/i);
     expect(text).not.toMatch(/unsubscribe/i);
+  });
+
+  it('prefers article link from html when source_url is podcast container', () => {
+    const article = {
+      title: 'Does AI have a zero sum problem?',
+      source_url: 'https://www.economist.com/podcasts/2026/02/20/does-ai-have-a-zero-sum-problem',
+      url: 'https://read.readwise.io/read/abc123',
+      html_content: '<a href="https://www.economist.com/finance-and-economics/2026/02/20/does-ai-have-a-zero-sum-problem">Read article</a>',
+    };
+    expect(deriveOpenUrl(article)).toBe('https://www.economist.com/finance-and-economics/2026/02/20/does-ai-have-a-zero-sum-problem');
   });
 });
 
@@ -501,7 +522,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.23');
+      expect(data.version).toBe('3.3.24');
     });
   });
 
@@ -896,7 +917,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.23');
+    expect(html).toContain('v3.3.24');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
