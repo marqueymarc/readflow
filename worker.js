@@ -15,8 +15,9 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.24';
+const APP_VERSION = '3.3.25';
 const VERSION_HISTORY = [
+  { version: '3.3.25', completedAt: '2026-02-21', note: 'Adjusted pane/list scrolling gutters so Find/Player/History right edges remain visible under scrollbars, preventing action buttons and row metadata from clipping at the right boundary.' },
   { version: '3.3.24', completedAt: '2026-02-21', note: 'Improved story open-url selection so podcast/feed links no longer outrank article links when both are present (Gmail link picking and Readwise HTML-derived fallback), fixing cases where player open action jumped to podcast pages instead of the article.' },
   { version: '3.3.23', completedAt: '2026-02-21', note: 'Added persistent Recent errors/warnings log in Settings (with clear action and timestamps) so transient toast/player failures remain visible after fade-out, and added mobile-web-app-capable meta to address browser deprecation warning.' },
   { version: '3.3.22', completedAt: '2026-02-21', note: 'Improved audio download failure diagnostics by surfacing explicit OpenAI TTS quota/auth/upstream error details through the API and player feedback/toast messaging instead of generic download failure text.' },
@@ -144,7 +145,8 @@ const GMAIL_OAUTH_STATE_KEY = 'gmail_oauth_state_v1';
 const GMAIL_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
 ];
-const GMAIL_SYNC_MAX_MESSAGE_FETCH = 40;
+const GMAIL_SYNC_MAX_MESSAGE_FETCH = 24;
+const GMAIL_SYNC_TIME_BUDGET_MS = 9000;
 const { HTML_APP, HTML_APP_V4, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE } = getUiHtml({
   appVersion: APP_VERSION,
   versionHistory: VERSION_HISTORY,
@@ -1104,8 +1106,14 @@ async function handleGmailSync(env, corsHeaders) {
     });
   }
   const messages = Array.isArray(listData.messages) ? listData.messages.slice(0, GMAIL_SYNC_MAX_MESSAGE_FETCH) : [];
+  const startedAt = Date.now();
   const items = [];
+  let stoppedEarly = false;
   for (const message of messages) {
+    if ((Date.now() - startedAt) > GMAIL_SYNC_TIME_BUDGET_MS) {
+      stoppedEarly = true;
+      break;
+    }
     const id = String(message && message.id || '');
     if (!id) continue;
     const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`;
@@ -1114,7 +1122,7 @@ async function handleGmailSync(env, corsHeaders) {
     });
     if (!msgRes.ok) continue;
     const msgData = await msgRes.json();
-    const normalized = normalizeGmailMessageFromApi(msgData, selectedLabels);
+    const normalized = normalizeGmailMessageFromApi(msgData, selectedLabels, { lightweight: true });
     if (normalized) items.push(normalized);
   }
   const existing = await getGmailItems(env);
@@ -1136,6 +1144,7 @@ async function handleGmailSync(env, corsHeaders) {
     matchedLabelIds: gmailLabelIds,
     unmatchedLabels: labelResolution.unmatchedNames,
     syncFetchLimit: GMAIL_SYNC_MAX_MESSAGE_FETCH,
+    stoppedEarly,
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
@@ -1517,8 +1526,9 @@ function pickBestGmailThumbnailUrl(htmlContent) {
   return '';
 }
 
-function normalizeGmailMessageFromApi(message, selectedLabels = []) {
+function normalizeGmailMessageFromApi(message, selectedLabels = [], options = {}) {
   if (!message || typeof message !== 'object') return null;
+  const lightweight = !!(options && options.lightweight);
   const id = String(message.id || '');
   if (!id) return null;
   const payload = message.payload || {};
@@ -1532,20 +1542,24 @@ function normalizeGmailMessageFromApi(message, selectedLabels = []) {
   const labelIds = Array.isArray(message.labelIds) ? message.labelIds.map((v) => String(v || '')).filter(Boolean) : [];
   const labels = selectedLabels && selectedLabels.length > 0 ? selectedLabels : labelIds;
   const textBody = extractPlainTextFromPayload(payload);
-  const htmlContent = extractHtmlFromPayload(payload);
+  const htmlContentRaw = extractHtmlFromPayload(payload);
+  const htmlContent = typeof htmlContentRaw === 'string' ? htmlContentRaw.slice(0, 240000) : '';
   const gmailUrl = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(id)}`;
   const openUrl = pickBestGmailOpenUrl({ htmlContent, fallbackUrl: gmailUrl, subject });
-  const readable = extractReadableArticleFromHtml(htmlContent, {
+  const readable = lightweight ? null : extractReadableArticleFromHtml(htmlContent, {
     charThreshold: 120,
     url: openUrl || gmailUrl,
   });
-  const readableBody = textBody || (readable && readable.textContent) || htmlToPlainText(htmlContent);
+  const plainFallback = htmlToPlainText(htmlContent);
+  const readableBodyRaw = textBody || (readable && readable.textContent) || plainFallback;
+  const readableBody = String(readableBodyRaw || '').slice(0, 120000);
+  const summaryFallback = normalizeTtsText(String(message.snippet || '').slice(0, 1200));
   const thumbnail = pickBestGmailThumbnailUrl(htmlContent);
   return normalizeGmailItem({
     id,
     subject: normalizeTtsText(subject) || (readable && readable.title) || 'Untitled',
     from: normalizeTtsText(from) || (readable && readable.byline) || 'Unknown',
-    summary: (readable && readable.excerpt) || '',
+    summary: (readable && readable.excerpt) || summaryFallback,
     text: readableBody,
     htmlContent,
     labels,

@@ -302,6 +302,7 @@ const HTML_APP = `<!DOCTYPE html>
       top: 0;
       height: 100vh;
       overflow-y: auto;
+      scrollbar-gutter: stable;
       display: flex;
       flex-direction: column;
     }
@@ -310,6 +311,7 @@ const HTML_APP = `<!DOCTYPE html>
       padding: 0.7rem 0.95rem 1.2rem;
       height: 100vh;
       overflow-y: auto;
+      scrollbar-gutter: stable both-edges;
       background: radial-gradient(circle at 8% 10%, #f9fcff 0%, #f4f8fc 45%, #f3f7fb 100%);
     }
     .main-inner {
@@ -1396,6 +1398,8 @@ const HTML_APP = `<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       overflow-y: auto;
+      scrollbar-gutter: stable both-edges;
+      padding-right: 0.3rem;
     }
     #deleted-tab {
       min-height: 100%;
@@ -1442,6 +1446,8 @@ const HTML_APP = `<!DOCTYPE html>
       flex: 1;
       min-height: 0;
       overflow-y: auto;
+      scrollbar-gutter: stable both-edges;
+      padding-right: 0.3rem;
       margin-top: 0;
       border-top: none;
       padding-top: 0;
@@ -1464,6 +1470,8 @@ const HTML_APP = `<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       overflow-y: auto;
+      scrollbar-gutter: stable both-edges;
+      padding-right: 0.3rem;
       margin-top: 0.8rem;
     }
     .player-status {
