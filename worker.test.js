@@ -81,6 +81,16 @@ describe('buildTtsText', () => {
     expect(text).not.toContain('1234-5678-9012-3456');
   });
 
+  it('strips naked redirect/domain URL fragments from spoken text', () => {
+    const article = {
+      site_name: 'gmail',
+      content: 'But there will be a next case. com/redirect/2/eyJlIjoiaHR0cHM6Ly93d3cubm9haHBpbmlvbi5ibG9nL2FjdGlvbi9kaXNhYmxlX2VtYWlsP3Rva2VuPWV5SjFjMlZ5WDJsa0lqb3pNVEU1T1RB. Supreme Court ruled many tariffs illegal.',
+    };
+    const text = buildTtsText(article);
+    expect(text).not.toMatch(/\bcom\/redirect\/\d+\//i);
+    expect(text).toContain('Supreme Court ruled many tariffs illegal.');
+  });
+
   it('includes image captions extracted from HTML figcaptions and alt text', () => {
     const article = {
       html_content: '<figure><img src="x.jpg" alt="A lighthouse at dawn"></figure><figcaption>Harbor traffic before sunrise</figcaption>',
@@ -88,6 +98,35 @@ describe('buildTtsText', () => {
     const text = buildTtsText(article);
     expect(text).toContain('Image caption: A lighthouse at dawn');
     expect(text).toContain('Image caption: Harbor traffic before sunrise');
+  });
+
+  it('keeps useful image captions but removes url/avatar caption noise', () => {
+    const article = {
+      site_name: 'gmail',
+      html_content: [
+        '<figure><img src="x.jpg" alt="X avatar for @JDVance"></figure>',
+        '<figure><img src="y.jpg" alt="https://example.com/image.png"></figure>',
+        '<figcaption>Source: Joey Politano</figcaption>',
+        '<figcaption>Cartoon by U.J. Kepper, 1908</figcaption>',
+      ].join(''),
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Image caption: Cartoon by U.J. Kepper, 1908');
+    expect(text).not.toMatch(/X avatar/i);
+    expect(text).not.toMatch(/Joey Politano/i);
+    expect(text).not.toMatch(/https?:\/\//i);
+  });
+
+  it('removes redirect fragments and low-value image-caption phrases in plain extracted text', () => {
+    const article = {
+      site_name: 'gmail',
+      content: 'But there will be a next case. com/redirect/2/eyJlIjoiaHR0cHM6Ly93d3cubm9haHBpbmlvbi5ibG9nL2FjdGlvbi9kaXNhYmxlX2VtYWlsP3Rva2VuPWV5SjFjMlZ5WDJsa0lqb3pNVEU1T1RBc0luQnZjM1JmYVdRaU9qRTRPRFk0T1RVME9Td2lhV0YwSWpveE56Y3hOelV6TmpNeUxDSmxlSEFpT2pFNE1ETXlPRGsyTXpJc0ltbHpjeUk2SW5CMVlpMHpOVE0wTlNJc0luTjFZaUk2SW1ScGMyRmliR1ZmWlcxaGFXd2lmUS5OTy0yOXRORDZpNjVHMlhtZG1aYnpiODljMkxZRVd5OGY3SUVGTk01bS04IiwicCI6MTg4Njg5NTQ5LCJzIjozNTM0NSwiZiI6dHJ1ZSwidSI6MzExOTkw. Image caption: Source: ABC. Image caption: X avatar for @JDVance. Supreme Court ruled many tariffs illegal.',
+    };
+    const text = buildTtsText(article);
+    expect(text).toContain('Supreme Court ruled many tariffs illegal.');
+    expect(text).not.toMatch(/\bcom\/redirect\/\d+\//i);
+    expect(text).not.toMatch(/Image caption:\s*Source/i);
+    expect(text).not.toMatch(/X avatar/i);
   });
 
   it('strips gmail newsletter boilerplate while keeping core body text', () => {
@@ -125,6 +164,7 @@ describe('buildTtsText', () => {
     expect(text).toContain('DealBook: Game on for Paramount.');
     expect(text).toContain('Also, Goldman Sachs backtrack on D.E.I.');
     expect(text).not.toMatch(/<!DOCTYPE|<html|<head|<table|<tr|<td/i);
+    expect(text).not.toMatch(/\.x\{\}/i);
   });
 
   it('uses article-body extraction for html newsletters/readwise pages', () => {
@@ -173,6 +213,16 @@ describe('gmail extraction helpers', () => {
     const html = '<img src="https://cdn.example.com/pixel.gif"><img src="https://cdn.example.com/header.jpg">';
     const thumb = pickBestGmailThumbnailUrl(html);
     expect(thumb).toBe('https://cdn.example.com/header.jpg');
+  });
+
+  it('skips tiny/logo/tracker images and prefers larger content image', () => {
+    const html = [
+      '<img src="https://img.example.com/pixel.gif" width="1" height="1">',
+      '<img src="https://img.example.com/logo.png" width="32" height="32">',
+      '<img src="https://img.example.com/hero.jpg" width="640" height="360">',
+    ].join('');
+    const thumb = pickBestGmailThumbnailUrl(html);
+    expect(thumb).toBe('https://img.example.com/hero.jpg');
   });
 });
 
@@ -507,12 +557,33 @@ describe('API Endpoints', () => {
       expect(data.settings.previewLimit).toBe(500);
       expect(data.settings.confirmActions).toBe(true);
       expect(data.settings.mockTts).toBe(true);
+      expect(data.settings.ttsProvider).toBe('openai');
+      expect(data.settings.ttsVoice).toBe('alloy');
+      expect(data.settings.awsPollyVoice).toBe('Joanna');
       expect(data.settings.audioBackSeconds).toBe(5);
       expect(data.settings.audioForwardSeconds).toBe(180);
       expect(data.settings.maxOpenTabs).toBe(5);
       expect(data.settings.playerAutoNext).toBe(true);
       expect(data.settings.playerAutoAction).toBe('none');
       expect(data.settings.gmailSelectedLabels).toEqual([]);
+    });
+
+    it('accepts aws polly provider settings and voice', async () => {
+      const res = await SELF.fetch('https://example.com/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ttsProvider: 'aws_polly_standard',
+          awsPollyVoice: 'Matthew',
+          ttsVoice: 'nova',
+        }),
+      });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.settings.ttsProvider).toBe('aws_polly_standard');
+      expect(data.settings.awsPollyVoice).toBe('Matthew');
+      expect(data.settings.ttsVoice).toBe('nova');
     });
   });
 
@@ -522,7 +593,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.25');
+      expect(data.version).toBe('3.3.27');
     });
   });
 
@@ -614,6 +685,7 @@ describe('API Endpoints', () => {
       expect(data.total).toBeGreaterThanOrEqual(1);
       expect(Array.isArray(data.preview)).toBe(true);
       expect(data.preview[0].id).toBe('gmail-preview-1');
+      expect(String(data.preview[0].thumbnail || '')).toContain('domain=example.com');
     });
 
     it('returns redirect when gmail connect config is missing', async () => {
@@ -801,6 +873,31 @@ describe('API Endpoints', () => {
       expect(res.status).toBe(400);
       expect(data.error).toContain('OpenAI key is not configured');
     });
+
+    it('returns credential-required error when aws polly provider selected without aws credentials', async () => {
+      await env.KV.put('settings', JSON.stringify({
+        defaultLocation: 'new',
+        defaultDays: 30,
+        previewLimit: 100,
+        confirmActions: true,
+        mockTts: false,
+        ttsProvider: 'aws_polly_standard',
+        awsPollyVoice: 'Joanna',
+      }));
+
+      const res = await SELF.fetch('https://example.com/api/audio/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          articleId: 'aws-provider-missing-creds',
+          text: 'This should require AWS credentials in real mode.',
+          mock: false,
+        }),
+      });
+      const data = await res.json();
+      expect(res.status).toBe(500);
+      expect(data.error).toContain('AWS Polly is selected');
+    });
   });
 
   describe('GET /favicon.ico', () => {
@@ -917,7 +1014,7 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.25');
+    expect(html).toContain('v3.3.27');
     expect(html).toContain('2026-02-15');
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
@@ -1178,14 +1275,16 @@ describe('HTML/JavaScript validity', () => {
     expect(script).toContain('lastPreviewLoadedAt = Date.now()');
     expect(script).toContain('prefetchPlayerChunk(item, itemId, chunks, chunkIndex + 1)');
     expect(html).toContain('id="player-current-header"');
+    expect(html).toContain('id="setting-tts-provider"');
     expect(html).toContain('id="setting-tts-voice"');
+    expect(html).toContain('id="setting-aws-polly-voice"');
     expect(html).toContain('id="cleanup-selected-count"');
     expect(html).toContain('id="player-selected-count"');
     expect(html).toContain('<option value="1.1">1.1x</option>');
     expect(html).toContain('<option value="1.7">1.7x</option>');
     expect(script).toContain('syncPlayerQueueAfterProcessedIds');
     expect(script).toContain("iconEl.textContent = isPlaying ? '⏸' : '▶'");
-    expect(script).toContain('voice: settings.ttsVoice || ');
+    expect(script).toContain('voice: getEffectiveTtsRequestVoice()');
     expect(script).toContain('playerSpeed: Number(parseFloat(playerSpeedSelect');
     expect(script).toContain('splitTtsTextIntoChunks(fullText, maxChars, firstChunkChars, secondChunkChars)');
   });

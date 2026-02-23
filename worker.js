@@ -15,8 +15,10 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.25';
+const APP_VERSION = '3.3.27';
 const VERSION_HISTORY = [
+  { version: '3.3.27', completedAt: '2026-02-22', note: 'Added selectable TTS provider support with AWS Polly Standard integration (Settings switch + Polly voice selection), provider-aware TTS caching/headers, and worker-side SigV4 request signing for Polly synthesis to enable lower-cost playback mode.' },
+  { version: '3.3.26', completedAt: '2026-02-22', note: 'Hardened iPhone audio playback reliability by normalizing chunk MIME handling, adding robust media-ready timeout/error handling, and improving explicit autoplay-block feedback; also ensured Next/Auto-next continue only through checked queue items after queue mutations, and improved Gmail/newsletter TTS cleanup to suppress redirect URL fragments and low-value image-caption boilerplate.' },
   { version: '3.3.25', completedAt: '2026-02-21', note: 'Adjusted pane/list scrolling gutters so Find/Player/History right edges remain visible under scrollbars, preventing action buttons and row metadata from clipping at the right boundary.' },
   { version: '3.3.24', completedAt: '2026-02-21', note: 'Improved story open-url selection so podcast/feed links no longer outrank article links when both are present (Gmail link picking and Readwise HTML-derived fallback), fixing cases where player open action jumped to podcast pages instead of the article.' },
   { version: '3.3.23', completedAt: '2026-02-21', note: 'Added persistent Recent errors/warnings log in Settings (with clear action and timestamps) so transient toast/player failures remain visible after fade-out, and added mobile-web-app-capable meta to address browser deprecation warning.' },
@@ -1514,16 +1516,114 @@ function pickBestGmailOpenUrl({ htmlContent, fallbackUrl, subject }) {
 
 function pickBestGmailThumbnailUrl(htmlContent) {
   if (!htmlContent) return '';
-  const re = /<img[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
-  let m;
-  while ((m = re.exec(htmlContent))) {
-    const src = normalizeHttpUrl(m[1]);
-    if (!src) continue;
-    const lower = src.toLowerCase();
-    if (lower.includes('pixel') || lower.includes('track') || lower.includes('doubleclick')) continue;
-    return src;
+  const decoded = decodeHtmlEntities(String(htmlContent || ''));
+  const metaCandidates = extractMetaImageUrls(decoded);
+  for (const candidate of metaCandidates) {
+    if (candidate && !isLikelyTrackingImageUrl(candidate)) return candidate;
   }
+  const imageCandidates = extractImageCandidatesFromHtml(decoded);
+  if (imageCandidates.length > 0) return imageCandidates[0];
   return '';
+}
+
+function isLikelyTrackingImageUrl(url) {
+  if (!url) return true;
+  const lower = String(url).toLowerCase();
+  const badHints = [
+    'pixel',
+    'track',
+    'doubleclick',
+    'open-tracker',
+    '/beacon',
+    '/collect',
+    '/metrics',
+    'mailtrack',
+    'utm_campaign=',
+    'utm_medium=email',
+    'spacer',
+    '1x1',
+  ];
+  return badHints.some((hint) => lower.includes(hint));
+}
+
+function extractMetaImageUrls(html) {
+  if (!html || typeof html !== 'string') return [];
+  const out = [];
+  const patterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/ig,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/ig,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/ig,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/ig,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(html))) {
+      const normalized = cleanOpenUrl(normalizeHttpUrl(m[1]));
+      if (!normalized) continue;
+      out.push(normalized);
+      if (out.length >= 8) return out;
+    }
+  }
+  return out;
+}
+
+function parseImageDimension(tag, axis) {
+  const attr = tag.match(new RegExp(`\\b${axis}\\s*=\\s*["']?(\\d{1,5})["']?`, 'i'));
+  if (attr && attr[1]) return parseInt(attr[1], 10);
+  const style = tag.match(new RegExp(`${axis}\\s*:\\s*(\\d{1,5})px`, 'i'));
+  if (style && style[1]) return parseInt(style[1], 10);
+  return 0;
+}
+
+function extractImageCandidatesFromHtml(html) {
+  if (!html || typeof html !== 'string') return [];
+  const tags = html.match(/<img[^>]*>/gi) || [];
+  const scored = [];
+  for (const tag of tags) {
+    const srcMatch = tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    const srcsetMatch = tag.match(/\bsrcset\s*=\s*["']([^"']+)["']/i);
+    let raw = srcMatch && srcMatch[1] ? srcMatch[1] : '';
+    if (!raw && srcsetMatch && srcsetMatch[1]) {
+      const parts = srcsetMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        raw = parts[parts.length - 1].split(/\s+/)[0] || '';
+      }
+    }
+    const normalized = cleanOpenUrl(normalizeHttpUrl(raw));
+    if (!normalized) continue;
+    if (isLikelyTrackingImageUrl(normalized)) continue;
+    const width = parseImageDimension(tag, 'width');
+    const height = parseImageDimension(tag, 'height');
+    if ((width > 0 && width < 56) || (height > 0 && height < 56)) continue;
+    let score = 1;
+    if (width >= 240 || height >= 240) score += 2;
+    if (width >= 480 || height >= 480) score += 2;
+    const lower = normalized.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp')) score += 1;
+    if (lower.endsWith('.gif')) score -= 1;
+    if (lower.includes('logo')) score -= 0.4;
+    scored.push({ url: normalized, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((entry) => entry.url);
+}
+
+function extractHostFromEmailAddress(value) {
+  if (!value || typeof value !== 'string') return '';
+  const m = value.match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return m && m[1] ? String(m[1]).toLowerCase() : '';
+}
+
+function getGmailThumbnailFallbackUrl(openUrl, from) {
+  let host = '';
+  try {
+    if (openUrl) host = String(new URL(openUrl).hostname || '').toLowerCase();
+  } catch {}
+  const senderHost = extractHostFromEmailAddress(from);
+  if (!host || host.includes('mail.google.com')) host = senderHost || host;
+  host = host.replace(/^www\./, '');
+  if (!host) return '';
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
 }
 
 function normalizeGmailMessageFromApi(message, selectedLabels = [], options = {}) {
@@ -1554,7 +1654,7 @@ function normalizeGmailMessageFromApi(message, selectedLabels = [], options = {}
   const readableBodyRaw = textBody || (readable && readable.textContent) || plainFallback;
   const readableBody = String(readableBodyRaw || '').slice(0, 120000);
   const summaryFallback = normalizeTtsText(String(message.snippet || '').slice(0, 1200));
-  const thumbnail = pickBestGmailThumbnailUrl(htmlContent);
+  const thumbnail = pickBestGmailThumbnailUrl(htmlContent) || getGmailThumbnailFallbackUrl(openUrl || gmailUrl, from);
   return normalizeGmailItem({
     id,
     subject: normalizeTtsText(subject) || (readable && readable.title) || 'Untitled',
@@ -1627,18 +1727,21 @@ function normalizeGmailItem(item) {
     const ts = Date.parse(item.publishedAt);
     return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
   })();
+  const openUrl = cleanOpenUrl(normalizeHttpUrl(String(item.openUrl || item.url || item.sourceUrl || '')));
+  const gmailUrl = cleanOpenUrl(normalizeHttpUrl(String(item.gmailUrl || `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(String(id))}`)));
+  const fallbackThumb = getGmailThumbnailFallbackUrl(openUrl || gmailUrl, String(item.author || item.from || ''));
   return {
     kind: 'gmail',
     id: String(id),
     title: String(item.title || item.subject || 'Untitled'),
     author: String(item.author || item.from || 'Unknown'),
     url: cleanOpenUrl(normalizeHttpUrl(String(item.url || item.openUrl || item.sourceUrl || ''))),
-    openUrl: cleanOpenUrl(normalizeHttpUrl(String(item.openUrl || item.url || item.sourceUrl || ''))),
-    gmailUrl: cleanOpenUrl(normalizeHttpUrl(String(item.gmailUrl || `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(String(id))}`))),
+    openUrl,
+    gmailUrl,
     savedAt: savedAtIso,
     publishedAt: publishedAtIso,
     site: 'gmail',
-    thumbnail: item.thumbnail ? String(item.thumbnail) : null,
+    thumbnail: item.thumbnail ? String(item.thumbnail) : (fallbackThumb || null),
     labels,
     summary: normalizeTtsText(item.summary || ''),
     textContent: normalizeTtsText(item.text || item.textContent || ''),
@@ -1750,7 +1853,7 @@ async function handleAudioTts(request, env, corsHeaders) {
   const body = await request.json();
   const articleId = String(body.articleId || '');
   const text = typeof body.text === 'string' ? body.text.trim() : '';
-  const voice = typeof body.voice === 'string' && body.voice.trim() ? body.voice.trim() : 'alloy';
+  const requestedVoice = typeof body.voice === 'string' && body.voice.trim() ? body.voice.trim() : '';
   const speed = Number.isFinite(Number(body.speed)) ? Math.min(4, Math.max(0.5, Number(body.speed))) : 1;
   const chunkIndex = Number.isFinite(Number(body.chunkIndex)) ? Math.max(0, parseInt(body.chunkIndex, 10)) : 0;
 
@@ -1764,13 +1867,19 @@ async function handleAudioTts(request, env, corsHeaders) {
   const settings = await getSettings(env);
   const explicitMock = typeof body.mock === 'boolean' ? body.mock : null;
   const useMockTts = explicitMock !== null ? explicitMock : settings.mockTts === true;
+  const provider = settings.ttsProvider === 'aws_polly_standard' ? 'aws_polly_standard' : 'openai';
+  const defaultVoice = provider === 'aws_polly_standard'
+    ? (settings.awsPollyVoice || 'Joanna')
+    : (settings.ttsVoice || 'alloy');
+  const voice = requestedVoice || defaultVoice;
+  const modelLabel = provider === 'aws_polly_standard' ? 'aws-polly-standard' : 'gpt-4o-mini-tts';
   const cacheKey = await getTtsCacheKey({
     articleId: articleId || 'none',
     text,
     voice,
     speed,
     chunkIndex,
-    model: 'gpt-4o-mini-tts',
+    model: modelLabel,
     mock: useMockTts,
   });
   const cacheStoreKey = `tts_cache:${cacheKey}`;
@@ -1786,6 +1895,7 @@ async function handleAudioTts(request, env, corsHeaders) {
           'Cache-Control': 'private, max-age=3600',
           'X-TTS-Cache': 'HIT',
           'X-TTS-Mock': parsed.mock ? '1' : '0',
+          'X-TTS-Provider': parsed.provider || 'openai',
           ...corsHeaders,
         },
       });
@@ -1806,56 +1916,66 @@ async function handleAudioTts(request, env, corsHeaders) {
     audioBytes = MOCK_TTS_BYTES;
     contentType = 'audio/wav';
   } else {
-    const openaiKey = await getOpenAIKey(env);
-    if (!openaiKey) {
-      return new Response(JSON.stringify({ error: 'OpenAI key is not configured' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      });
-    }
-
-    const openaiRes = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openaiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini-tts',
+    if (provider === 'aws_polly_standard') {
+      const awsResult = await synthesizeWithAwsPollyStandard(env, {
+        text: text.slice(0, 2800),
         voice,
-        input: text.slice(0, 12000),
-        format: 'mp3',
-        speed,
-      }),
-    });
-    if (!openaiRes.ok) {
-      let upstreamMessage = '';
-      try {
-        const errJson = await openaiRes.json();
-        upstreamMessage = String(
-          (errJson && errJson.error && (errJson.error.message || errJson.error.code))
-          || ''
-        ).trim();
-      } catch {
+      });
+      audioBytes = awsResult.audioBytes;
+      contentType = awsResult.contentType || 'audio/mpeg';
+    } else {
+      const openaiKey = await getOpenAIKey(env);
+      if (!openaiKey) {
+        return new Response(JSON.stringify({ error: 'OpenAI key is not configured' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      const openaiRes = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini-tts',
+          voice,
+          input: text.slice(0, 12000),
+          format: 'mp3',
+          speed,
+        }),
+      });
+      if (!openaiRes.ok) {
+        let upstreamMessage = '';
         try {
-          upstreamMessage = String(await openaiRes.text() || '').trim();
-        } catch {}
+          const errJson = await openaiRes.json();
+          upstreamMessage = String(
+            (errJson && errJson.error && (errJson.error.message || errJson.error.code))
+            || ''
+          ).trim();
+        } catch {
+          try {
+            upstreamMessage = String(await openaiRes.text() || '').trim();
+          } catch {}
+        }
+        if (openaiRes.status === 429) {
+          throw new Error(`OpenAI TTS rate-limited or quota exceeded (429). Check OpenAI billing/quota, then retry. ${upstreamMessage}`.trim());
+        }
+        if (openaiRes.status === 401 || openaiRes.status === 403) {
+          throw new Error(`OpenAI TTS unauthorized (${openaiRes.status}). Verify saved OpenAI API key in Settings. ${upstreamMessage}`.trim());
+        }
+        throw new Error(`OpenAI TTS failed (${openaiRes.status}). ${upstreamMessage}`.trim());
       }
-      if (openaiRes.status === 429) {
-        throw new Error(`OpenAI TTS rate-limited or quota exceeded (429). Check OpenAI billing/quota, then retry. ${upstreamMessage}`.trim());
-      }
-      if (openaiRes.status === 401 || openaiRes.status === 403) {
-        throw new Error(`OpenAI TTS unauthorized (${openaiRes.status}). Verify saved OpenAI API key in Settings. ${upstreamMessage}`.trim());
-      }
-      throw new Error(`OpenAI TTS failed (${openaiRes.status}). ${upstreamMessage}`.trim());
+      contentType = openaiRes.headers.get('content-type') || 'audio/mpeg';
+      audioBytes = new Uint8Array(await openaiRes.arrayBuffer());
     }
-    contentType = openaiRes.headers.get('content-type') || 'audio/mpeg';
-    audioBytes = new Uint8Array(await openaiRes.arrayBuffer());
   }
 
   await env.KV.put(cacheStoreKey, JSON.stringify({
     audioBase64: uint8ToBase64(audioBytes),
     contentType,
+    provider,
     mock: useMockTts,
   }), { expirationTtl: 60 * 60 * 24 * 14 });
 
@@ -1865,9 +1985,179 @@ async function handleAudioTts(request, env, corsHeaders) {
       'Cache-Control': 'private, max-age=3600',
       'X-TTS-Cache': 'MISS',
       'X-TTS-Mock': useMockTts ? '1' : '0',
+      'X-TTS-Provider': provider,
       ...corsHeaders,
     },
   });
+}
+
+function getAwsPollyConfig(env) {
+  const accessKeyId = String(
+    env.AWS_POLLY_ACCESS_KEY_ID
+    || env.AWS_ACCESS_KEY_ID
+    || ''
+  ).trim();
+  const secretAccessKey = String(
+    env.AWS_POLLY_SECRET_ACCESS_KEY
+    || env.AWS_SECRET_ACCESS_KEY
+    || ''
+  ).trim();
+  const sessionToken = String(
+    env.AWS_POLLY_SESSION_TOKEN
+    || env.AWS_SESSION_TOKEN
+    || ''
+  ).trim();
+  const region = String(
+    env.AWS_POLLY_REGION
+    || env.AWS_REGION
+    || 'us-east-1'
+  ).trim();
+  return { accessKeyId, secretAccessKey, sessionToken, region };
+}
+
+function formatAmzDate(date) {
+  const iso = date.toISOString(); // 2026-02-22T12:34:56.000Z
+  return iso.replace(/[:-]|\.\d{3}/g, ''); // 20260222T123456Z
+}
+
+function bytesToHex(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  return Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Hex(value) {
+  const data = (value instanceof Uint8Array || value instanceof ArrayBuffer)
+    ? value
+    : new TextEncoder().encode(String(value || ''));
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return bytesToHex(new Uint8Array(hash));
+}
+
+async function hmacSha256(keyBytes, message) {
+  const enc = new TextEncoder();
+  const rawKey = keyBytes instanceof Uint8Array ? keyBytes : enc.encode(String(keyBytes || ''));
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    rawKey,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(String(message || '')));
+  return new Uint8Array(sig);
+}
+
+async function getAwsSigV4SigningKey(secretAccessKey, dateStamp, region, service) {
+  const kDate = await hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = await hmacSha256(kDate, region);
+  const kService = await hmacSha256(kRegion, service);
+  return hmacSha256(kService, 'aws4_request');
+}
+
+async function synthesizeWithAwsPollyStandard(env, options = {}) {
+  const cfg = getAwsPollyConfig(env);
+  if (!cfg.accessKeyId || !cfg.secretAccessKey) {
+    throw new Error('AWS Polly is selected, but AWS credentials are missing. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in Worker environment.');
+  }
+  const allowedVoices = new Set([
+    'Joanna',
+    'Matthew',
+    'Salli',
+    'Kimberly',
+    'Kendra',
+    'Ivy',
+    'Justin',
+    'Joey',
+    'Ruth',
+    'Stephen',
+    'Kevin',
+  ]);
+  const voice = allowedVoices.has(String(options.voice || ''))
+    ? String(options.voice)
+    : 'Joanna';
+  const text = String(options.text || '').trim();
+  if (!text) throw new Error('AWS Polly text is empty');
+  const payload = JSON.stringify({
+    Engine: 'standard',
+    OutputFormat: 'mp3',
+    Text: text,
+    TextType: 'text',
+    VoiceId: voice,
+    SampleRate: '22050',
+  });
+
+  const service = 'polly';
+  const method = 'POST';
+  const host = `polly.${cfg.region}.amazonaws.com`;
+  const canonicalUri = '/v1/speech';
+  const endpoint = `https://${host}${canonicalUri}`;
+  const now = new Date();
+  const amzDate = formatAmzDate(now);
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = await sha256Hex(payload);
+
+  const canonicalHeaderLines = [
+    `host:${host}`,
+    `x-amz-content-sha256:${payloadHash}`,
+    `x-amz-date:${amzDate}`,
+  ];
+  if (cfg.sessionToken) canonicalHeaderLines.push(`x-amz-security-token:${cfg.sessionToken}`);
+  canonicalHeaderLines.sort();
+  const canonicalHeaders = canonicalHeaderLines.join('\n') + '\n';
+  const signedHeaders = canonicalHeaderLines.map((line) => line.split(':')[0]).join(';');
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n');
+  const algorithm = 'AWS4-HMAC-SHA256';
+  const credentialScope = `${dateStamp}/${cfg.region}/${service}/aws4_request`;
+  const stringToSign = [
+    algorithm,
+    amzDate,
+    credentialScope,
+    await sha256Hex(canonicalRequest),
+  ].join('\n');
+  const signingKey = await getAwsSigV4SigningKey(cfg.secretAccessKey, dateStamp, cfg.region, service);
+  const signature = bytesToHex(await hmacSha256(signingKey, stringToSign));
+  const authorization = `${algorithm} Credential=${cfg.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const headers = {
+    Authorization: authorization,
+    'Content-Type': 'application/json',
+    'X-Amz-Content-Sha256': payloadHash,
+    'X-Amz-Date': amzDate,
+    Accept: 'audio/mpeg',
+  };
+  if (cfg.sessionToken) headers['X-Amz-Security-Token'] = cfg.sessionToken;
+
+  const res = await fetch(endpoint, {
+    method,
+    headers,
+    body: payload,
+  });
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const json = await res.json();
+      detail = String((json && (json.message || json.Message || json.__type)) || '').trim();
+    } catch {
+      try {
+        detail = String(await res.text() || '').trim();
+      } catch {}
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`AWS Polly unauthorized (${res.status}). Verify IAM policy allows polly:SynthesizeSpeech. ${detail}`.trim());
+    }
+    throw new Error(`AWS Polly failed (${res.status}). ${detail}`.trim());
+  }
+  const contentType = res.headers.get('content-type') || 'audio/mpeg';
+  const audioBytes = new Uint8Array(await res.arrayBuffer());
+  if (!audioBytes.length) throw new Error('AWS Polly returned empty audio');
+  return { contentType, audioBytes };
 }
 
 function handleGetVersion(corsHeaders) {
@@ -2001,14 +2291,6 @@ async function getTtsCacheKey(parts) {
     parts.mock ? 'mock' : 'real',
     textHash.slice(0, 24),
   ].join(':');
-}
-
-async function sha256Hex(value) {
-  const data = new TextEncoder().encode(String(value || ''));
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 function uint8ToBase64(uint8) {
@@ -2394,7 +2676,10 @@ function buildTtsText(article) {
 
   if (typeof article.html_content === 'string' && article.html_content.length > 0) {
     const captions = extractImageCaptionsFromHtml(article.html_content);
-    captions.forEach((caption) => pushUnique(`Image caption: ${caption}`));
+    captions.forEach((caption) => {
+      const cleanedCaption = sanitizeImageCaptionForTts(caption);
+      if (cleanedCaption) pushUnique(`Image caption: ${cleanedCaption}`);
+    });
     const plain = (readableFromHtml && readableFromHtml.textContent)
       ? readableFromHtml.textContent
       : htmlToReadableText(article.html_content);
@@ -2419,6 +2704,38 @@ function normalizeTtsText(value) {
     .trim();
 }
 
+function sanitizeImageCaptionForTts(caption) {
+  let out = normalizeTtsText(caption);
+  if (!out) return '';
+  const hadSourcePrefix = /^source:\s*/i.test(out);
+  const hadCreditPrefix = /^(?:credit|photo|image)\s*:/i.test(out);
+  if (hadSourcePrefix) return '';
+  out = out
+    .replace(/^image caption:\s*/i, '')
+    .replace(/^(?:source|credit|photo|image)\s*:\s*/i, '')
+    .replace(/\b(?:source|credit|photo|image)\s*:\s*[^.?!]{0,160}/gi, ' ')
+    .replace(/\b(?:source|credit|photo|image)\s*:\s*[^.?!]{0,140}(?=$|\s+image caption:)/gi, ' ')
+    .replace(/\b(?:source|credit|photo|image)\s*:\s*[^.?!]{0,140}[.?!]?$/gi, ' ')
+    .replace(/\bhttps?:\/\/[^\s)]+/gi, ' ')
+    .replace(/\bwww\.[^\s)]+/gi, ' ')
+    .replace(/\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|gov|edu|us|uk|ca|de|fr|jp|au|ly|me|tv)(?:\/[^\s)]*)?/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!out) return '';
+  const lowValuePatterns = [
+    /^image$/i,
+    /^source:?$/i,
+    /^x avatar(?: for)?\b/i,
+    /^avatar(?: for)?\b/i,
+    /^start writing$/i,
+    /^read more$/i,
+    /^click here$/i,
+  ];
+  if (lowValuePatterns.some((re) => re.test(out))) return '';
+  if (hadCreditPrefix && out.split(/\s+/).length <= 4) return '';
+  return out.slice(0, 220).trim();
+}
+
 function cleanupTtsText(text, context = {}) {
   let cleaned = normalizeTtsText(text);
   if (!cleaned) return '';
@@ -2429,9 +2746,19 @@ function cleanupTtsText(text, context = {}) {
     cleaned = cleanupEmailNewsletterText(cleaned);
   }
   cleaned = cleaned
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!DOCTYPE[^>]*>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\bhttps?:\/\/[^\s)]+/gi, ' ')
     .replace(/\bwww\.[^\s)]+/gi, ' ')
+    .replace(/\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|gov|edu|us|uk|ca|de|fr|jp|au|ly|me|tv)(?:\/[^\s)]*)?/gi, ' ')
+    .replace(/\b[a-z0-9-]{2,24}\/redirect\/\d+(?:\/[A-Za-z0-9._~%+\-=/]{8,})+[^\s)]*/gi, ' ')
+    .replace(/\b[a-z]{2,8}\/redirect\/\d+\/[A-Za-z0-9._%+\-=/]{16,}[^\s)]*/gi, ' ')
+    .replace(/\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, ' ')
+    .replace(/\bImage caption:\s*(?:source:\s*[^.?!]{0,160}|x avatar(?: for)?\s*[^.?!]{0,160}|avatar(?: for)?\s*[^.?!]{0,160}|image)\b[.?!]?/gi, ' ')
+    .replace(/\bSource:\s*[^.?!]{0,140}(?:[.?!]|$)/gi, ' ')
     .replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi, ' ')
     .replace(/\b(?:\d[ -]?){7,}\d\b/g, ' ')
     .replace(/\bView in browser\b[:\s-]*/gi, ' ')
@@ -2445,8 +2772,13 @@ function cleanupTtsText(text, context = {}) {
   const seen = new Set();
   const deduped = [];
   for (const part of parts) {
-    const sentence = normalizeTtsText(part);
+    let sentence = normalizeTtsText(part);
     if (!sentence) continue;
+    if (/^image caption:/i.test(sentence)) {
+      const cleanedCaption = sanitizeImageCaptionForTts(sentence.replace(/^image caption:\s*/i, ''));
+      if (!cleanedCaption) continue;
+      sentence = `Image caption: ${cleanedCaption}`;
+    }
     const key = sentence
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, '')
