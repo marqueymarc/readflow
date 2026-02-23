@@ -1,95 +1,132 @@
 # Read Flow
 
-Bulk delete or archive old Readwise Reader items with restoration support.
+Read Flow is a queue manager and text-to-speech web app for saved stories and newsletters.
 
-## Features
+It supports Readwise Reader plus Gmail-sourced newsletter/email content, with playback-oriented workflow across Find, Player, and History.
 
-- **Delete or Archive** selected preview items (with large-selection batching)
-- **Target specific streams**: Inbox, Later, Shortlist, or Feed
-- **Preview** items before taking action
-- **Date range filtering** with start/end dates and quick-date shortcuts
-- **Search within preview** and bulk-select filtered results
-- **Route-backed tabs** (`/`, `/deleted`, `/settings`, `/about`) for back/forward navigation
-- **Restoration**: Keeps a history of deleted items with URLs/titles so you can re-add them
-- **Doesn't affect archived items** - only processes items in the selected location
-- **Predeploy gates** to catch UI/script regressions before deployment
+Current app version: `3.3.27`
 
-## Deploy
+## Core Capabilities
 
-1. **Create KV namespace:**
-   ```bash
-   wrangler kv namespace create "KV"
-   ```
+- Unified **Find -> Player -> History** workflow for triage and listening
+- Source-aware preview and actions for:
+  - Readwise locations (`inbox`, `later`, `shortlist`, `feed`)
+  - Gmail items (via OAuth + label filtering)
+- Bulk actions on filtered + selected items:
+  - `Play`, `Open`, `Archive`, `Delete`
+- Player queue management with:
+  - selection-aware auto-next
+  - seekable progress bars
+  - persistent playback state
+  - per-item download status for offline use
+- Robust TTS cleanup for newsletter/email content (reduced boilerplate/URLs/noise)
+- Version history exposed through the version chip in-app
 
-2. **Update wrangler.toml** with the namespace ID from step 1
+## TTS Providers
 
-3. **Add your Readwise token:**
-   ```bash
-   wrangler secret put READWISE_TOKEN
-   ```
-   (Get your token from https://readwise.io/access_token)
+Read Flow supports two server-side TTS providers:
 
-4. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+- `openai` (default)
+- `aws_polly_standard`
 
-5. **Run gated deploy (recommended):**
-   ```bash
-   npm run deploy
-   ```
-   This runs:
-   - `npm run check:ui` (rendered client script syntax check)
-   - `npm run check:browser` (non-destructive browser smoke, includes 57-item batching check)
-   - `wrangler deploy`
+Provider and voice are controlled in Settings and persisted in KV-backed app settings.
 
-6. **Optional direct deploy (skips gates):**
-   ```bash
-   wrangler deploy
-   ```
+## Required and Optional Secrets
 
-## Usage
+Set secrets with Wrangler:
 
-1. Open your deployed URL
-2. Select a location (Inbox, Later, Shortlist, or Feed)
-3. Choose an end date (and optional start date) using picker/shortcuts
-4. Click "Preview" to load matching articles
-5. Optionally search/filter preview results
-6. Select items (all preview items are selected by default)
-7. Click "Delete Selected" or "Archive Selected" to process
+```bash
+wrangler secret put READWISE_TOKEN
+wrangler secret put OPENAI_API_KEY
+```
 
-### Batch Processing Notes
+Required for core Readwise + OpenAI playback:
 
-- Cleanup requests are sent in batches of 20 selected IDs.
-- Large actions (for example 57 selected items) process as `20 / 20 / 17`.
-- UI removes only successfully acted-on items from the preview list.
+- `READWISE_TOKEN`
+- `OPENAI_API_KEY` (unless running mock TTS mode)
 
-### Restoring Deleted Items
+Optional Gmail integration:
 
-1. Switch to the "Deleted History" tab
-2. Check the items you want to restore
-3. Click "Restore Selected"
+- `GMAIL_CLIENT_ID`
+- `GMAIL_CLIENT_SECRET`
+- `GMAIL_REDIRECT_URI` (optional override; defaults to `https://<origin>/api/gmail/oauth/callback`)
+- `GMAIL_HOOK_SECRET` (optional for secured hook calls)
 
-Items are restored by adding the URL back to Readwise Reader.
+Optional AWS Polly integration:
 
-## Tests
+- `AWS_ACCESS_KEY_ID` or `AWS_POLLY_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY` or `AWS_POLLY_SECRET_ACCESS_KEY`
+- `AWS_REGION` or `AWS_POLLY_REGION`
+- `AWS_SESSION_TOKEN` or `AWS_POLLY_SESSION_TOKEN` (optional)
+
+## Local Development
+
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Run tests:
+
+```bash
 npm test
 ```
 
-Current suite: `worker.test.js` plus deploy gates:
+Run predeploy checks manually:
 
 ```bash
 npm run check:ui
 npm run check:browser
 ```
 
-Note: in some local environments, `vitest` worker runtime can be fragile when the project path contains spaces. Running tests from a no-space path (for example `/tmp/readwise-cleanup-deploy`) is a reliable workaround.
+## Deploy
+
+1. Create KV namespace:
+
+```bash
+wrangler kv namespace create "KV"
+```
+
+2. Put the KV namespace ID into `wrangler.toml` for binding `KV`.
+3. Add required secrets.
+4. Deploy with gates (recommended):
+
+```bash
+npm run deploy
+```
+
+Equivalent direct deploy:
+
+```bash
+wrangler deploy
+```
+
+## Routes and APIs
+
+Top-level routes:
+
+- `/` Find
+- `/player`
+- `/deleted`
+- `/settings`
+- `/about`
+
+Primary APIs:
+
+- `/api/preview`, `/api/cleanup`, `/api/deleted`, `/api/restore`
+- `/api/settings`, `/api/version`
+- `/api/audio/tts`
+- `/api/gmail/status`, `/api/gmail/connect`, `/api/gmail/oauth/callback`, `/api/gmail/disconnect`, `/api/gmail/labels`, `/api/gmail/sync`
+
+## Repo Notes
+
+- Repo path: `/Volumes/Humboldt/marc-data/src/readflow`
+- Remote: `https://github.com/marqueymarc/readflow.git`
+- Package/worker name remains `readwise-cleanup` for deployment compatibility.
 
 ## Handoff Docs
 
-- `HANDOFF.md` - full technical/project handoff for new instances
-- `POSTPONED_UI_WORK.md` - deferred UI/layout work and suggestions
-- `NEW_INSTANCE_PROMPT.md` - copy/paste bootstrap prompt for a new Codex instance
+- `HANDOFF.md` - detailed project handoff
+- `POSTPONED_UI_WORK.md` - deferred UI/design ideas
+- `NEW_INSTANCE_PROMPT.md` - bootstrap prompt for new instances
