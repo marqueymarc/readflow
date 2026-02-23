@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Read Flow">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1ab3ff"/>
+      <stop offset="1" stop-color="#066bb1"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#0b2740" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect x="96" y="96" width="832" height="832" rx="200" fill="url(#bg)" filter="url(#shadow)"/>
+
+  <g stroke="#e6f6ff" stroke-width="44" stroke-linecap="round" opacity="0.98">
+    <path d="M286 320h452"/>
+    <path d="M286 418h452"/>
+    <path d="M286 516h356"/>
+    <path d="M286 614h274"/>
+  </g>
+
+  <circle cx="712" cy="710" r="152" fill="#f7fbff"/>
+  <path d="M640 710l42 42 102-102" stroke="#0b76c4" stroke-width="42" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <path d="M216 706l68-48v96z" fill="#e6f6ff"/>
+  <path d="M310 668c26 24 26 70 0 94" stroke="#e6f6ff" stroke-width="28" stroke-linecap="round" fill="none"/>
+  <path d="M362 634c52 50 52 138 0 188" stroke="#e6f6ff" stroke-width="28" stroke-linecap="round" fill="none"/>
+</svg>

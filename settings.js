@@ -5,7 +5,9 @@ const DEFAULT_SETTINGS = {
   previewLimit: 100,
   confirmActions: true,
   mockTts: true,
+  ttsProvider: 'openai',
   ttsVoice: 'alloy',
+  awsPollyVoice: 'Joanna',
   audioBackSeconds: 15,
   audioForwardSeconds: 30,
   maxOpenTabs: 5,
@@ -40,10 +42,30 @@ function sanitizeSettings(input) {
   const mockTts = typeof source.mockTts === 'boolean'
     ? source.mockTts
     : DEFAULT_SETTINGS.mockTts;
+  const allowedProviders = ['openai', 'aws_polly_standard'];
+  const ttsProvider = typeof source.ttsProvider === 'string' && allowedProviders.includes(source.ttsProvider)
+    ? source.ttsProvider
+    : DEFAULT_SETTINGS.ttsProvider;
   const allowedVoices = ['alloy', 'onyx', 'echo', 'nova', 'shimmer'];
   const ttsVoice = typeof source.ttsVoice === 'string' && allowedVoices.includes(source.ttsVoice)
     ? source.ttsVoice
     : DEFAULT_SETTINGS.ttsVoice;
+  const allowedAwsVoices = [
+    'Joanna',
+    'Matthew',
+    'Salli',
+    'Kimberly',
+    'Kendra',
+    'Ivy',
+    'Justin',
+    'Joey',
+    'Ruth',
+    'Stephen',
+    'Kevin',
+  ];
+  const awsPollyVoice = typeof source.awsPollyVoice === 'string' && allowedAwsVoices.includes(source.awsPollyVoice)
+    ? source.awsPollyVoice
+    : DEFAULT_SETTINGS.awsPollyVoice;
   const audioBackSeconds = normalizeInt(source.audioBackSeconds, DEFAULT_SETTINGS.audioBackSeconds, 5, 120);
   const audioForwardSeconds = normalizeInt(source.audioForwardSeconds, DEFAULT_SETTINGS.audioForwardSeconds, 5, 180);
   const maxOpenTabs = normalizeInt(source.maxOpenTabs, DEFAULT_SETTINGS.maxOpenTabs, 1, 50);
@@ -67,7 +89,9 @@ function sanitizeSettings(input) {
     previewLimit,
     confirmActions,
     mockTts,
+    ttsProvider,
     ttsVoice,
+    awsPollyVoice,
     audioBackSeconds,
     audioForwardSeconds,
     maxOpenTabs,

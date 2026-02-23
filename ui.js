@@ -1791,7 +1791,7 @@ const HTML_APP = `<!DOCTYPE html>
             <button class="btn btn-outline player-icon-btn" id="player-forward-btn" title="Forward" aria-label="Forward"><span class="control-icon">⏩</span><span class="control-text">30s</span></button>
             <button class="btn btn-outline player-icon-btn" id="player-next-btn" title="Next" aria-label="Next"><span class="control-icon">⏭</span></button>
           </div>
-          <audio id="player-audio" style="display:none;"></audio>
+          <audio id="player-audio" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;"></audio>
           <p id="player-feedback" class="player-feedback"></p>
         </div>
         </div>
@@ -1968,6 +1968,13 @@ const HTML_APP = `<!DOCTYPE html>
           </label>
         </div>
         <div class="form-group">
+          <label for="setting-tts-provider">TTS provider</label>
+          <select id="setting-tts-provider">
+            <option value="openai">OpenAI (gpt-4o-mini-tts)</option>
+            <option value="aws_polly_standard">AWS Polly Standard (lower cost)</option>
+          </select>
+        </div>
+        <div class="form-group" id="setting-openai-voice-group">
           <label for="setting-tts-voice">TTS voice</label>
           <select id="setting-tts-voice">
             <option value="alloy" selected>Alloy (default)</option>
@@ -1975,6 +1982,22 @@ const HTML_APP = `<!DOCTYPE html>
             <option value="echo">Echo (male)</option>
             <option value="nova">Nova (female)</option>
             <option value="shimmer">Shimmer (female)</option>
+          </select>
+        </div>
+        <div class="form-group" id="setting-aws-voice-group">
+          <label for="setting-aws-polly-voice">AWS Polly Standard voice</label>
+          <select id="setting-aws-polly-voice">
+            <option value="Joanna" selected>Joanna</option>
+            <option value="Matthew">Matthew</option>
+            <option value="Salli">Salli</option>
+            <option value="Kimberly">Kimberly</option>
+            <option value="Kendra">Kendra</option>
+            <option value="Ivy">Ivy</option>
+            <option value="Justin">Justin</option>
+            <option value="Joey">Joey</option>
+            <option value="Ruth">Ruth</option>
+            <option value="Stephen">Stephen</option>
+            <option value="Kevin">Kevin</option>
           </select>
         </div>
         <div class="form-group">
@@ -2158,7 +2181,9 @@ const HTML_APP = `<!DOCTYPE html>
       previewLimit: 100,
       confirmActions: true,
       mockTts: true,
+      ttsProvider: 'openai',
       ttsVoice: 'alloy',
+      awsPollyVoice: 'Joanna',
       audioBackSeconds: 15,
       audioForwardSeconds: 30,
       maxOpenTabs: 5,
@@ -2196,6 +2221,7 @@ const HTML_APP = `<!DOCTYPE html>
     var playerLoadToken = 0;
     var playerChunkFetchByKey = {};
     var playerChunkBlobByKey = {};
+    var isIosLikeDevice = false;
     var PLAYER_STATE_STORAGE_KEY = 'readwise_cleanup_player_state_v1';
     var APP_STATE_STORAGE_KEY = 'readwise_cleanup_app_state_v1';
     var RECENT_ERROR_LOG_STORAGE_KEY = 'readwise_cleanup_recent_errors_v1';
@@ -2289,7 +2315,11 @@ const HTML_APP = `<!DOCTYPE html>
     var connectGmailBtn = document.getElementById('connect-gmail-btn');
     var syncGmailBtn = document.getElementById('sync-gmail-btn');
     var settingMockTts = document.getElementById('setting-mock-tts');
+    var settingTtsProvider = document.getElementById('setting-tts-provider');
     var settingTtsVoice = document.getElementById('setting-tts-voice');
+    var settingAwsPollyVoice = document.getElementById('setting-aws-polly-voice');
+    var settingOpenAiVoiceGroup = document.getElementById('setting-openai-voice-group');
+    var settingAwsVoiceGroup = document.getElementById('setting-aws-voice-group');
     var settingAudioBackSeconds = document.getElementById('setting-audio-back-seconds');
     var settingAudioForwardSeconds = document.getElementById('setting-audio-forward-seconds');
     var settingMaxOpenTabs = document.getElementById('setting-max-open-tabs');
@@ -2343,6 +2373,102 @@ const HTML_APP = `<!DOCTYPE html>
       about: '/about',
       player: '/player',
     };
+
+    function detectIosLikeDevice() {
+      if (typeof navigator === 'undefined') return false;
+      var ua = String(navigator.userAgent || '');
+      if (/iPad|iPhone|iPod/i.test(ua)) return true;
+      var isTouchMac = /\bMacintosh\b/i.test(ua) && typeof document !== 'undefined' && ('ontouchend' in document);
+      return !!isTouchMac;
+    }
+
+    function normalizeMimeType(value) {
+      return String(value || '')
+        .split(';')[0]
+        .trim()
+        .toLowerCase();
+    }
+
+    function isAutoplayBlockedError(err) {
+      var name = String(err && err.name || '');
+      var msg = String(err && err.message || '').toLowerCase();
+      return name === 'NotAllowedError'
+        || msg.indexOf('notallowederror') >= 0
+        || msg.indexOf('user gesture') >= 0
+        || msg.indexOf('gesture') >= 0
+        || msg.indexOf('autoplay') >= 0;
+    }
+
+    function getPreferredAudioMime(packet) {
+      var hinted = normalizeMimeType((packet && packet.contentType) || (packet && packet.blob && packet.blob.type) || '');
+      if (hinted === 'audio/mpeg' || hinted === 'audio/mp3') return 'audio/mpeg';
+      if (hinted === 'audio/wav' || hinted === 'audio/wave' || hinted === 'audio/x-wav') return 'audio/wav';
+      if (hinted === 'audio/mp4' || hinted === 'audio/aac' || hinted === 'audio/x-m4a') return 'audio/mp4';
+      if (hinted === 'audio/ogg') return 'audio/ogg';
+      return (packet && packet.isMock) ? 'audio/wav' : 'audio/mpeg';
+    }
+
+    async function ensurePlayableAudioBlob(packet) {
+      if (!packet || !packet.blob) return null;
+      var blob = packet.blob;
+      var currentType = normalizeMimeType(blob.type || packet.contentType || '');
+      var preferredType = getPreferredAudioMime(packet);
+      var needsWrap = !currentType
+        || currentType === 'application/octet-stream'
+        || (isIosLikeDevice && currentType !== preferredType);
+      if (!needsWrap) return blob;
+      try {
+        var bytes = await blob.arrayBuffer();
+        return new Blob([bytes], { type: preferredType });
+      } catch (err) {
+        return blob;
+      }
+    }
+
+    function waitForAudioReady(element, timeoutMs) {
+      return new Promise(function(resolve, reject) {
+        if (!element) return reject(new Error('Audio element unavailable'));
+        var settled = false;
+        var timeout = null;
+        var events = ['loadedmetadata', 'canplay', 'canplaythrough', 'error', 'abort', 'emptied', 'stalled'];
+        var cleanup = function() {
+          events.forEach(function(evt) {
+            element.removeEventListener(evt, onEvent);
+          });
+          if (timeout) clearTimeout(timeout);
+        };
+        var finish = function(err) {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (err) reject(err);
+          else resolve();
+        };
+        var onEvent = function(evt) {
+          if (!evt) return;
+          if (evt.type === 'loadedmetadata' || evt.type === 'canplay' || evt.type === 'canplaythrough') {
+            finish();
+            return;
+          }
+          if (evt.type === 'stalled') return;
+          var err = new Error('Audio could not be decoded on this device. Re-download this story or switch voice and retry.');
+          err.code = 'audio_not_decodable';
+          finish(err);
+        };
+        events.forEach(function(evt) {
+          element.addEventListener(evt, onEvent);
+        });
+        if (element.readyState >= 1) {
+          finish();
+          return;
+        }
+        timeout = setTimeout(function() {
+          var err = new Error('Audio load timed out while preparing playback. This can happen on iPhone when the chunk format is invalid.');
+          err.code = 'audio_ready_timeout';
+          finish(err);
+        }, Math.max(3000, Number(timeoutMs) || 9000));
+      });
+    }
     var ROUTE_TABS = {
       '/': 'cleanup',
       '/deleted': 'deleted',
@@ -2425,6 +2551,26 @@ const HTML_APP = `<!DOCTYPE html>
       });
     }
 
+    function getEffectiveTtsProvider() {
+      return settings && settings.ttsProvider === 'aws_polly_standard'
+        ? 'aws_polly_standard'
+        : 'openai';
+    }
+
+    function getEffectiveTtsRequestVoice() {
+      if (getEffectiveTtsProvider() === 'aws_polly_standard') {
+        return (settings && settings.awsPollyVoice) || 'Joanna';
+      }
+      return (settings && settings.ttsVoice) || 'alloy';
+    }
+
+    function syncTtsProviderUi() {
+      var provider = getEffectiveTtsProvider();
+      if (settingTtsProvider) settingTtsProvider.value = provider;
+      if (settingOpenAiVoiceGroup) settingOpenAiVoiceGroup.style.display = provider === 'openai' ? '' : 'none';
+      if (settingAwsVoiceGroup) settingAwsVoiceGroup.style.display = provider === 'aws_polly_standard' ? '' : 'none';
+    }
+
     function applySettingsToUI() {
       var effectiveSource = settings.defaultSource || 'readwise';
       setSourceControlsFromValue(effectiveSource);
@@ -2452,7 +2598,9 @@ const HTML_APP = `<!DOCTYPE html>
       settingsPreviewLimit.value = settings.previewLimit;
       settingsConfirmActions.checked = settings.confirmActions;
       settingMockTts.checked = settings.mockTts;
+      if (settingTtsProvider) settingTtsProvider.value = settings.ttsProvider || 'openai';
       if (settingTtsVoice) settingTtsVoice.value = settings.ttsVoice || 'alloy';
+      if (settingAwsPollyVoice) settingAwsPollyVoice.value = settings.awsPollyVoice || 'Joanna';
       settingAudioBackSeconds.value = settings.audioBackSeconds;
       settingAudioForwardSeconds.value = settings.audioForwardSeconds;
       settingMaxOpenTabs.value = settings.maxOpenTabs;
@@ -2464,6 +2612,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (backTextEl) backTextEl.textContent = settings.audioBackSeconds + 's';
       if (fwdTextEl) fwdTextEl.textContent = settings.audioForwardSeconds + 's';
       syncSourceUi();
+      syncTtsProviderUi();
     }
 
     function syncSourceUi() {
@@ -2704,7 +2853,16 @@ const HTML_APP = `<!DOCTYPE html>
         showToast('No audio loaded', 'error');
         return;
       }
-      if (playerAudio.paused) playerAudio.play();
+      if (playerAudio.paused) {
+        applySelectedPlaybackRate();
+        playerAudio.play().catch(function(err) {
+          var msg = isAutoplayBlockedError(err)
+            ? 'iPhone blocked playback. Tap Play again after interacting with the page.'
+            : ((err && err.message) || 'Unable to start audio');
+          setPlayerStatus(msg, true);
+          showToast(msg, 'error');
+        });
+      }
       else playerAudio.pause();
     });
     on(floatingPlayerBackBtn, 'click', function() {
@@ -3545,6 +3703,19 @@ const HTML_APP = `<!DOCTYPE html>
       setPlayerPlayPauseButtonState();
     }
 
+    function getSelectedPlaybackRate() {
+      var rate = parseFloat(playerSpeedSelect && playerSpeedSelect.value || '1');
+      if (!(Number.isFinite(rate) && rate > 0)) return 1;
+      return Math.max(0.5, Math.min(2, rate));
+    }
+
+    function applySelectedPlaybackRate() {
+      if (!playerAudio) return;
+      var rate = getSelectedPlaybackRate();
+      playerAudio.defaultPlaybackRate = rate;
+      playerAudio.playbackRate = rate;
+    }
+
     function setPlayerPlayPauseButtonState() {
       if (!playerPlayPauseBtn) return;
       var isPlaying = !!(playerAudio && playerAudio.src && !playerAudio.paused);
@@ -3563,6 +3734,7 @@ const HTML_APP = `<!DOCTYPE html>
       if (!Array.isArray(processedIds) || processedIds.length === 0) return false;
       var options = opts || {};
       var removedSet = new Set(processedIds.map(function(id) { return String(id); }));
+      var enabledBudget = buildEnabledItemBudget(playerQueue, playerEnabledIds);
       var currentPlayingId = String(playerLoadedItemId || getCurrentPlayerItemId() || '');
       var removedCurrent = currentPlayingId && removedSet.has(currentPlayingId);
       if (removedCurrent) {
@@ -3578,13 +3750,17 @@ const HTML_APP = `<!DOCTYPE html>
       playerQueue = playerQueue.filter(function(item) {
         return !removedSet.has(String(item && item.id ? item.id : ''));
       });
-      playerEnabledIds = new Set(playerQueue.map(function(item, idx) { return getPlayerQueueId(item, idx); }));
+      playerEnabledIds = buildEnabledIdsFromBudget(playerQueue, enabledBudget);
       if (playerQueue.length === 0) {
         playerIndex = 0;
         renderPlayerQueue();
         renderPlayerText();
         schedulePersistAppState();
         return removedCurrent;
+      }
+      if (playerEnabledIds.size === 0) {
+        var currentQueueId = getCurrentPlayerQueueId();
+        if (currentQueueId) playerEnabledIds.add(currentQueueId);
       }
       if (playerIndex >= playerQueue.length) playerIndex = playerQueue.length - 1;
       renderPlayerQueue();
@@ -3782,8 +3958,10 @@ const HTML_APP = `<!DOCTYPE html>
         }
       }
       if (!row || !row.blob) return null;
+      var contentType = normalizeMimeType(row.contentType || (row.blob && row.blob.type) || '');
       return {
         blob: row.blob,
+        contentType: contentType || (row.isMock ? 'audio/wav' : 'audio/mpeg'),
         isMock: !!row.isMock,
         isReal: !row.isMock,
         key: 'downloaded:' + profileKey + '|' + String(chunkIndex),
@@ -3800,6 +3978,7 @@ const HTML_APP = `<!DOCTYPE html>
         itemId: String(itemId || ''),
         chunkIndex: Number(chunkIndex || 0),
         blob: packet.blob,
+        contentType: normalizeMimeType(packet.contentType || (packet.blob && packet.blob.type) || ''),
         isMock: !!packet.isMock,
         savedAt: Date.now(),
       });
@@ -3892,7 +4071,7 @@ const HTML_APP = `<!DOCTYPE html>
           body: JSON.stringify({
             articleId: item.id,
             text: chunkText,
-            voice: settings.ttsVoice || 'alloy',
+            voice: getEffectiveTtsRequestVoice(),
             speed: 1,
             chunkIndex: chunkIndex,
             mock: !!settings.mockTts,
@@ -3916,8 +4095,10 @@ const HTML_APP = `<!DOCTYPE html>
           throw new Error(errMsg);
         }
         var blob = await res.blob();
+        var contentType = normalizeMimeType(res.headers.get('content-type') || blob.type || '');
         var packet = {
           blob: blob,
+          contentType: contentType || (ttsMockHeader === '1' ? 'audio/wav' : 'audio/mpeg'),
           isMock: ttsMockHeader === '1',
           isReal: ttsMockHeader === '0',
           key: key,
@@ -4748,11 +4929,6 @@ const HTML_APP = `<!DOCTYPE html>
       schedulePersistPlayerState();
       schedulePersistAppState();
       setPlayerPlayPauseButtonState();
-      if (!(typeof navigator !== 'undefined' && navigator && navigator.onLine === false)) {
-        isItemFullyDownloaded(item).then(function(done) {
-          if (!done) queueDownloadsForItems([item]);
-        }).catch(function() {});
-      }
 
       try {
         if (!opts.suppressLoadingStatus) {
@@ -4772,30 +4948,36 @@ const HTML_APP = `<!DOCTYPE html>
           playerTtsModeEl.textContent = '';
         }
         if (loadToken !== playerLoadToken) return;
-        playerAudioObjectUrl = URL.createObjectURL(packet.blob);
+        var playableBlob = await ensurePlayableAudioBlob(packet);
+        if (!playableBlob || !playableBlob.size) {
+          throw new Error('Audio chunk is empty or unreadable on this device.');
+        }
+        playerAudioObjectUrl = URL.createObjectURL(playableBlob);
         playerAudio.src = playerAudioObjectUrl;
-        playerAudio.playbackRate = parseFloat(playerSpeedSelect && playerSpeedSelect.value || '1');
-        await new Promise(function(resolve) {
-          var applySeek = function() {
-            var duration = Number(playerAudio.duration || 0);
-            if (duration > 0) {
-              var durationMap = getChunkDurationMap(itemId);
-              durationMap[chunkIndex] = duration;
-              playerDurationByItemId[itemId] = Math.max(Number(playerDurationByItemId[itemId] || 0), sumKnownChunkDurations(itemId));
-            }
-            var target = duration > 0 ? Math.min(resumeAt, Math.max(0, duration - 0.1)) : resumeAt;
-            try { playerAudio.currentTime = Math.max(0, target); } catch (e) {}
-            resolve();
-          };
-          if (playerAudio.readyState >= 1) {
-            applySeek();
-          } else {
-            playerAudio.addEventListener('loadedmetadata', applySeek, { once: true });
-          }
-        });
+        applySelectedPlaybackRate();
+        await waitForAudioReady(playerAudio, isIosLikeDevice ? 12000 : 9000);
+        applySelectedPlaybackRate();
+        var duration = Number(playerAudio.duration || 0);
+        if (duration > 0) {
+          var durationMap = getChunkDurationMap(itemId);
+          durationMap[chunkIndex] = duration;
+          playerDurationByItemId[itemId] = Math.max(Number(playerDurationByItemId[itemId] || 0), sumKnownChunkDurations(itemId));
+        }
+        var target = duration > 0 ? Math.min(resumeAt, Math.max(0, duration - 0.1)) : resumeAt;
+        try { playerAudio.currentTime = Math.max(0, target); } catch (e) {}
         if (loadToken !== playerLoadToken) return;
         if (opts.autoplay !== false) {
-          await playerAudio.play();
+          try {
+            await playerAudio.play();
+          } catch (playErr) {
+            if (isAutoplayBlockedError(playErr)) {
+              setPlayerStatus('iPhone blocked autoplay after loading. Tap Play to start audio.', true);
+              setPlayerPlayPauseButtonState();
+              renderPlayerQueue();
+              return;
+            }
+            throw playErr;
+          }
         } else {
           setPlayerPlayPauseButtonState();
         }
@@ -4838,6 +5020,37 @@ const HTML_APP = `<!DOCTYPE html>
       return String(item && item.id ? item.id : 'item-' + idx) + ':' + idx;
     }
 
+    function buildEnabledItemBudget(queue, enabledIds) {
+      var budget = {};
+      if (!Array.isArray(queue) || !queue.length || !enabledIds || typeof enabledIds.has !== 'function') return budget;
+      for (var i = 0; i < queue.length; i++) {
+        var queueId = getPlayerQueueId(queue[i], i);
+        if (!enabledIds.has(queueId)) continue;
+        var itemId = getPlayerItemId(queue[i], i);
+        budget[itemId] = (budget[itemId] || 0) + 1;
+      }
+      return budget;
+    }
+
+    function buildEnabledIdsFromBudget(queue, budget) {
+      var out = new Set();
+      if (!Array.isArray(queue) || !queue.length) return out;
+      var mutableBudget = {};
+      if (budget && typeof budget === 'object') {
+        Object.keys(budget).forEach(function(key) {
+          var count = parseInt(budget[key], 10);
+          if (Number.isFinite(count) && count > 0) mutableBudget[key] = count;
+        });
+      }
+      for (var i = 0; i < queue.length; i++) {
+        var itemId = getPlayerItemId(queue[i], i);
+        if (!mutableBudget[itemId]) continue;
+        out.add(getPlayerQueueId(queue[i], i));
+        mutableBudget[itemId] -= 1;
+      }
+      return out;
+    }
+
     function findNextPlayableIndex(fromIdx) {
       for (var i = fromIdx + 1; i < playerQueue.length; i++) {
         if (playerEnabledIds.has(getPlayerQueueId(playerQueue[i], i))) return i;
@@ -4863,8 +5076,13 @@ const HTML_APP = `<!DOCTYPE html>
     function removePlayerQueueIndex(idx) {
       if (idx < 0 || idx >= playerQueue.length) return;
       if (idx === playerIndex) playerLoadToken += 1;
+      var enabledBudget = buildEnabledItemBudget(playerQueue, playerEnabledIds);
+      var removedItemId = getPlayerItemId(playerQueue[idx], idx);
+      if (removedItemId && enabledBudget[removedItemId]) {
+        enabledBudget[removedItemId] = Math.max(0, enabledBudget[removedItemId] - 1);
+      }
       playerQueue.splice(idx, 1);
-      playerEnabledIds = new Set(playerQueue.map(function(item, qIdx) { return getPlayerQueueId(item, qIdx); }));
+      playerEnabledIds = buildEnabledIdsFromBudget(playerQueue, enabledBudget);
       if (playerQueue.length === 0) {
         playerIndex = 0;
         clearPlayerAudioSource();
@@ -4876,6 +5094,10 @@ const HTML_APP = `<!DOCTYPE html>
       }
       if (idx < playerIndex) playerIndex -= 1;
       if (playerIndex >= playerQueue.length) playerIndex = playerQueue.length - 1;
+      if (playerEnabledIds.size === 0) {
+        var currentQueueId = getCurrentPlayerQueueId();
+        if (currentQueueId) playerEnabledIds.add(currentQueueId);
+      }
     }
 
     async function runPlayerItemAction(idx, action) {
@@ -4901,7 +5123,16 @@ const HTML_APP = `<!DOCTYPE html>
         showToast('No audio loaded', 'error');
         return;
       }
-      if (playerAudio.paused) playerAudio.play();
+      if (playerAudio.paused) {
+        applySelectedPlaybackRate();
+        playerAudio.play().catch(function(err) {
+          var msg = isAutoplayBlockedError(err)
+            ? 'iPhone blocked playback. Tap Play again after interacting with the page.'
+            : ((err && err.message) || 'Unable to start audio');
+          setPlayerStatus(msg, true);
+          showToast(msg, 'error');
+        });
+      }
       else playerAudio.pause();
     });
     on(playerBackBtn, 'click', function() {
@@ -4917,8 +5148,7 @@ const HTML_APP = `<!DOCTYPE html>
       seekPlayerQueueRowProgress(playerIndex, rel);
     });
     on(playerSpeedSelect, 'change', function() {
-      if (!playerAudio) return;
-      playerAudio.playbackRate = parseFloat(playerSpeedSelect.value || '1');
+      applySelectedPlaybackRate();
       schedulePersistAppState();
     });
     on(playerTextToggleBtn, 'click', function() {
@@ -4989,11 +5219,8 @@ const HTML_APP = `<!DOCTYPE html>
       }
       if (!settings.playerAutoNext) return;
       if (playerQueue.length === 0) return;
-      if (removedCurrent && playerIndex < playerQueue.length) {
-        await loadPlayerIndex(playerIndex);
-        return;
-      }
-      var nextIdx = findNextPlayableIndex(playerIndex);
+      var nextSearchStartIdx = removedCurrent ? Math.max(-1, playerIndex - 1) : playerIndex;
+      var nextIdx = findNextPlayableIndex(nextSearchStartIdx);
       if (nextIdx >= 0) {
         await loadPlayerIndex(nextIdx);
       }
@@ -5002,12 +5229,14 @@ const HTML_APP = `<!DOCTYPE html>
       saveCurrentPlayerProgress();
     });
     on(playerAudio, 'play', function() {
+      applySelectedPlaybackRate();
       setPlayerPlayPauseButtonState();
     });
     on(playerAudio, 'pause', function() {
       setPlayerPlayPauseButtonState();
     });
     on(playerAudio, 'loadedmetadata', function() {
+      applySelectedPlaybackRate();
       var itemId = playerLoadedItemId || getCurrentPlayerItemId();
       if (!itemId) return;
       var duration = Number(playerAudio.duration || 0);
@@ -5486,7 +5715,9 @@ const HTML_APP = `<!DOCTYPE html>
         previewLimit: parseInt(settingsPreviewLimit.value, 10),
         confirmActions: !!settingsConfirmActions.checked,
         mockTts: !!settingMockTts.checked,
+        ttsProvider: (settingTtsProvider && settingTtsProvider.value) || 'openai',
         ttsVoice: (settingTtsVoice && settingTtsVoice.value) || 'alloy',
+        awsPollyVoice: (settingAwsPollyVoice && settingAwsPollyVoice.value) || 'Joanna',
         audioBackSeconds: parseInt(settingAudioBackSeconds.value, 10),
         audioForwardSeconds: parseInt(settingAudioForwardSeconds.value, 10),
         maxOpenTabs: parseInt(settingMaxOpenTabs.value, 10),
@@ -5543,6 +5774,9 @@ const HTML_APP = `<!DOCTYPE html>
     async function previewSelectedVoice() {
       if (!settingTtsVoice) return;
       var voice = settingTtsVoice.value || 'alloy';
+      if (getEffectiveTtsProvider() === 'aws_polly_standard') {
+        voice = (settingAwsPollyVoice && settingAwsPollyVoice.value) || 'Joanna';
+      }
       try {
         var res = await fetch('/api/audio/tts', {
           method: 'POST',
@@ -5583,7 +5817,9 @@ const HTML_APP = `<!DOCTYPE html>
       settingsPreviewLimit,
       settingsConfirmActions,
       settingMockTts,
+      settingTtsProvider,
       settingTtsVoice,
+      settingAwsPollyVoice,
       settingAudioBackSeconds,
       settingAudioForwardSeconds,
       settingMaxOpenTabs,
@@ -5600,6 +5836,15 @@ const HTML_APP = `<!DOCTYPE html>
     on(settingAudioForwardSeconds, 'input', scheduleSaveSettingsImmediate);
     on(settingMaxOpenTabs, 'input', scheduleSaveSettingsImmediate);
     on(settingTtsVoice, 'change', function() {
+      previewSelectedVoice();
+    });
+    on(settingAwsPollyVoice, 'change', function() {
+      previewSelectedVoice();
+    });
+    on(settingTtsProvider, 'change', function() {
+      settings.ttsProvider = (settingTtsProvider && settingTtsProvider.value) || 'openai';
+      syncTtsProviderUi();
+      scheduleSaveSettingsImmediate();
       previewSelectedVoice();
     });
 
@@ -5995,6 +6240,17 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     async function initializeApp() {
+      isIosLikeDevice = detectIosLikeDevice();
+      if (playerAudio) {
+        playerAudio.preload = 'auto';
+        if (typeof playerAudio.setAttribute === 'function') {
+          playerAudio.setAttribute('playsinline', '');
+          playerAudio.setAttribute('webkit-playsinline', 'true');
+        } else {
+          playerAudio.playsInline = true;
+          playerAudio.webkitPlaysInline = true;
+        }
+      }
       restorePlayerState();
       loadRecentErrorLog();
       var restoredState = restoreAppState();
