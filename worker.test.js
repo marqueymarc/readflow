@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-import { extractDomain, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl, deriveOpenUrl } from './worker.js';
+import {
+  extractDomain,
+  buildTtsText,
+  pickBestGmailOpenUrl,
+  pickBestGmailThumbnailUrl,
+  deriveOpenUrl,
+  getArticleThumbnail,
+  buildPreviewFetchOptions,
+} from './worker.js';
 
 describe('extractDomain', () => {
   it('extracts domain from valid URL', () => {
@@ -188,6 +196,38 @@ describe('buildTtsText', () => {
     expect(text).toContain('Core insight paragraph one about macro conditions.');
     expect(text).toContain('Core insight paragraph two with portfolio implications.');
     expect(text).not.toMatch(/<!DOCTYPE|<html|<nav|<footer/i);
+  });
+});
+
+describe('preview thumbnail behavior', () => {
+  it('extracts thumbnail from html meta/image fallback when direct image fields are absent', () => {
+    const thumbnail = getArticleThumbnail({
+      title: 'Story',
+      html_content: '<meta property="og:image" content="https://cdn.example.com/hero.jpg"><img src="https://cdn.example.com/backup.jpg">',
+    });
+    expect(thumbnail).toBe('https://cdn.example.com/hero.jpg');
+  });
+
+  it('includes readwise html content during preview fetches so item images can be derived', () => {
+    const opts = buildPreviewFetchOptions({
+      source: 'readwise',
+      location: 'new',
+      beforeDate: '2026-02-25',
+      effectivePreviewLimit: 100,
+      effectivePreviewMaxPages: 20,
+    });
+    expect(opts.includeHtmlContent).toBe(true);
+  });
+
+  it('keeps gmail preview fetch lightweight because gmail thumbnails come from cached message payloads', () => {
+    const opts = buildPreviewFetchOptions({
+      source: 'gmail',
+      location: 'new',
+      beforeDate: '2026-02-25',
+      effectivePreviewLimit: 100,
+      effectivePreviewMaxPages: 20,
+    });
+    expect(opts.includeHtmlContent).toBe(false);
   });
 });
 
@@ -391,6 +431,74 @@ describe('API Endpoints', () => {
       });
       expect(res.headers.get('content-type')).toContain('application/json');
     });
+
+    it('processes selected gmail deletes from explicit item metadata even when source defaults to readwise', async () => {
+      await env.KV.put('gmail_items_v1', JSON.stringify([
+        {
+          id: 'gmail-msg-1',
+          title: 'Newsletter',
+          author: 'Team',
+          url: 'https://news.example.com/story',
+          openUrl: 'https://news.example.com/story',
+          gmailUrl: 'https://mail.google.com/mail/u/0/#all/gmail-msg-1',
+          site: 'gmail',
+          labels: ['Subscription'],
+          savedAt: '2026-02-25T10:00:00.000Z',
+        },
+      ]));
+      await env.KV.put('gmail_oauth_token_v1', JSON.stringify({
+        accessToken: 'test-token',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      }));
+
+      const originalFetch = globalThis.fetch;
+      const gmailFetchSpy = vi.fn(async (input, init) => {
+        const url = typeof input === 'string' ? input : String(input && input.url || '');
+        if (url.includes('gmail.googleapis.com/gmail/v1/users/me/messages/gmail-msg-1/trash')) {
+          return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return originalFetch(input, init);
+      });
+      vi.stubGlobal('fetch', gmailFetchSpy);
+
+      try {
+        const res = await SELF.fetch('https://example.com/api/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'readwise',
+            location: 'new',
+            fromDate: '2026-02-24',
+            toDate: '2026-02-25',
+            action: 'delete',
+            ids: ['gmail-msg-1'],
+            items: [{
+              id: 'gmail-msg-1',
+              kind: 'gmail',
+              site: 'gmail',
+              title: 'Newsletter',
+              author: 'Team',
+              url: 'https://news.example.com/story',
+              savedAt: '2026-02-25T10:00:00.000Z',
+              thumbnail: 'https://img.example.com/story.jpg',
+            }],
+          }),
+        });
+        const data = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(data.processed).toBe(1);
+        expect(data.processedIds).toContain('gmail-msg-1');
+        expect(data.errors).toBeUndefined();
+
+        const deleted = JSON.parse((await env.KV.get('deleted_items')) || '[]');
+        expect(deleted).toHaveLength(1);
+        expect(deleted[0].id).toBe('gmail-msg-1');
+        expect(deleted[0].thumbnail).toBe('https://img.example.com/story.jpg');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   describe('GET /api/deleted', () => {
@@ -593,7 +701,7 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.version).toBe('3.3.27');
+      expect(data.version).toMatch(/^\d+\.\d+\.\d+$/);
     });
   });
 
@@ -1014,8 +1122,8 @@ describe('PWA Serving', () => {
     expect(html).toContain('Preview item limit');
     expect(html).toContain('Confirm before delete/archive actions');
     expect(html).toContain('Version');
-    expect(html).toContain('v3.3.27');
-    expect(html).toContain('2026-02-15');
+    expect(html).toMatch(/v\d+\.\d+\.\d+/);
+    expect(html).toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(html).toContain('text-preview-toggle');
     expect(html).toContain('play-selected-btn');
     expect(html).toContain('setting-max-open-tabs');

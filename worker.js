@@ -15,8 +15,20 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.27';
+const APP_VERSION = '3.3.39';
 const VERSION_HISTORY = [
+  { version: '3.3.39', completedAt: '2026-02-25', note: 'Polished /v2 mobile ergonomics: reflowed preview/player metadata + title hierarchy, compacted Find/Deleted top controls into icon-first actions, moved row playback bars into expanded dropdown context plus floating-player hover, added cloud/download status icons, and inlined Added/Published dates beside thumbnail metadata.' },
+  { version: '3.3.38', completedAt: '2026-02-25', note: 'Added regression test coverage for preview thumbnail restoration and selected-item cleanup flows (including Gmail delete metadata routing), and preserved Readwise preview HTML fetch behavior needed for thumbnail extraction fallbacks.' },
+  { version: '3.3.37', completedAt: '2026-02-25', note: 'Fixed Player delete/archive action reliability by sending explicit queue-item metadata/source context to cleanup calls and removed false-success queue mutation fallback, preventing \"Deleted 0 of 1\" no-op cases from removing/restarting playback while restoring swipe-to-delete behavior on player rows.' },
+  { version: '3.3.36', completedAt: '2026-02-25', note: 'Adjusted /v2 iPhone layout ergonomics: moved expanded-row action trays to dedicated bottom rows in Find/Player, reflowed row hierarchy to show source/author metadata beside thumbnails with titles below, and made Find/Player filter summary/search/sort controls wrap and scroll safely on narrow widths.' },
+  { version: '3.3.35', completedAt: '2026-02-25', note: 'Refined /v2 expanded-row layout on mobile: removed duplicate inline row-action icons, forced expanded action tray to horizontal scrollable icon row, and reflowed metadata/title/date ordering to reduce title scrunching while keeping chevron + tray behavior.' },
+  { version: '3.3.34', completedAt: '2026-02-25', note: 'Fixed /v2 mobile player row layout so progress tracks no longer collapse to zero width (explicit checkbox/thumb/info grid columns), ensuring blue listened and green downloaded bars are visible while keeping expandable action trays.' },
+  { version: '3.3.33', completedAt: '2026-02-25', note: 'Updated /v2 mobile row UX with real expandable action trays (icon buttons for play/open/archive/delete plus player download/text), refreshed icon set consistency, and fixed zero-width player row progress tracks so blue listened and green downloaded bars render reliably.' },
+  { version: '3.3.32', completedAt: '2026-02-25', note: 'Integrated mobile unfold interactions into /v2 list rows: added chevron expand controls and collapsed-by-default preview/player row actions on small screens, while keeping updated icon styling and swipe archive/delete behavior.' },
+  { version: '3.3.31', completedAt: '2026-02-25', note: 'Hardened /v2 interaction responsiveness by throttling icon MutationObserver updates to animation frames and narrowing play/pause observer scope to class changes only, preventing observer churn from starving clicks/resizes.' },
+  { version: '3.3.30', completedAt: '2026-02-24', note: 'Fixed /v2 interactivity freeze by making icon-enhancement observers idempotent (state-guarded DOM writes), eliminating mutation-loop lockups that made the UI appear non-clickable.' },
+  { version: '3.3.29', completedAt: '2026-02-24', note: 'Enforced explicit /v2 route tab precedence over restored local state during boot, so direct URLs like /v2/player reliably open the requested tab instead of reverting to previously saved Find state.' },
+  { version: '3.3.28', completedAt: '2026-02-24', note: 'Completed /v2 interface alignment pass with consistent icon styling for player/row actions, corrected mobile player-row layout behavior, improved Find non-JSON 503 handling with explicit Cloudflare 1102 guidance, and reduced preview CPU load to avoid Worker resource-limit failures in remote mode.' },
   { version: '3.3.27', completedAt: '2026-02-22', note: 'Added selectable TTS provider support with AWS Polly Standard integration (Settings switch + Polly voice selection), provider-aware TTS caching/headers, and worker-side SigV4 request signing for Polly synthesis to enable lower-cost playback mode.' },
   { version: '3.3.26', completedAt: '2026-02-22', note: 'Hardened iPhone audio playback reliability by normalizing chunk MIME handling, adding robust media-ready timeout/error handling, and improving explicit autoplay-block feedback; also ensured Next/Auto-next continue only through checked queue items after queue mutations, and improved Gmail/newsletter TTS cleanup to suppress redirect URL fragments and low-value image-caption boilerplate.' },
   { version: '3.3.25', completedAt: '2026-02-21', note: 'Adjusted pane/list scrolling gutters so Find/Player/History right edges remain visible under scrollbars, preventing action buttons and row metadata from clipping at the right boundary.' },
@@ -149,7 +161,7 @@ const GMAIL_OAUTH_SCOPES = [
 ];
 const GMAIL_SYNC_MAX_MESSAGE_FETCH = 24;
 const GMAIL_SYNC_TIME_BUDGET_MS = 9000;
-const { HTML_APP, HTML_APP_V4, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE } = getUiHtml({
+const { HTML_APP, HTML_APP_V2, HTML_APP_V4, HTML_MOCKUP_V3, HTML_MOCKUP_IPHONE } = getUiHtml({
   appVersion: APP_VERSION,
   versionHistory: VERSION_HISTORY,
   maxTtsPreviewChars: MAX_TTS_PREVIEW_CHARS,
@@ -299,7 +311,27 @@ export default {
           headers: { 'Content-Type': 'text/html', ...corsHeaders },
         });
       }
+      if (url.pathname === '/v2' || url.pathname.startsWith('/v2/')) {
+        return new Response(HTML_APP_V2, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
       if (url.pathname === '/mockup-iphone') {
+        return new Response(HTML_MOCKUP_IPHONE, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/mockup-redesign') {
+        return new Response(HTML_MOCKUP_IPHONE, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/mockup-iphone-v2') {
+        return new Response(HTML_MOCKUP_IPHONE, {
+          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        });
+      }
+      if (url.pathname === '/mockup-redesign-v2') {
         return new Response(HTML_MOCKUP_IPHONE, {
           headers: { 'Content-Type': 'text/html', ...corsHeaders },
         });
@@ -431,17 +463,16 @@ async function handlePreview(request, env, corsHeaders) {
   }
 
   const settings = await getSettings(env);
-  const items = await fetchItemsBySource(env, {
+  const items = await fetchItemsBySource(env, buildPreviewFetchOptions({
     source,
     location,
     beforeDate,
     fromDate,
     toDate,
     gmailLabels: settings.gmailSelectedLabels || [],
-    limit: effectivePreviewLimit,
-    maxPages: effectivePreviewMaxPages,
-    includeHtmlContent: location !== 'archive',
-  });
+    effectivePreviewLimit,
+    effectivePreviewMaxPages,
+  }));
   const preview = items.map(normalizePreviewItem);
 
   return new Response(JSON.stringify({
@@ -453,6 +484,24 @@ async function handlePreview(request, env, corsHeaders) {
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+function buildPreviewFetchOptions(input = {}) {
+  const source = normalizeSource(input.source);
+  const includeReadwise = source === 'readwise' || source === 'all';
+  return {
+    source,
+    location: input.location || 'new',
+    beforeDate: input.beforeDate,
+    fromDate: input.fromDate,
+    toDate: input.toDate,
+    gmailLabels: Array.isArray(input.gmailLabels) ? input.gmailLabels : [],
+    limit: Number.isFinite(input.effectivePreviewLimit) ? input.effectivePreviewLimit : 100,
+    maxPages: Number.isFinite(input.effectivePreviewMaxPages) ? input.effectivePreviewMaxPages : 20,
+    // Preserve Readwise HTML content in preview so thumbnail extraction can fall back to HTML images.
+    includeHtmlContent: includeReadwise,
+    pageSize: 100,
+  };
 }
 
 // Perform cleanup (delete or archive)
@@ -2204,6 +2253,9 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const withHtmlContent = options.withHtmlContent === true;
   const hardLimit = Number.isFinite(options.limit) ? Math.max(1, options.limit) : Infinity;
   const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, options.maxPages) : Infinity;
+  const pageSize = Number.isFinite(options.pageSize)
+    ? Math.max(20, Math.min(200, Math.trunc(options.pageSize)))
+    : 100;
   const token = options.token || await getReadwiseToken(env);
   if (!token) {
     throw new Error('Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.');
@@ -2216,6 +2268,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     const params = new URLSearchParams({
       location,
       pageCursor: nextCursor || '',
+      page_size: String(pageSize),
     });
     if (withHtmlContent) {
       params.set('withHtmlContent', 'true');
@@ -2233,6 +2286,9 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         throw new Error(`Readwise API ${response.status}: Unauthorized. Open Settings and re-save your Readwise API key for this deployment.`);
+      }
+      if (response.status === 429) {
+        throw new Error('Readwise API 429: rate limited. Narrow date range / reduce limit, then retry in ~30-60 seconds.');
       }
       throw new Error(`Readwise API error: ${response.status}`);
     }
@@ -2918,4 +2974,14 @@ function endOfDay(dateValue) {
 
 
 // Export helpers for testing
-export { fetchArticlesOlderThan, extractDomain, getDeletedItems, buildTtsText, pickBestGmailOpenUrl, pickBestGmailThumbnailUrl, deriveOpenUrl };
+export {
+  fetchArticlesOlderThan,
+  extractDomain,
+  getDeletedItems,
+  buildTtsText,
+  pickBestGmailOpenUrl,
+  pickBestGmailThumbnailUrl,
+  deriveOpenUrl,
+  getArticleThumbnail,
+  buildPreviewFetchOptions,
+};
