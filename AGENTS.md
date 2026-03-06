@@ -21,3 +21,11 @@
   - confirm the listener is running,
   - restart the server in a persistent session,
   - re-run the `curl -I` check before testing.
+
+## Common Workflows
+- Start local dev: `npx wrangler dev --port 8790`
+- Run tests (includes bootstrap + vitest run): `npm test`
+- Run tests in watch mode: `npm run test:watch`
+- UI predeploy checks: `npm run check:ui` and `npm run check:browser`
+- Gated deploy (runs predeploy checks): `npm run deploy`
+- Direct deploy (skip gates): `wrangler deploy`
