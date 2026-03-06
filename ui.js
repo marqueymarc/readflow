@@ -2105,11 +2105,11 @@ const HTML_APP = `<!DOCTYPE html>
     .container { max-width: none; margin: 0; }
     .app-shell {
       display: grid;
-      grid-template-columns: 332px minmax(0, 1fr);
+      grid-template-columns: clamp(220px, 22vw, 332px) minmax(0, 1fr);
       min-height: 100vh;
     }
     .player-rail-compact .app-shell {
-      grid-template-columns: 316px minmax(0, 1fr);
+      grid-template-columns: clamp(212px, 20vw, 316px) minmax(0, 1fr);
     }
     .left-rail {
       border-right: 1px solid var(--border);
@@ -2128,16 +2128,20 @@ const HTML_APP = `<!DOCTYPE html>
       padding: 0.7rem 0.95rem 1.2rem;
       height: 100vh;
       overflow-y: auto;
-      scrollbar-gutter: stable both-edges;
+      scrollbar-gutter: stable;
       background: radial-gradient(circle at 8% 10%, #f9fcff 0%, #f4f8fc 45%, #f3f7fb 100%);
     }
     .main-inner {
       max-width: none;
       margin: 0;
+      width: 100%;
+      max-width: 100%;
       height: 100%;
       min-height: 0;
     }
     #cleanup-tab {
+      width: 100%;
+      max-width: 100%;
       height: 100%;
       min-height: 0;
       display: grid;
@@ -2447,16 +2451,21 @@ const HTML_APP = `<!DOCTYPE html>
       letter-spacing: 0.05em;
     }
     .article-list {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       max-height: none;
-      height: 100%;
-      overflow-y: auto;
+      height: auto;
+      overflow: visible;
       border: 1px solid var(--border);
       border-radius: 8px;
+      box-sizing: border-box;
     }
     .article-item {
       display: flex;
       align-items: flex-start;
       gap: 0.75rem;
+      min-width: 0;
       padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--border);
     }
@@ -2983,9 +2992,13 @@ const HTML_APP = `<!DOCTYPE html>
       display: flex;
       align-items: center;
       justify-content: space-between;
+      width: 100%;
+      max-width: 100%;
       gap: 0.75rem;
+      min-width: 0;
       margin-bottom: 0;
       flex-wrap: wrap;
+      box-sizing: border-box;
     }
     #preview-top-toolbar {
       position: sticky;
@@ -2997,6 +3010,10 @@ const HTML_APP = `<!DOCTYPE html>
       border-bottom: 1px solid var(--border);
       display: grid;
       gap: 0.52rem;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }
     .preview-top-controls > * {
       min-width: 0;
@@ -3006,16 +3023,20 @@ const HTML_APP = `<!DOCTYPE html>
       gap: 0.5rem;
       flex-wrap: wrap;
       flex: 1 1 auto;
+      width: 100%;
+      max-width: 100%;
       min-width: 0;
       justify-content: flex-start;
+      box-sizing: border-box;
     }
     .preview-actions .btn {
       flex: 1 1 180px;
       min-width: 0;
     }
     .preview-search {
-      min-width: 220px;
+      min-width: 0;
       flex: 1;
+      width: 100%;
       max-width: 420px;
     }
     .preview-search-wrap {
@@ -3023,8 +3044,10 @@ const HTML_APP = `<!DOCTYPE html>
       align-items: center;
       gap: 0.35rem;
       flex: 1;
-      min-width: 240px;
+      width: 100%;
+      min-width: 0;
       max-width: 480px;
+      box-sizing: border-box;
     }
     .left-rail .preview-search-wrap {
       min-width: 0;
@@ -3191,6 +3214,7 @@ const HTML_APP = `<!DOCTYPE html>
       gap: 0.35rem;
       flex-wrap: wrap;
       justify-content: flex-end;
+      min-width: 0;
     }
     .results-pill {
       border: 1px solid #c7d8ec;
@@ -3201,22 +3225,32 @@ const HTML_APP = `<!DOCTYPE html>
       border-radius: 999px;
       padding: 0.18rem 0.5rem;
       white-space: nowrap;
+      min-width: 0;
+      max-width: 100%;
     }
+    #cleanup-controls-right-host,
     #results-card {
       display: flex;
       flex-direction: column;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       min-height: 0;
       height: 100%;
       margin-bottom: 0;
+      box-sizing: border-box;
     }
     #preview-list {
       flex: 1;
+      width: 100%;
+      max-width: 100%;
       min-height: 0;
       display: flex;
       flex-direction: column;
       overflow-y: auto;
-      scrollbar-gutter: stable both-edges;
+      scrollbar-gutter: stable;
       padding-right: 0.3rem;
+      box-sizing: border-box;
     }
     #deleted-tab {
       min-height: 100%;
@@ -3263,7 +3297,7 @@ const HTML_APP = `<!DOCTYPE html>
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      scrollbar-gutter: stable both-edges;
+      scrollbar-gutter: stable;
       padding-right: 0.3rem;
       margin-top: 0;
       border-top: none;
@@ -3287,7 +3321,7 @@ const HTML_APP = `<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       overflow-y: auto;
-      scrollbar-gutter: stable both-edges;
+      scrollbar-gutter: stable;
       padding-right: 0.3rem;
       margin-top: 0.8rem;
     }
@@ -3334,6 +3368,10 @@ const HTML_APP = `<!DOCTYPE html>
       color: var(--text-muted);
       font-size: 0.75rem;
       margin-top: 0.3rem;
+    }
+    .player-title-controls {
+      flex-wrap: wrap;
+      min-width: 0;
     }
     @media (max-width: 600px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
@@ -3399,7 +3437,215 @@ const HTML_APP = `<!DOCTYPE html>
         text-align: center;
       }
     }
-    @media (max-width: 1024px) {
+    @media (max-width: 860px) {
+      .left-rail {
+        padding: 0.78rem 0.56rem 0.5rem;
+      }
+      .left-rail .card,
+      .left-rail .rail-docked-control {
+        padding: 0.74rem;
+      }
+      .rail-section {
+        gap: 0.28rem;
+      }
+      .rail-item {
+        font-size: 0.82rem;
+        padding: 0.5rem 0.46rem;
+      }
+      .version-badge {
+        font-size: 0.72rem;
+        padding: 0.24rem 0.5rem;
+      }
+      header {
+        gap: 0.45rem;
+      }
+    }
+    @media (max-width: 760px) {
+      .preview-top-controls {
+        align-items: stretch;
+      }
+      .preview-top-controls .preview-search-wrap {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+      }
+      .preview-top-controls .preview-search {
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+      }
+      .preview-top-controls .sort-toggle {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        border-radius: 12px;
+      }
+      .preview-top-controls .sort-toggle button {
+        min-width: 0;
+        text-align: center;
+      }
+      .results-top {
+        align-items: flex-start;
+      }
+      .results-summary {
+        justify-content: flex-start;
+      }
+    }
+    @media (max-height: 500px) and (min-width: 651px) {
+      body {
+        overflow-y: auto;
+      }
+      .app-shell {
+        grid-template-columns: clamp(168px, 18vw, 196px) minmax(0, 1fr);
+        min-height: auto;
+        align-items: start;
+      }
+      .player-rail-compact .app-shell {
+        grid-template-columns: clamp(164px, 17vw, 188px) minmax(0, 1fr);
+      }
+      .left-rail {
+        position: static;
+        top: auto;
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding: 0.56rem 0.48rem 0.44rem;
+      }
+      .main-pane {
+        height: auto;
+        min-height: 100vh;
+        overflow-y: visible;
+        padding: 0.45rem 0.72rem 1rem;
+      }
+      .main-inner,
+      #cleanup-tab,
+      #deleted-tab,
+      #player-tab {
+        height: auto;
+        min-height: 0;
+      }
+      #cleanup-tab,
+      #deleted-tab,
+      #player-tab {
+        display: block;
+      }
+      #deleted-list,
+      #player-queue {
+        overflow: visible;
+      }
+      .rail-brand {
+        font-size: 1rem;
+        padding: 0.2rem 0.32rem 0.55rem;
+      }
+      .brand-version {
+        font-size: 0.62rem;
+        padding: 0.15rem 0.34rem;
+      }
+      .left-rail .card,
+      .left-rail .rail-docked-control {
+        padding: 0.68rem;
+      }
+      .rail-section {
+        gap: 0.22rem;
+      }
+      .rail-item {
+        font-size: 0.78rem;
+        padding: 0.42rem 0.32rem;
+        gap: 0.24rem;
+      }
+      .rail-item .badge {
+        font-size: 0.65rem;
+        padding: 0.08rem 0.32rem;
+      }
+    }
+    @media (max-width: 540px) {
+      .preview-top-controls,
+      #deleted-top-controls,
+      #player-tab .preview-top-controls {
+        align-items: stretch;
+        gap: 0.45rem;
+      }
+      .preview-top-controls .preview-search-wrap,
+      #deleted-top-controls .preview-search-wrap,
+      #player-tab .preview-search-wrap {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.28rem;
+        min-width: 0;
+        max-width: none;
+        width: 100%;
+      }
+      .preview-top-controls .sort-toggle,
+      #deleted-top-controls .sort-toggle,
+      #player-tab .sort-toggle {
+        grid-column: 1 / -1;
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+        border-radius: 12px;
+      }
+      .preview-top-controls .sort-toggle button,
+      #deleted-top-controls .sort-toggle button,
+      #player-tab .sort-toggle button {
+        min-width: 0;
+        text-align: center;
+        white-space: normal;
+        line-height: 1.2;
+      }
+      .preview-actions,
+      #deleted-controls-card .history-actions-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+        width: 100%;
+      }
+      .results-summary {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .results-pill {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .player-title-row {
+        align-items: flex-start;
+      }
+      .player-title-controls {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.35rem;
+      }
+      #player-current-title {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: initial;
+      }
+    }
+    @media (max-width: 420px) {
+      .rail-section {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .rail-item {
+        justify-content: center;
+        text-align: center;
+        white-space: normal;
+        min-height: 46px;
+      }
+      .player-controls-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+      .player-icon-btn {
+        flex: 1 1 calc(33.333% - 0.35rem);
+        min-width: 72px;
+      }
+      .player-icon-btn .control-text {
+        white-space: normal;
+      }
+    }
+    @media (max-width: 650px) {
       body {
         overflow-y: auto;
       }
@@ -4514,6 +4760,18 @@ const HTML_APP = `<!DOCTYPE html>
     }
     window.handleImageLoadError = handleImageLoadError;
 
+    function getThumbnailSrc(url) {
+      if (!url) return '';
+      try {
+        var parsed = new URL(String(url), window.location.origin);
+        if (!/^https?:$/i.test(parsed.protocol)) return '';
+        if (parsed.origin === window.location.origin) return parsed.href;
+        return '/api/image?url=' + encodeURIComponent(parsed.href);
+      } catch {
+        return '';
+      }
+    }
+
     on(toDateWrap, 'pointerdown', function() { setDateShortcutTarget('to'); });
     on(fromDateWrap, 'pointerdown', function() { setDateShortcutTarget('from'); });
     ['change', 'blur'].forEach(function(evtName) {
@@ -4548,14 +4806,14 @@ const HTML_APP = `<!DOCTYPE html>
     }
 
     function shouldDockPlayerControlsRight() {
-      return window.innerWidth <= 1024;
+      return window.innerWidth <= 1040;
     }
 
     function shouldDockMainControlsLeft() {
-      if (window.innerWidth <= 1024) return false;
+      if (window.innerWidth <= 650) return false;
       if (!leftRailEl || !leftRailEl.getBoundingClientRect) return true;
       var railWidth = leftRailEl.getBoundingClientRect().width || 0;
-      if (railWidth <= 0) return window.innerWidth >= 1180;
+      if (railWidth <= 0) return window.innerWidth >= 650;
       return railWidth >= 240;
     }
 
@@ -4960,8 +5218,9 @@ const HTML_APP = `<!DOCTYPE html>
         html += ' onpointerup="handlePreviewPointerUp(event,this)"';
         html += ' onpointercancel="handlePreviewPointerCancel(event,this)">';
         html += '<input type="checkbox" data-article-id="' + escapeHtml(articleId) + '" onchange="togglePreviewItem(this)"' + checked + '>';
-        if (article.thumbnail) {
-          html += '<img class="preview-thumb" src="' + escapeHtml(article.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">';
+        var previewThumbSrc = getThumbnailSrc(article.thumbnail);
+        if (previewThumbSrc) {
+          html += '<img class="preview-thumb" src="' + escapeHtml(previewThumbSrc) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">';
         } else {
           html += '<span class="preview-thumb-fallback">No image</span>';
         }
@@ -5314,6 +5573,9 @@ const HTML_APP = `<!DOCTYPE html>
           )
         ) {
           throw new Error('Find hit Worker CPU limit (Cloudflare 1102). Narrow date range or reduce result limit, then retry.');
+        }
+        if (res.status === 503) {
+          throw new Error('Find request failed before JSON response (503). Reload the app, then retry. If it persists, narrow the date range.');
         }
         throw new Error('Server returned non-JSON response (' + res.status + ')');
       }
@@ -6544,8 +6806,9 @@ const HTML_APP = `<!DOCTYPE html>
       playerCurrentHeader.style.display = 'flex';
       playerCurrentTitle.textContent = currentItem.title || 'Untitled';
       playerCurrentAuthor.textContent = currentItem.author ? ('By ' + currentItem.author) : (currentItem.site || '');
-      if (currentItem.thumbnail) {
-        playerCurrentThumb.src = currentItem.thumbnail;
+      var currentThumbSrc = getThumbnailSrc(currentItem.thumbnail);
+      if (currentThumbSrc) {
+        playerCurrentThumb.src = currentThumbSrc;
         playerCurrentThumb.onerror = handleImageLoadError;
         playerCurrentThumb.dataset.broken = '';
         playerCurrentThumb.style.display = 'inline-flex';
@@ -6612,8 +6875,8 @@ const HTML_APP = `<!DOCTYPE html>
           '<label class="checkbox-label" style="gap:0.35rem;">' +
           '<input type="checkbox" class="player-queue-check" data-queue-id="' + escapeHtml(queueId) + '"' + checked + '>' +
           '</label>' +
-          (item.thumbnail
-            ? '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">'
+          (getThumbnailSrc(item.thumbnail)
+            ? '<img class="preview-thumb" src="' + escapeHtml(getThumbnailSrc(item.thumbnail)) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">'
             : '<span class="preview-thumb-fallback">No image</span>') +
           '<div class="article-info">' +
           '<div class="title-row">' +
@@ -7487,8 +7750,9 @@ const HTML_APP = `<!DOCTYPE html>
         html += '<input type="checkbox" data-item-id="' + escapeHtml(itemId) + '" onchange="toggleRestoreItem(this)"';
         if (selectedDeletedIds.has(itemId)) html += ' checked';
         html += '>';
-        if (item.thumbnail) {
-          html += '<img class="preview-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">';
+        var deletedThumbSrc = getThumbnailSrc(item.thumbnail);
+        if (deletedThumbSrc) {
+          html += '<img class="preview-thumb" src="' + escapeHtml(deletedThumbSrc) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="handleImageLoadError(event)">';
         } else {
           html += '<span class="preview-thumb-fallback">No image</span>';
         }

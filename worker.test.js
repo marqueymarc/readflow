@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
 import {
+  fetchArticlesOlderThan,
   extractDomain,
   buildTtsText,
   pickBestGmailOpenUrl,
@@ -8,6 +9,7 @@ import {
   deriveOpenUrl,
   getArticleThumbnail,
   buildPreviewFetchOptions,
+  buildPreviewResponseCacheKey,
 } from './worker.js';
 
 describe('extractDomain', () => {
@@ -228,6 +230,87 @@ describe('preview thumbnail behavior', () => {
       effectivePreviewMaxPages: 20,
     });
     expect(opts.includeHtmlContent).toBe(false);
+  });
+
+  it('uses a smaller readwise page size for html-rich preview fetches', () => {
+    const opts = buildPreviewFetchOptions({
+      source: 'readwise',
+      location: 'feed',
+      fromDate: '2026-03-03',
+      toDate: '2026-03-05',
+      effectivePreviewLimit: 100,
+      effectivePreviewMaxPages: 20,
+    });
+    expect(opts.pageSize).toBe(50);
+  });
+});
+
+describe('preview fetch efficiency', () => {
+  it('stops paging once results are older than the requested start date', async () => {
+    const originalFetch = globalThis.fetch;
+    const thirdPageResponse = new Response(JSON.stringify({
+      results: [
+        { id: '5', saved_at: '2026-03-01T12:00:00Z', location: 'feed' },
+      ],
+      nextPageCursor: null,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        results: [
+          { id: '1', saved_at: '2026-03-05T12:00:00Z', location: 'feed' },
+          { id: '2', saved_at: '2026-03-04T10:00:00Z', location: 'feed' },
+        ],
+        nextPageCursor: 'next-1',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        results: [
+          { id: '3', saved_at: '2026-03-03T08:00:00Z', location: 'feed' },
+          { id: '4', saved_at: '2026-03-02T23:59:59Z', location: 'feed' },
+        ],
+        nextPageCursor: 'next-2',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValue(thirdPageResponse);
+
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const items = await fetchArticlesOlderThan({ KV: env.KV }, 'feed', null, {
+        token: 'token',
+        withHtmlContent: true,
+        fromDate: '2026-03-03',
+        toDate: '2026-03-05',
+        limit: 100,
+        maxPages: 20,
+        pageSize: 100,
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(items.map((item) => item.id)).toEqual(['1', '2', '3']);
+      expect(String(fetchSpy.mock.calls[0][0])).toContain('page_size=50');
+      expect(String(fetchSpy.mock.calls[1][0])).toContain('page_size=50');
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
+  it('builds a stable preview cache key for equivalent label sets', () => {
+    const a = buildPreviewResponseCacheKey({
+      source: 'all',
+      location: 'feed',
+      fromDate: '2026-03-03',
+      toDate: '2026-03-05',
+      limit: 100,
+      maxPages: 20,
+      gmailLabels: ['Newsletters', 'AI'],
+    });
+    const b = buildPreviewResponseCacheKey({
+      source: 'all',
+      location: 'feed',
+      fromDate: '2026-03-03',
+      toDate: '2026-03-05',
+      limit: 100,
+      maxPages: 20,
+      gmailLabels: ['AI', 'Newsletters'],
+    });
+    expect(a).toBe(b);
   });
 });
 
@@ -701,7 +784,33 @@ describe('API Endpoints', () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
+      expect(data.version).toBe('3.3.47');
       expect(data.version).toMatch(/^\d+\.\d+\.\d+$/);
+    });
+  });
+
+  describe('GET /api/image', () => {
+    it('returns an svg fallback when the upstream thumbnail fails', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue(new Response('blocked', { status: 403 }));
+      vi.stubGlobal('fetch', fetchSpy);
+
+      try {
+        const res = await SELF.fetch('https://example.com/api/image?url=' + encodeURIComponent('https://c10.patreonusercontent.com/thumb.jpg'));
+        const text = await res.text();
+        expect(res.status).toBe(200);
+        expect(res.headers.get('content-type')).toContain('image/svg+xml');
+        expect(text).toContain('patreonusercontent.com');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('returns an svg fallback for invalid thumbnail urls', async () => {
+      const res = await SELF.fetch('https://example.com/api/image?url=not-a-url');
+      const text = await res.text();
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('image/svg+xml');
+      expect(text).toContain('No image');
     });
   });
 

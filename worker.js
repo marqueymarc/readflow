@@ -15,8 +15,16 @@ import {
   moveArticleToLocation,
 } from './api-interactions.js';
 
-const APP_VERSION = '3.3.39';
+const APP_VERSION = '3.3.47';
 const VERSION_HISTORY = [
+  { version: '3.3.47', completedAt: '2026-03-06', note: 'Fixed landscape-phone Find ergonomics by narrowing the left rail in short-height panoramic layouts and releasing sticky viewport-locked rail/main scrolling so preview results remain reachable by normal page scroll.' },
+  { version: '3.3.46', completedAt: '2026-03-06', note: 'Hardened mobile Find reliability by reducing Readwise preview scan size, stopping page scans once the requested start date is passed, adding a short-lived server preview cache for repeated identical queries, and marking HTML shells no-store so phones are less likely to run a stale cached app.' },
+  { version: '3.3.45', completedAt: '2026-03-06', note: 'Hardened small-width responsive behavior so toolbars, action grids, summary chips, rail tabs, and player controls compress and wrap instead of relying on fixed minimums, preventing clipping at narrow phone-sized widths.' },
+  { version: '3.3.44', completedAt: '2026-03-06', note: 'Fixed the remaining medium-width Find toolbar overflow by stacking search and sort controls cleanly within the right results pane before the 650px shell collapse, so buttons like Published no longer run off the right edge.' },
+  { version: '3.3.43', completedAt: '2026-03-06', note: 'Adjusted responsive Find shell behavior so the two-pane layout stays active down to 650px, narrowed and compacted the left rail at medium widths so key controls still fit without clipping, and kept heavy controls undocked from the rail when space is tight.' },
+  { version: '3.3.42', completedAt: '2026-03-06', note: 'Refined Find responsive layout so the desktop two-pane view stays active at medium browser widths using a clamped narrower rail, stacks only below 1040px, and uses lighter scrollbar gutters to keep the right edge of result content visible instead of feeling clipped.' },
+  { version: '3.3.41', completedAt: '2026-03-06', note: 'Fixed Feed result pane layout and scroll behavior by removing the nested preview-list scroller, constraining Find result containers to the main column width, and stacking the left rail above content earlier on narrower desktop widths so results no longer clip off-screen.' },
+  { version: '3.3.40', completedAt: '2026-03-06', note: 'Fixed Readwise Feed find browser errors caused by third-party thumbnail hotlink failures by proxying preview/player/deleted thumbnails through the worker and returning an inline image fallback instead of surfacing broken 403s in the UI.' },
   { version: '3.3.39', completedAt: '2026-02-25', note: 'Polished /v2 mobile ergonomics: reflowed preview/player metadata + title hierarchy, compacted Find/Deleted top controls into icon-first actions, moved row playback bars into expanded dropdown context plus floating-player hover, added cloud/download status icons, and inlined Added/Published dates beside thumbnail metadata.' },
   { version: '3.3.38', completedAt: '2026-02-25', note: 'Added regression test coverage for preview thumbnail restoration and selected-item cleanup flows (including Gmail delete metadata routing), and preserved Readwise preview HTML fetch behavior needed for thumbnail extraction fallbacks.' },
   { version: '3.3.37', completedAt: '2026-02-25', note: 'Fixed Player delete/archive action reliability by sending explicit queue-item metadata/source context to cleanup calls and removed false-success queue mutation fallback, preventing \"Deleted 0 of 1\" no-op cases from removing/restarting playback while restoring swipe-to-delete behavior on player rows.' },
@@ -152,6 +160,7 @@ const TTS_SYNTH_CHUNK_CHARS = 3200;
 const TTS_FIRST_CHUNK_CHARS = 220;
 const TTS_SECOND_CHUNK_CHARS = 1000;
 const PREVIEW_CACHE_STALE_MS = 15 * 60 * 1000;
+const PREVIEW_RESPONSE_CACHE_TTL_SECONDS = 90;
 const GMAIL_ITEMS_KEY = 'gmail_items_v1';
 const GMAIL_LABELS_KEY = 'gmail_labels_v1';
 const GMAIL_OAUTH_TOKEN_KEY = 'gmail_oauth_token_v1';
@@ -184,6 +193,11 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
+    const htmlHeaders = {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, max-age=0',
+      ...corsHeaders,
+    };
 
     try {
       // API Routes
@@ -289,6 +303,9 @@ export default {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
+      if (url.pathname === '/api/image') {
+        return await handleImageProxy(request);
+      }
       if (url.pathname === '/api/version') {
         return handleGetVersion(corsHeaders);
       }
@@ -303,43 +320,43 @@ export default {
       }
       if (url.pathname === '/mockup-v3') {
         return new Response(HTML_MOCKUP_V3, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
       if (url.pathname === '/v4') {
         return new Response(HTML_APP_V4, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
       if (url.pathname === '/v2' || url.pathname.startsWith('/v2/')) {
         return new Response(HTML_APP_V2, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
       if (url.pathname === '/mockup-iphone') {
         return new Response(HTML_MOCKUP_IPHONE, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
       if (url.pathname === '/mockup-redesign') {
         return new Response(HTML_MOCKUP_IPHONE, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
       if (url.pathname === '/mockup-iphone-v2') {
         return new Response(HTML_MOCKUP_IPHONE, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
       if (url.pathname === '/mockup-redesign-v2') {
         return new Response(HTML_MOCKUP_IPHONE, {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders },
+          headers: htmlHeaders,
         });
       }
 
       // Serve PWA
       return new Response(HTML_APP, {
-        headers: { 'Content-Type': 'text/html', ...corsHeaders },
+        headers: htmlHeaders,
       });
     } catch (error) {
       const status = deriveHttpStatusFromError(error);
@@ -463,6 +480,28 @@ async function handlePreview(request, env, corsHeaders) {
   }
 
   const settings = await getSettings(env);
+  const previewCacheKey = buildPreviewResponseCacheKey({
+    source,
+    location,
+    beforeDate,
+    fromDate,
+    toDate,
+    limit: effectivePreviewLimit,
+    maxPages: effectivePreviewMaxPages,
+    gmailLabels: settings.gmailSelectedLabels || [],
+  });
+  const cached = await readPreviewResponseCache(env, previewCacheKey);
+  if (cached) {
+    return new Response(JSON.stringify(cached), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'private, max-age=30',
+        'X-Preview-Cache': 'HIT',
+        ...corsHeaders,
+      },
+    });
+  }
+
   const items = await fetchItemsBySource(env, buildPreviewFetchOptions({
     source,
     location,
@@ -474,15 +513,22 @@ async function handlePreview(request, env, corsHeaders) {
     effectivePreviewMaxPages,
   }));
   const preview = items.map(normalizePreviewItem);
-
-  return new Response(JSON.stringify({
+  const payload = {
     total: items.length,
     preview,
     showing: preview.length,
     source,
     dateRange: { beforeDate, fromDate, toDate },
-  }), {
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  };
+  await writePreviewResponseCache(env, previewCacheKey, payload);
+
+  return new Response(JSON.stringify(payload), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'private, max-age=30',
+      'X-Preview-Cache': 'MISS',
+      ...corsHeaders,
+    },
   });
 }
 
@@ -500,8 +546,49 @@ function buildPreviewFetchOptions(input = {}) {
     maxPages: Number.isFinite(input.effectivePreviewMaxPages) ? input.effectivePreviewMaxPages : 20,
     // Preserve Readwise HTML content in preview so thumbnail extraction can fall back to HTML images.
     includeHtmlContent: includeReadwise,
-    pageSize: 100,
+    pageSize: includeReadwise ? 50 : 100,
   };
+}
+
+function buildPreviewResponseCacheKey(input = {}) {
+  const normalizedLabels = Array.isArray(input.gmailLabels)
+    ? input.gmailLabels
+        .filter((value) => typeof value === 'string' && value.trim())
+        .map((value) => value.trim())
+        .sort()
+    : [];
+  return [
+    'preview_cache_v2',
+    normalizeSource(input.source),
+    String(input.location || 'new'),
+    String(input.beforeDate || ''),
+    String(input.fromDate || ''),
+    String(input.toDate || ''),
+    String(Number.isFinite(input.limit) ? input.limit : 100),
+    String(Number.isFinite(input.maxPages) ? input.maxPages : 20),
+    normalizedLabels.join(','),
+  ].join(':');
+}
+
+async function readPreviewResponseCache(env, key) {
+  try {
+    if (!env || !env.KV || !key) return null;
+    const raw = await env.KV.get(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writePreviewResponseCache(env, key, payload) {
+  try {
+    if (!env || !env.KV || !key || !payload) return;
+    await env.KV.put(key, JSON.stringify(payload), { expirationTtl: PREVIEW_RESPONSE_CACHE_TTL_SECONDS });
+  } catch {
+    // Ignore preview cache write failures.
+  }
 }
 
 // Perform cleanup (delete or archive)
@@ -2242,6 +2329,75 @@ function handleFavicon() {
   });
 }
 
+async function handleImageProxy(request) {
+  const requestUrl = new URL(request.url);
+  const rawTarget = requestUrl.searchParams.get('url') || '';
+  let targetUrl;
+  try {
+    targetUrl = new URL(rawTarget);
+  } catch {
+    return buildFallbackImageResponse('No image');
+  }
+
+  if (!['http:', 'https:'].includes(targetUrl.protocol)) {
+    return buildFallbackImageResponse('No image');
+  }
+
+  try {
+    const upstream = await fetch(targetUrl.toString(), {
+      headers: {
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+      },
+      cf: {
+        cacheTtl: 60 * 60 * 6,
+        cacheEverything: true,
+      },
+    });
+    const contentType = upstream.headers.get('content-type') || '';
+    if (!upstream.ok || !contentType.toLowerCase().startsWith('image/')) {
+      return buildFallbackImageResponse(extractDomain(targetUrl.toString()));
+    }
+    const imageBytes = await upstream.arrayBuffer();
+    return new Response(imageBytes, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': upstream.headers.get('cache-control') || 'public, max-age=21600',
+      },
+    });
+  } catch {
+    return buildFallbackImageResponse(extractDomain(targetUrl.toString()));
+  }
+}
+
+function buildFallbackImageResponse(label) {
+  const safeLabel = String(label || 'No image')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .slice(0, 32);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="${safeLabel}">
+<defs>
+  <linearGradient id="thumbBg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#f8fbff"/>
+    <stop offset="100%" stop-color="#dbeafe"/>
+  </linearGradient>
+</defs>
+<rect width="240" height="240" rx="28" fill="url(#thumbBg)"/>
+<rect x="28" y="28" width="184" height="184" rx="24" fill="#eff6ff" stroke="#bfdbfe" stroke-width="4"/>
+<path d="M72 152l31-31 24 24 25-25 32 32" fill="none" stroke="#60a5fa" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="98" cy="92" r="16" fill="#93c5fd"/>
+<text x="120" y="196" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="700" fill="#1e3a8a">${safeLabel}</text>
+</svg>`;
+  return new Response(svg, {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+}
+
 // Helper: Fetch articles older than date from specific location
 async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const allArticles = [];
@@ -2256,6 +2412,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
   const pageSize = Number.isFinite(options.pageSize)
     ? Math.max(20, Math.min(200, Math.trunc(options.pageSize)))
     : 100;
+  const effectivePageSize = withHtmlContent ? Math.min(pageSize, 50) : pageSize;
   const token = options.token || await getReadwiseToken(env);
   if (!token) {
     throw new Error('Readwise API key is not configured for this deployment. Open Settings and save your Readwise API key.');
@@ -2268,7 +2425,7 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     const params = new URLSearchParams({
       location,
       pageCursor: nextCursor || '',
-      page_size: String(pageSize),
+      page_size: String(effectivePageSize),
     });
     if (withHtmlContent) {
       params.set('withHtmlContent', 'true');
@@ -2295,10 +2452,11 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
 
     const data = await response.json();
     pagesFetched += 1;
+    const results = Array.isArray(data.results) ? data.results : [];
 
     // Filter articles older than cutoff date
     // Skip archived items
-    const filtered = (data.results || []).filter(article => {
+    const filtered = results.filter(article => {
       const savedDate = new Date(article.saved_at);
       const beforeOk = toCutoff ? savedDate <= toCutoff : true;
       const fromOk = fromCutoff ? savedDate >= fromCutoff : true;
@@ -2312,6 +2470,12 @@ async function fetchArticlesOlderThan(env, location, beforeDate, options = {}) {
     allArticles.push(...filtered.slice(0, Math.max(0, remaining)));
     if (allArticles.length >= hardLimit) {
       break;
+    }
+    if (fromCutoff && results.length > 0) {
+      const oldestSavedAt = Date.parse(results[results.length - 1]?.saved_at || '');
+      if (Number.isFinite(oldestSavedAt) && oldestSavedAt < fromCutoff.getTime()) {
+        break;
+      }
     }
     nextCursor = data.nextPageCursor;
   } while (nextCursor);
@@ -2961,12 +3125,24 @@ function cleanupEmailNewsletterText(text) {
 }
 
 function startOfDay(dateValue) {
+  const dateText = String(dateValue || '').trim();
+  const match = dateText.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const [, year, month, day] = match;
+    return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0));
+  }
   const d = new Date(dateValue);
   d.setHours(0, 0, 0, 0);
   return d;
 }
 
 function endOfDay(dateValue) {
+  const dateText = String(dateValue || '').trim();
+  const match = dateText.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const [, year, month, day] = match;
+    return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 23, 59, 59, 999));
+  }
   const d = new Date(dateValue);
   d.setHours(23, 59, 59, 999);
   return d;
@@ -2984,4 +3160,5 @@ export {
   deriveOpenUrl,
   getArticleThumbnail,
   buildPreviewFetchOptions,
+  buildPreviewResponseCacheKey,
 };

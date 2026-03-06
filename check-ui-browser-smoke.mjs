@@ -19,6 +19,10 @@ if (!/#player-queue\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*\}/.test(html)) {
   console.error('Browser smoke failed: missing dedicated player-queue scroll container styles');
   process.exit(1);
 }
+if (!/\.article-list\s*\{[\s\S]*height:\s*auto;[\s\S]*overflow:\s*visible;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: preview results should use a single outer scroller instead of a nested article-list scroller');
+  process.exit(1);
+}
 if (!/\.left-rail\s+\.rail-docked-control\s*\{[\s\S]*max-width:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*\}/.test(html)) {
   console.error('Browser smoke failed: rail-docked controls must be width-constrained to avoid rail overflow into results pane');
   process.exit(1);
@@ -27,8 +31,36 @@ if (!/\.rail-controls-host\s*\{[\s\S]*width:\s*100%;[\s\S]*overflow:\s*hidden;[\
   console.error('Browser smoke failed: rail control host must constrain overflow for docked controls');
   process.exit(1);
 }
-if (!/function shouldDockPlayerControlsRight\(\)\s*\{\s*return window\.innerWidth <= 1024;\s*\}/.test(html)) {
-  console.error('Browser smoke failed: player controls should dock in rail on desktop and move to main only on narrow layouts');
+if (!/\.app-shell\s*\{[\s\S]*grid-template-columns:\s*clamp\(220px,\s*22vw,\s*332px\)\s+minmax\(0,\s*1fr\);[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: desktop shell should use a responsive clamped rail width instead of a fixed sidebar width');
+  process.exit(1);
+}
+if (!/@media \(max-width: 650px\)\s*\{[\s\S]*\.app-shell\s*\{[\s\S]*grid-template-columns:\s*1fr;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: the shell must stack only at the narrower desktop/mobile breakpoint');
+  process.exit(1);
+}
+if (!/function shouldDockPlayerControlsRight\(\)\s*\{\s*return window\.innerWidth <= 1040;\s*\}/.test(html)) {
+  console.error('Browser smoke failed: player controls should move out of the left rail only once the narrow-layout breakpoint is reached');
+  process.exit(1);
+}
+if (!/@media \(max-width: 860px\)\s*\{[\s\S]*\.left-rail\s*\{[\s\S]*padding:\s*0\.78rem 0\.56rem 0\.5rem;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: the medium-width rail compaction rules are missing');
+  process.exit(1);
+}
+if (!/@media \(max-width: 760px\)\s*\{[\s\S]*\.preview-top-controls\s*\{[\s\S]*align-items:\s*stretch;[\s\S]*\.preview-top-controls \.sort-toggle\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: the medium-width preview toolbar stacking rules are missing');
+  process.exit(1);
+}
+if (!/@media \(max-height: 500px\) and \(min-width: 651px\)\s*\{[\s\S]*\.app-shell\s*\{[\s\S]*grid-template-columns:\s*clamp\(168px,\s*18vw,\s*196px\)\s+minmax\(0,\s*1fr\);[\s\S]*\.left-rail\s*\{[\s\S]*position:\s*static;[\s\S]*overflow:\s*visible;[\s\S]*\}[\s\S]*\.main-pane\s*\{[\s\S]*height:\s*auto;[\s\S]*overflow-y:\s*visible;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: short-height landscape layouts must narrow the rail and release sticky viewport-locked scrolling');
+  process.exit(1);
+}
+if (!/@media \(max-width: 540px\)\s*\{[\s\S]*\.preview-actions,\s*#deleted-controls-card \.history-actions-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(118px,\s*1fr\)\);[\s\S]*\.results-pill\s*\{[\s\S]*overflow-wrap:\s*anywhere;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: the small-width wrapping rules for toolbars, action grids, and summary pills are missing');
+  process.exit(1);
+}
+if (!/@media \(max-width: 420px\)\s*\{[\s\S]*\.rail-section\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*\.player-controls-row\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap;[\s\S]*\}/.test(html)) {
+  console.error('Browser smoke failed: the ultra-small-width redistribution rules for rail tabs and player controls are missing');
   process.exit(1);
 }
 if (!/<div id=\"deleted-controls-main-host\">[\s\S]*<div class=\"card\" id=\"deleted-controls-card\">[\s\S]*<div id=\"deleted-list\">/.test(html)) {
